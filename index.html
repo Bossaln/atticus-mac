@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Atticus — your whole Mac, one sentence away</title>
-<meta name="description" content="Hold control, option, space. Say what you need. Atticus runs your Mac. $5 once, open source, on the Claude plan you already have.">
+<meta name="description" content="A fast, free voice assistant for your Mac. No API key: it runs on the Claude plan you already have. It remembers you and learns your shortcuts. Open source.">
 <meta property="og:title" content="Atticus">
-<meta property="og:description" content="Your whole Mac, one sentence away.">
+<meta property="og:description" content="Fast. No API key. Remembers you. Your whole Mac, one sentence away.">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
 <meta property="og:image" content="https://saarthurr.github.io/atticus-mac/docs/banner.png">
@@ -173,6 +173,10 @@
   .card.in .race .track i { width: 100%; } .card.in .race.fast .track i { width: 7.3%; }
   .chip { font: 15px var(--mono); padding: 12px 18px; border-radius: 12px; background: var(--ink); color: #f5f5f7; align-self: flex-start; }
   .chip i { font-style: normal; color: #8e8e93; }
+  .points { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 14px; font-size: 17px; }
+  .points span { color: var(--faint); }
+  .vis.mem { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; } .mem span { font-size: 14px; padding: 9px 14px; border-radius: 10px; background: #f5f5f7; justify-self: start; }
+  .mem span i { font-style: normal; color: var(--mute); margin-right: 6px; }
   .marquee { display: flex; flex-direction: column; gap: 8px; margin: 0 -26px; mask: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); }
   .row { display: flex; gap: 8px; width: max-content; animation: slide 26s linear infinite; }
   .row.rev { animation-direction: reverse; }
@@ -238,6 +242,7 @@
     <canvas id="orb" class="rv" data-orb="breathing" aria-hidden="true"></canvas>
     <h1 class="rv" style="--i:1">Atticus</h1>
     <p class="sub rv" style="--i:2">Your whole Mac, one sentence away.</p>
+    <p class="points rv" style="--i:2"><b>Fast</b><span>·</span><b>No API key</b><span>·</span><b>Remembers you</b><span>·</span><b>Free</b></p>
     <div class="keys rv" style="--i:3" aria-label="Shortcut: control, option, space">
       <kbd id="kc"><b>⌃</b>control</kbd><kbd id="ko"><b>⌥</b>option</kbd><kbd id="ks" class="space">space</kbd>
     </div>
@@ -289,7 +294,7 @@
 
 <section>
   <h2 class="rv">Fast. Nearly free.</h2>
-  <p class="lede rv" style="--i:1">Runs on the Claude plan you already have.</p>
+  <p class="lede rv" style="--i:1">No API key. Runs on the Claude plan you already have.</p>
   <div class="stats">
     <div class="stat rv" style="--i:0"><b data-n="0.08" data-suf="s">0.08s</b><span>to open an app</span></div>
     <div class="stat rv" style="--i:1"><b data-n="0.14" data-pre="~" data-suf="¢">~0.14¢</b><span>per ask, on average</span></div>
@@ -308,14 +313,22 @@
       <div><h3>No API key.</h3><p>Uses your Pro or Max plan.</p></div>
       <div class="vis"><div class="chip"><i>$</i> claude -p</div></div>
     </div>
-    <div class="card rv">
+    <div class="card wide rv">
+      <div><h3>It remembers you.</h3><p>Say “remember” once. Every ask after that knows it. Correct it, and it won't make that mistake again.</p></div>
+      <div class="vis mem">
+        <span><i>Remembered</i>“Open” means bring it to the front</span>
+        <span><i>About you</i>Codes in VS Code · lives in Austin</span>
+        <span><i>Shortcut</i>“Focus mode” closes Slack, opens to-dos</span>
+      </div>
+    </div>
+    <div class="card rv" style="--i:1">
       <div><h3>Your whole Mac.</h3><p>Apps, windows, files, music, the web.</p></div>
       <div class="vis"><div class="marquee">
         <div class="row"><span>Finder</span><span>Spotify</span><span>Chrome</span><span>Terminal</span><span>Calendar</span><span>Reminders</span><span>Notes</span><span>Settings</span><span>Finder</span><span>Spotify</span><span>Chrome</span><span>Terminal</span><span>Calendar</span><span>Reminders</span><span>Notes</span><span>Settings</span></div>
         <div class="row rev"><span>Move windows</span><span>Find files</span><span>Search the web</span><span>Click buttons</span><span>Type replies</span><span>Play music</span><span>Move windows</span><span>Find files</span><span>Search the web</span><span>Click buttons</span><span>Type replies</span><span>Play music</span></div>
       </div></div>
     </div>
-    <div class="card rv" style="--i:1">
+    <div class="card wide rv">
       <div><h3>Sees your screen.</h3><p>Say “this” and it looks.</p></div>
       <div class="vis"><div class="mini-scr"><span></span><span></span><span></span><span></span></div></div>
     </div>
@@ -345,7 +358,7 @@
     <code><i>$</i> curl -fsSL https://raw.githubusercontent.com/SaarthurR/atticus-mac/main/install.sh | bash</code>
     <button class="copy">Copy</button>
   </div>
-  <ul class="needs rv" style="--i:3"><li>macOS 26 or later</li><li>Claude Pro or Max</li><li>$5 once · open source (MIT)</li></ul>
+  <ul class="needs rv" style="--i:3"><li>macOS 26 or later</li><li>Claude Pro or Max</li><li>Free · open source (MIT)</li></ul>
 </section>
 
 <footer>Made by <a href="https://github.com/SaarthurR">SaarthurR</a> · Orb by <a href="https://github.com/Jakubantalik/thinking-orbs">thinking-orbs</a></footer>
