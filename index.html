@@ -38,6 +38,7 @@
   .brand canvas { width: 26px; height: 26px; }
   .gh { font-size: 14px; text-decoration: none; color: var(--mute); transition: color .2s; }
   .gh:hover { color: var(--ink); }
+  .gh { padding: 6px 12px; border: 1px solid #d2d2d7; border-radius: 999px; font-variant-numeric: tabular-nums; }
 
   section { padding: clamp(80px, 12vw, 160px) clamp(20px, 5vw, 48px); max-width: 1120px; margin: 0 auto; }
 
@@ -234,7 +235,7 @@
 
 <nav>
   <a class="brand" href="#"><canvas data-orb="breathing"></canvas>Atticus</a>
-  <a class="gh" href="https://github.com/SaarthurR/atticus-mac">GitHub ↗</a>
+  <a class="gh" href="https://github.com/SaarthurR/atticus-mac">★ Star on GitHub<span id="stars"></span></a>
 </nav>
 
 <section class="hero">
@@ -438,6 +439,9 @@
   addEventListener('blur', () => { held.clear(); sync(); });
   if (matchMedia('(hover: none)').matches) hint.textContent = 'Hold control, option, space on your Mac.';
 
+  // live star count; a site can't star for you, so the link opens the repo's Star button
+  fetch('https://api.github.com/repos/SaarthurR/atticus-mac').then(r => r.json())
+    .then(d => { if (d.stargazers_count != null) document.getElementById('stars').textContent = ' · ' + d.stargazers_count; }).catch(() => {});
   for (const b of document.querySelectorAll('.copy')) b.onclick = async e => {
     await navigator.clipboard.writeText(b.previousElementSibling.innerText.replace(/^\$\s*/, ''));
     e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1600);
