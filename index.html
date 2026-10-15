@@ -235,7 +235,7 @@
 
 <nav>
   <a class="brand" href="#"><canvas data-orb="breathing"></canvas>Atticus</a>
-  <a class="gh" href="https://github.com/SaarthurR/atticus-mac">★ Star on GitHub<span id="stars"></span></a>
+  <a class="gh" href="https://github.com/SaarthurR/atticus-mac">★<span id="stars"></span></a>
 </nav>
 
 <section class="hero">
@@ -448,7 +448,7 @@
 
   // live star count; a site can't star for you, so the link opens the repo's Star button
   fetch('https://api.github.com/repos/SaarthurR/atticus-mac').then(r => r.json())
-    .then(d => { if (d.stargazers_count != null) document.getElementById('stars').textContent = ' · ' + d.stargazers_count; }).catch(() => {});
+    .then(d => { if (d.stargazers_count != null) document.getElementById('stars').textContent = ' ' + d.stargazers_count; }).catch(() => {});
   for (const b of document.querySelectorAll('.copy')) b.onclick = async e => {
     await navigator.clipboard.writeText(b.previousElementSibling.innerText.replace(/^\$\s*/, ''));
     e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1600);
