@@ -42,6 +42,30 @@ for enabled in [false, true, false] {
                                     env={**os.environ, "ATTICUS_DIR": root})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_start_agents_switch_becomes_long_asks_move_by_itself_once(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        prefs = source[source.index("enum Prefs"):source.index("func applySharing(")]
+        swift = """import Foundation
+let controlKey = 1, optionKey = 2
+""" + prefs + """
+precondition(Prefs.str("longAsks") == CommandLine.arguments[1] && Prefs.d["agentsAuto"] == nil, "migration")
+let disk = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: Prefs.path))) as! [String: Any]
+precondition(disk["agentsAuto"] == nil || CommandLine.arguments[2] == "kept", "the old key stayed on disk")
+precondition(disk["longAsks"] as? String == CommandLine.arguments[1], "atticus.py would read the old choice")
+"""
+        with tempfile.TemporaryDirectory() as root:
+            path, binary = Path(root) / "migrate.swift", Path(root) / "migrate"
+            path.write_text(swift)
+            compiled = subprocess.run(["swiftc", str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            settings = Path(root) / "settings.json"
+            # on: moves by itself, now and after the next launch; off with Never ask: the choice stays
+            for before, want, disk in [('{"agentsAuto": true, "longAsks": "ask"}', "auto", "gone"), (None, "auto", "gone"),
+                                       ('{"agentsAuto": false, "longAsks": "never"}', "never", "kept")]:
+                if before: settings.write_text(before)
+                result = subprocess.run([str(binary), want, disk], capture_output=True, text=True, env={**os.environ, "ATTICUS_DIR": root})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_settings_are_private_and_usage_counts_final_rows(self):
         source = (ROOT / "Atticus.swift").read_text()
         prefs = source[source.index("enum Prefs"):source.index("func audioProp")]

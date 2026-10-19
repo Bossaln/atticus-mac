@@ -23,6 +23,9 @@ page('welcome');await go('perms');
 w.ob.plan({ok:false,need:'upgrade',client:'claude',text:'Atticus needs a paid Claude plan (Pro or Max).'});w.ob.server({apiBase:'',apiModel:''});assert($('client-alt').textContent==='Change provider','Plan row offers Change provider');
 $('client-alt').click();await wait(300);assert(!$('prov').hidden&&d.querySelector('.opt[data-p="claude"]').getAttribute('aria-checked')==='true'&&$('srv').hidden,'Sheet opens on the current provider');
 for(const e of [d.querySelector('#prov .card')]){const r=e.getBoundingClientRect();assert(r.top>=0&&r.bottom<=612&&r.left>=0&&r.right<=640,'Provider sheet fits window')}
+w.ob.local([{name:'Ollama',base:'http://localhost:11434',models:['qwen3']}]);assert(!$('local-offer').hidden&&$('local-use').textContent==='Use Ollama','Running local server is offered');
+$('local-use').click();assert(!$('srv').hidden&&$('srv-base').value==='http://localhost:11434'&&$('srv-model').value==='qwen3'&&!$('prov-use').disabled,'Local offer fills its address and model');
+$('srv-base').value='';$('srv-model').value='';
 d.querySelector('.opt[data-p="server"]').click();assert(!$('srv').hidden&&$('prov-use').disabled,'Custom server needs an address and model');
 d.querySelector('.chip[data-base="http://localhost:11434"]').click();await wait(500);assert(messages.some(m=>m.do==='probe'&&m.base==='http://localhost:11434'),'Ollama quick fill asks the server for models');
 w.ob.models(['qwen3','llama4']);assert($('srv-model').value==='qwen3'&&!$('prov-use').disabled&&$('srv-note').textContent.includes('Found 2'),'Found models fill the Model box');
@@ -30,7 +33,10 @@ $('prov-use').click();await wait(300);assert(messages.some(m=>m.do==='provider'&
 w.ob.plan({ok:false,need:'upgrade',client:'claude',text:'old Claude check'});assert(!$('p-claude').textContent.includes('old Claude check'),'A stale check for the old provider is ignored');
 w.ob.plan({ok:false,need:'install',client:'server',text:'Custom servers run through Claude Code.'});assert($('p-claude').querySelector('.txt b').textContent==='Custom Server'&&$('p-claude').querySelector('.allow').textContent==='Install','Server row offers to install Claude Code');
 $('client-alt').click();await wait(300);d.querySelector('.opt[data-p="devin"]').click();assert($('prov-use').textContent==='Use Devin','Devin choice');
-$('prov').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await wait(300);assert($('prov').hidden&&!messages.some(m=>m.do==='provider'&&m.client==='devin'),'Escape cancels without saving');await go('agents');
+$('prov').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await wait(300);assert($('prov').hidden&&!messages.some(m=>m.do==='provider'&&m.client==='devin'),'Escape cancels without saving');
+$('client-alt').click();await wait(300);d.querySelector('.opt[data-p="pi"]').click();assert($('prov-use').textContent==='Use Pi','Pi choice');$('prov-use').click();await wait(300);assert(messages.some(m=>m.do==='provider'&&m.client==='pi'),'Pi choice is saved');
+w.ob.plan({ok:true,need:'',client:'pi',text:'Pi is installed.'});assert($('p-claude').querySelector('.txt b').textContent==='Pi','Pi plan status is shown');
+w.ob.plan({ok:true,need:'',client:'server',text:'Using a custom server.'});await go('agents');
 assert(messages.some(m=>m.do==='connectors'),'Agents step asks for connector status');
 w.ob.set({mic:true,speech:true,ax:true,screen:false,auto:true,chrome:false,calendar:true,tools:true});w.ob.connectors({connected:['Gmail'],signin:['Notion']});
 assert($('a-ax').classList.contains('ok')&&!$('a-screen').classList.contains('ok')&&$('a-connectors').classList.contains('ok')&&$('a-connectors').textContent.includes('1 need sign-in'),'Agents rows show live status, nothing asked twice');
@@ -41,9 +47,27 @@ w.ob.set({mic:true,speech:true,ax:true,screen:true,auto:true,chrome:true,calenda
 assert($('enable').hidden&&$('agents-next').textContent==='Continue','All on: Continue is the main action');
 await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
 w.ob.tried();await wait(200);assert(!$('try-next').hidden&&$('try-skip').hidden,'Shortcut enables Next');
-await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');w.ob.prefs({pointer:true,meeting:false});
-assert(d.querySelector('[data-k="pointer"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');
-d.querySelector('[data-k="pointer"]').click();await wait(30);assert(messages.some(m=>m.do==='set'&&m.k==='pointer'&&m.v==='false'),'Switch sends native preference');
+await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('dictate');
+const P0={draw:true,meeting:false,routing:'balanced',longAsks:'ask',dictateMode:'verbatim',dictateHotkeyLabel:''},keysIn=()=>[...$('dc-field').querySelectorAll('i')].map(i=>i.textContent).join('');
+w.ob.prefs(P0);assert($('dc-field').textContent==='Record Shortcut'&&$('dc-clear').hidden&&$('dc-mode').classList.contains('dim'),'Dictation starts with no shortcut and its mode greyed');
+$('dc-field').click();await wait(30);assert(messages.some(m=>m.do==='recordDictate')&&$('dc-field').classList.contains('rec')&&$('dc-field').textContent==='Type Shortcut','Clicking the field records the next keys');
+w.ob.rec('⌃⌥');assert(keysIn()==='⌃⌥','Held keys show live');w.ob.prefs(P0);assert($('dc-field').classList.contains('rec')&&keysIn()==='⌃⌥','The every-second refresh leaves a recording alone');
+w.ob.taken('dictate',false);w.ob.recorded('');assert($('dc-hint').className==='warn'&&$('dc-hint').textContent.includes('Another app')&&$('dc-field').textContent==='Record Shortcut','A clash warns in place and keeps the old shortcut');
+$('dc-field').click();await wait(30);w.ob.recorded('⌃⌥D');assert(!$('dc-field').classList.contains('rec')&&keysIn()==='⌃⌥D'&&!$('dc-clear').hidden&&!$('dc-mode').classList.contains('dim'),'A recorded shortcut shows its keys, a clear button and its mode');
+d.querySelector('#dc-mode [data-v=cleanup]').click();await wait(30);assert(messages.some(m=>m.do==='set'&&m.k==='dictateMode'&&m.v==='cleanup'),'Dictation mode is saved');
+$('dc-clear').click();await wait(30);assert(messages.some(m=>m.do==='clearDictate')&&$('dc-field').textContent==='Record Shortcut','Clear removes the shortcut');
+$('dc-field').click();await wait(30);await go('point');assert(messages.some(m=>m.do==='cancelRecord'),'Leaving mid-recording cancels it');
+assert(d.querySelector('[data-k="draw"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');
+d.querySelector('[data-k="draw"]').click();await wait(30);assert(messages.some(m=>m.do==='set'&&m.k==='draw'&&m.v==='false'),'Switch sends native preference');
+w.ob.plan({ok:true,need:'',client:'pi',text:'Pi is installed.'});d.querySelector('#point [data-go="work"]').click();await wait(750);page('meeting');
+$('back').click();await wait(750);page('point');
+w.ob.plan({ok:true,need:'',client:'server',text:'Using a custom server.'});w.ob.prefs(P0);await go('work');assert($('wk-brain').hidden,'A custom server hides Intelligence');
+w.ob.plan({ok:true,need:'',client:'claude',text:'Signed in.'});w.ob.prefs(P0);
+assert(!$('wk-brain').hidden&&$('wk-why').textContent.includes('quick asks')&&d.querySelector('[data-k=routing] [data-v=balanced]').getAttribute('aria-pressed')==='true','Intelligence shows the current mode and why');
+d.querySelector('[data-k=routing] [data-v=cheapest]').click();d.querySelector('[data-k=longAsks] [data-v=auto]').click();await wait(30);
+assert(messages.some(m=>m.do==='set'&&m.k==='routing'&&m.v==='cheapest')&&messages.some(m=>m.do==='set'&&m.k==='longAsks'&&m.v==='auto')&&$('wk-why').textContent.includes('least'),'Work choices save and explain themselves');
+assert($('work').textContent.includes('⌃⌥↩'),'The work page names the move shortcut');
+for(const e of $('work').querySelectorAll('.row')){const r=e.getBoundingClientRect();assert(r.right<=640&&r.bottom<=612,'Fits window work / '+e.textContent.slice(0,12))}
 await go('meeting');assert($('meeting').textContent.includes('Settings → Meetings')&&!!$('mt-archive'),'Meeting preview includes the local archive');await go('improve');
 for(const e of $('improve').children){const r=e.getBoundingClientRect();assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window improve / '+e.className)}
 assert($('improve').textContent.includes('Anonymous')&&d.querySelector('#improve .bar2 .btn:not(.quiet)').textContent==='Help Improve','Improve page says what is sent; Help Improve is the main action');

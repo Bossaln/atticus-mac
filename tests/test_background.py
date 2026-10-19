@@ -38,6 +38,10 @@ class BackgroundTests(unittest.TestCase):
         self.assertEqual(self.gate(f'echo ready && env {atticus.ME} ask again'), 'deny')
         self.assertEqual(self.gate(f'python3 {atticus.ME} --hands see Notes'), 'allow')
         self.assertEqual(self.gate('osascript -e \'tell application "Notes" to activate\''), 'deny')
+        for separator in (';', '&&', '|', '\n', '\n\n'):
+            with self.subTest(separator=separator):
+                self.assertEqual(self.gate('true' + separator + 'open -a Fixture'), 'deny')
+                self.assertEqual(self.gate('true' + separator + 'open -g -a Fixture'), 'allow')
         self.assertEqual(self.gate('open -a Notes'), 'deny')
         self.assertEqual(self.gate('env open -a Notes'), 'deny')
         self.assertEqual(self.gate('xargs open -a Notes'), 'deny')

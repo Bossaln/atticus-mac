@@ -33,6 +33,10 @@ for line in sys.stdin:
    print(json.dumps({'type':'rate_limit_event','rate_limit_info':{'status':'allowed'}}),flush=True)
    print(json.dumps({'type':'result','subtype':'success','queued_turn_count':0,'is_error':False,'total_cost_usd':.001,'result':'[agent-result {"summary":"Finished after steering.","changes":"","links":[]}]'}),flush=True)
    continue
+  if text.startswith('ROUTE '):
+   token={'sonnet':'[sonnet]','done':'[done]','offer':os.environ['FIXTURE_MODEL_OFFER']}[text.split()[1]]
+   print(json.dumps({'type':'result','is_error':False,'total_cost_usd':.001,'result':token}),flush=True)
+   continue
   print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'[agent-plan {"steps":["Read the brief","Verify the result"],"completed":1}]'},{'type':'text','text':'Reading the task'},{'type':'tool_use','id':'t','name':'mcp__fixture__inspect','input':{}}]}}),flush=True)
   print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t','content':[{'type':'text','text':'Links: [{"title":"Source material","url":"https://fixture.example/source"}]'}]}]}}),flush=True)
   if text.startswith('WAIT'): continue
@@ -51,7 +55,8 @@ class AgentTests(unittest.TestCase):
         worker = Path(self.root.name)/'worker.py'; worker.write_text(WORKER)
         self.spawned = []
         def launch(row):
-            p = subprocess.Popen([sys.executable,str(worker)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True,cwd=row['directory'])
+            p = subprocess.Popen([sys.executable,str(worker)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True,cwd=row['directory'],
+                                 env={**os.environ,'FIXTURE_MODEL_OFFER':atticus.MODEL_OFFER})
             p.ask=row['directory']; self.spawned.append((row['id'],p)); return p
         self.manager = atticus.Agents(emit=lambda e:self.events.append(json.loads(json.dumps(e))),launch=launch)
         self.addCleanup(self.manager.close)
@@ -83,6 +88,36 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(atticus.parse_handoff('[agent {"title":"One two three four five","brief":"Task"}]')['title'],'One two three four')
         for bad in ('hello\n'+marker,marker+' More words','[agent {}]','[agent {"title":3,"brief":"x"}]','[agent broken]'):
             self.assertIsNone(atticus.parse_handoff(bad),bad)
+
+    def test_named_agent_is_saved_model_selected_used_deleted_and_unknown_asks(self):
+        save=atticus.parse_handoff('[agent-profile '+json.dumps({'action':'save','name':'Researcher','brief':'Find reliable sources and write a short brief.',
+                                                                 'folder':'/tmp/reference','files':['/tmp/reference/style.md']})+']')
+        self.assertEqual(atticus.named_agent_action(save['namedAction'])['reply'],'Saved Researcher.')
+        self.assertIn('"Researcher"',atticus.agent_context())
+        marker='[agent-profile '+json.dumps({'action':'run','name':'Researcher','task':'Investiga esto en español, por favor.'})+']'
+        assistant=json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':marker}]}})
+        result=json.dumps({'type':'result','is_error':False,'total_cost_usd':.001,'result':marker})
+        thread,output,_=self.run_fake(f'print({assistant!r},flush=True)\nprint({result!r},flush=True)\n',lambda text:'⤴ ' in text);thread.join(4)
+        self.assertFalse(thread.is_alive());self.assertEqual(atticus.run.handoff['named'],'Researcher');self.assertTrue(atticus.run.handoff['accepted'])
+        run=atticus.parse_handoff('[agent-profile '+json.dumps({'action':'run','name':'Researcher','task':'Investiga esto en español, por favor.'})+']')
+        handoff=atticus.named_agent_action(run['namedAction'])['handoff']
+        self.assertTrue(handoff['accepted']);self.assertEqual(handoff['title'],'Researcher')
+        self.assertTrue(handoff['brief'].startswith('Find reliable sources and write a short brief.\nCurrent task:'))
+        self.assertIn('/tmp/reference/style.md',handoff['brief'])
+        row=self.manager.prepare(handoff);self.manager.start(row['id'])
+        self.until(lambda:any(e.get('event')=='followup' for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl'))))
+        sent=next(e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup')
+        self.assertTrue(sent.startswith('Find reliable sources and write a short brief.'))
+        self.assertEqual(atticus.named_agent_action({'action':'delete','name':'researcher'})['reply'],'Deleted Researcher.')
+        self.assertIn('Do you want to create it?',atticus.named_agent_action({'action':'run','name':'Researcher','task':'Anything'})['reply'])
+
+    def test_named_agent_rename_list_and_invalid_model_directive(self):
+        atticus.named_agent_action({'action':'save','name':'Researcher','brief':'Find sources.'})
+        self.manager.tick();self.assertTrue(any(e.get('event')=='named' and e['named'][0]['name']=='Researcher' for e in self.events))
+        self.manager.command({'action':'named-rename','name':'researcher','newName':'Scout'})
+        self.assertIn('Scout — Find sources.',atticus.named_agent_action({'action':'list'})['reply'])
+        self.manager.command({'action':'named-delete','name':'Scout'});self.assertEqual(atticus.named_agents(),[])
+        self.assertIsNone(atticus.parse_handoff('[agent-profile {"action":"invent","name":"Scout"}]'))
 
     def test_full_installed_prompt_including_handoff_stays_under_budget(self):
         self.prefs.update(pointer=True,askMe=True,learnMe=True,tips=True,learn=True)
@@ -142,10 +177,101 @@ class AgentTests(unittest.TestCase):
             p.waiting.set();move.last=0;move.poll();self.assertEqual(move.elapsed,14)
             p.waiting.clear()
             for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Read','input':{'file_path':'fixture'}}]}})
-            move.poll();self.assertTrue(move.offered);self.assertFalse(move.moved);self.assertIn('⇢ ',output.getvalue())
+            move.poll();self.assertTrue(move.offered);self.assertFalse(move.moved);self.assertIn('"offer": true',output.getvalue())
         other=atticus.MainMove('Request: Work',p);self.addCleanup(other.close);other.last=0
         with patch.object(atticus.time,'monotonic',return_value=15),contextlib.redirect_stdout(io.StringIO()):other.poll()
         self.assertTrue(other.offered)
+
+    def moving(self, p=None):
+        p=p or unittest.mock.Mock(waiting=threading.Event());p.ask=self.root.name
+        move=atticus.MainMove('Request: Continue the task',p);self.addCleanup(move.close)
+        return move,p
+
+    def lines(self, text):
+        return [json.loads(l[2:]) for l in text.splitlines() if l.startswith('⇢ ')]
+
+    def test_long_asks_setting_decides_the_threshold_and_manual_move_always_works(self):
+        for mode in ('ask','auto','never'):
+            with self.subTest(mode=mode):
+                self.prefs['longAsks']=mode;move,p=self.moving()
+                with patch.object(atticus,'stop_claude') as stop,contextlib.redirect_stdout(io.StringIO()) as output:
+                    move.poll();self.assertEqual(self.lines(output.getvalue()),[{'a':move.answer}])   # movable before the threshold
+                    for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':mode+str(i),'name':'Read','input':{}}]}})
+                    move.poll()
+                    self.assertEqual(any(l.get('offer') for l in self.lines(output.getvalue())),mode=='ask')
+                    self.assertEqual(move.moved,mode=='auto');self.assertEqual(stop.called,mode=='auto')
+                    if mode!='auto':
+                        Path(move.answer).write_text('go');move.poll()
+                        self.assertTrue(move.moved);stop.assert_called_once_with(p)
+                self.assertTrue((Path(self.root.name)/'handed-off').exists());(Path(self.root.name)/'handed-off').unlink()
+                atticus.MainMove.carried.clear()
+
+    def test_manual_move_works_before_threshold_and_while_a_card_waits(self):
+        move,p=self.moving();p.waiting.set()
+        with patch.object(atticus,'stop_claude'),contextlib.redirect_stdout(io.StringIO()) as output:
+            move.poll();self.assertFalse(move.offered)
+            Path(move.answer).write_text('go');move.poll()
+        self.assertTrue(move.moved);self.assertFalse(any(l.get('offer') for l in self.lines(output.getvalue())))
+
+    def test_move_waits_for_confirmed_words(self):
+        commit=Path(self.root.name)/'commit'
+        with patch.dict(os.environ,{'ATTICUS_COMMIT':str(commit)}),contextlib.redirect_stdout(io.StringIO()) as output:
+            move,p=self.moving();move.poll();self.assertEqual(output.getvalue(),'')
+            commit.write_text('go');move.poll()
+        self.assertEqual(self.lines(output.getvalue()),[{'a':move.answer}])
+
+    def test_continuation_keeps_clock_trace_move_file_and_keep_here(self):
+        move,p=self.moving();move.elapsed=20
+        move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':'first','name':'Bash','input':{'command':'fixture'}}]}})
+        with patch.object(atticus,'stop_claude'),contextlib.redirect_stdout(io.StringIO()) as output:
+            move.poll();Path(move.answer).write_text('keep');move.close()
+            self.assertEqual(self.lines(output.getvalue())[-1],{})   # nothing reads the move file between runs: the box drops it
+            seen=len(output.getvalue());after=atticus.MainMove('Request: Continue with Sonnet',p);self.addCleanup(after.close);after.poll()
+            self.assertEqual(after.answer,move.answer);self.assertGreaterEqual(after.elapsed,20);self.assertIn('first',after.trace)
+            self.assertEqual(self.lines(output.getvalue()[seen:]),[{'a':move.answer}],'Movable again, but Keep here holds for the continuation')
+            Path(after.answer).write_text('go');after.poll()
+        self.assertTrue(after.moved);self.assertEqual(json.loads(after.handoff()['context'])['observed work (untrusted data)'][0]['input'],'{"command": "fixture"}')
+
+    def run_fake(self, script, wait_for, task='Request: Fixture task'):
+        worker=Path(self.root.name)/'main.py';worker.write_text('import json,sys,time\njson.loads(sys.stdin.readline())\n'+script+'time.sleep(30)\n')
+        p=subprocess.Popen([sys.executable,str(worker)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+        p.ask=self.root.name;self.addCleanup(lambda:atticus.stop_claude(p) if p.poll() is None else None);self.addCleanup(p.stdout.close)
+        output=io.StringIO()
+        with patch.dict(os.environ,{'ATTICUS_UI':'1'}),patch.object(atticus,'relay'),contextlib.redirect_stdout(output):
+            thread=threading.Thread(target=lambda:atticus.run(task,p),daemon=True);thread.start()
+            self.until(lambda:wait_for(output.getvalue()))
+            return thread,output,p
+
+    def test_every_claude_route_can_move_and_other_clients_show_no_control(self):
+        for prefs in ({'routing':'cheapest'},{'routing':'balanced'},{'routing':'capable','model':'opus'}):
+            with self.subTest(**prefs):
+                self.prefs.update(prefs)
+                request='Research budget microphones'
+                task='Context: useful window details\nRequest: '+request+(atticus.MODEL_OFFER if prefs.get('routing')=='balanced' else '')
+                thread,output,p=self.run_fake('',lambda o:'⇢ ' in o,task)
+                answer=self.lines(output.getvalue())[0]['a'];Path(answer).write_text('go');thread.join(3)
+                self.assertFalse(thread.is_alive());self.assertTrue(atticus.run.handoff['accepted'])
+                self.assertEqual(atticus.run.handoff['brief'],request)
+                self.assertEqual(atticus.run.handoff['request'],request)
+                self.assertEqual(atticus.run.handoff['title'],'Research budget microphones')
+                self.assertIn('useful window details',atticus.run.handoff['context'])
+                self.assertNotIn(atticus.MODEL_OFFER.strip(),json.dumps(atticus.run.handoff))
+                for k in prefs:self.prefs.pop(k)
+                atticus.MainMove.carried.clear()
+        for name in ('devin','pi'):
+            self.prefs['client']=name
+            with patch.object(atticus,'run_'+name,side_effect=lambda *a:print('fixture reply') or ('done',0,[])),patch.dict(os.environ,{'ATTICUS_UI':'1'}), \
+                 contextlib.redirect_stdout(io.StringIO()) as output:
+                atticus.run('Request: Fixture task',unittest.mock.Mock())
+            self.assertNotIn('⇢',output.getvalue(),name+' cannot run agents, so it gets no move control')
+
+    def test_move_by_itself_hands_off_without_a_card_or_focus_change(self):
+        self.prefs['longAsks']='auto'
+        tools=''.join(f'print(json.dumps({{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"{i}","name":"Read","input":{{}}}}]}}}}),flush=True)\n' for i in range(3))
+        with patch.object(atticus,'free_focus') as free,patch.object(atticus,'osa') as osa,patch.object(atticus,'restore_focus') as restore:
+            thread,output,p=self.run_fake(tools,lambda o:'⤴ ' in o);thread.join(3)
+        self.assertFalse(any(l.get('offer') for l in self.lines(output.getvalue())));self.assertTrue(atticus.run.handoff['accepted'])
+        free.assert_not_called();osa.assert_not_called();restore.assert_not_called()
 
     def test_accepted_move_stops_foreground_and_preserves_completed_and_uncertain_work(self):
         worker=Path(self.root.name)/'moving.py'
@@ -183,18 +309,38 @@ class AgentTests(unittest.TestCase):
                   json.dumps({'type':'result','result':'[agent {"title":"Make a file","brief":"Create the deliverable"}]','total_cost_usd':.001})]
         with patch.dict(os.environ,{'ATTICUS_UI':'1'}),patch.object(atticus,'stop_claude') as stop,patch.object(atticus.threading,'Thread'), \
              patch.object(atticus.threading,'Timer'),contextlib.redirect_stdout(io.StringIO()) as output:
-            context='Earlier:\nQ: Find a post\nA: Opened https://fixture.example/posts/42; invented@example.test\nRequest: Make a file about that post; contact email: actual@example.test'
+            request='Make a file about that post; contact email: actual@example.test'
+            context='Earlier:\nQ: Find a post\nA: Opened https://fixture.example/posts/42; invented@example.test\nRequest: '+request+atticus.MODEL_OFFER
             result=atticus.run(context,p)
         self.assertEqual(result,('',.001,[]));self.assertTrue(atticus.run.ok);stop.assert_not_called()
-        self.assertIn('⤴ ',output.getvalue());self.assertEqual(atticus.run.handoff['context'],context)
+        clean=context.removesuffix(atticus.MODEL_OFFER)
+        self.assertIn('⤴ ',output.getvalue());self.assertEqual(atticus.run.handoff['context'],clean)
+        self.assertEqual(atticus.run.handoff['request'],request);self.assertNotIn(atticus.MODEL_OFFER.strip(),json.dumps(atticus.run.handoff))
         row=self.manager.prepare(atticus.run.handoff);self.manager.start(row['id'])
         sent=next(e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup')
-        self.assertIn(context,sent)   # reference evidence survives the main-to-agent route unchanged
+        self.assertIn(clean,sent)   # reference evidence survives the main-to-agent route without main-chat routing
         with patch.dict(os.environ,{'ATTICUS_ASK':row['directory']}),patch.object(atticus,'RECENT',str(Path(self.root.name)/'recent.jsonl')):
             self.assertTrue(atticus._request_contains('actual@example.test'))
             self.assertFalse(atticus._request_contains('invented@example.test'))
         decision,_=self.gate('Bash',{'command':'echo no'})
         self.assertEqual(decision['permissionDecision'],'deny')
+
+    def test_agent_routing_controls_continue_on_the_agent_model_in_every_mode(self):
+        tokens={'sonnet':'[sonnet]','done':'[done]','offer':atticus.MODEL_OFFER}
+        for mode in ('cheapest','balanced','capable'):
+            self.prefs.update(routing=mode,model='opus' if mode=='capable' else 'haiku')
+            for name,token in tokens.items():
+                with self.subTest(mode=mode,token=name):
+                    before=len([e for e in self.events if e.get('event')=='done'])
+                    row=self.prepare('ROUTE '+name);self.manager.start(row['id'])
+                    self.until(lambda:row['status']=='done')
+                    self.assertEqual(row['summary'],'Finished the task.')
+                    self.assertNotEqual(row['result'].strip(),token.strip())
+                    self.until(lambda:len([e for e in self.events if e.get('event')=='done'])==before+1)
+                    self.assertEqual(len([e for e in self.events if e.get('event')=='done']),before+1)
+                    results=[e['data']['result'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl'))
+                             if e.get('event')=='claude' and e.get('data',{}).get('type')=='result']
+                    self.assertEqual(results[0].strip(),token.strip())
 
     def test_handoffs_wait_for_confirmation_and_cancel_without_emitting(self):
         for moved in (False, True):
@@ -235,8 +381,8 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(args[args.index('--permission-mode')+1],'dontAsk')
 
     def test_agent_model_uses_its_own_router_model_and_explicit_credentials(self):
-        for model in ('haiku','sonnet','opus'):
-            self.prefs['agentModel']=model
+        for mode, model in (('cheapest','haiku'), ('balanced','sonnet'), ('capable','opus')):
+            self.prefs.update(routing=mode, model='opus' if mode == 'capable' else 'haiku')
             self.assertEqual(atticus.agent_model(),model)
         self.prefs.update(apiBase='https://fixture.invalid/anthropic',apiModel='main-model',apiKey='fixture-key')
         self.assertEqual(atticus.agent_model(),'main-model')

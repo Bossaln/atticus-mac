@@ -29,10 +29,21 @@ class HandsTests(unittest.TestCase):
         check = {'args': list(args), 'labels':labels, 'risky':risky, 'secure':secure, 'pid':123, 'signature':'map', 'windowID':'42', 'windowFrame':[10,20,300,200], 'window':'Fixture', 'app':'Fixture'}
         return Mock(returncode=0,stdout=json.dumps(check)), Mock(returncode=0,stdout='Clicked "Send"\nNow: Sent'), check
 
+    def session(self, *pairs):
+        pairs = list(pairs)
+        def run(args, authorize, timeout=30):
+            resolved, acted = pairs.pop(0)
+            if resolved.returncode:
+                return None, resolved
+            check = json.loads(resolved.stdout)
+            return check, acted if authorize(check) else Mock(returncode=1, stdout='Action cancelled.')
+        return run
+
     def test_main_ask_missing_permissions_use_allow_card(self):
         Path(self.root.name, 'hands.json').unlink()
         with patch.object(atticus, 'hands_map', return_value=None), \
              patch.object(atticus, 'hands_call', return_value=Mock(returncode=1, stdout='Accessibility is off.')), \
+             patch.object(atticus, 'hands_action', return_value=(None, Mock(returncode=1, stdout='Accessibility is off.'))), \
              patch.object(atticus, 'ask_user', return_value='n') as ask:
             for args in (('click', 'Fixture'), ('see', 'Fixture'), ('menu', 'Fixture', 'File > Export')):
                 text, ok = atticus.hands(*args)
@@ -103,7 +114,7 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
     def test_risky_id_and_coordinate_resolve_label_and_no_means_no_action(self):
         for target,label in [('12','Send'), ('3:640,212','Delete draft')]:
             args = ['click',target]; resolved, acted, check = self.result(args,[label])
-            with patch.object(atticus,'hands_call',side_effect=[resolved,acted]) as call, patch.object(atticus,'ask_user',return_value='n') as ask:
+            with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call, patch.object(atticus,'ask_user',return_value='n') as ask:
                 text,ok = atticus.hands(*args)
             self.assertFalse(ok); self.assertIn('user said no',text); self.assertEqual(call.call_count,1)
             self.assertEqual(ask.call_args.args[0]['q'],f'Click "{label}"?')
@@ -111,56 +122,56 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
     def test_yes_and_full_access_bind_execution_to_checked_app_and_map(self):
         args = ['click','Send']; resolved, acted, check = self.result(args,['Send'])
         for safe in (True,False):
-            with patch.object(atticus,'hands_call',side_effect=[resolved,acted]) as call, patch.object(atticus,'ask_user',return_value='y') as ask, patch.object(atticus,'pref',return_value=safe):
+            with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call, patch.object(atticus,'ask_user',return_value='y') as ask, patch.object(atticus,'pref',return_value=safe):
                 self.assertTrue(atticus.hands(*args)[1])
-            self.assertEqual(call.call_args.kwargs['receipt'],check)
+            self.assertEqual(call.call_args.args[0],args)
             self.assertEqual(ask.call_count,int(safe))
 
     def test_risky_keys_submit_drag_and_chain_each_ask(self):
         for args,labels in [(['press','cmd+q'],['Name','cmd+q']), (['type','Message','Hello','submit'],['Message']), (['drag','Draft','Trash'],['Draft','Trash'])]:
             resolved, acted, _ = self.result(args,labels)
-            with patch.object(atticus,'hands_call',side_effect=[resolved,acted,resolved,acted]) as call, patch.object(atticus,'ask_user',side_effect=['y','n']) as ask:
+            with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted),(resolved,acted))) as call, patch.object(atticus,'ask_user',side_effect=['y','n']) as ask:
                 self.assertTrue(atticus.hands(*args)[1]); self.assertFalse(atticus.hands(*args)[1])
-            self.assertEqual(ask.call_count,2); self.assertEqual(call.call_count,3)
+            self.assertEqual(ask.call_count,2); self.assertEqual(call.call_count,2)
 
     def test_cancel_and_neutral_dialog_buttons_only_use_native_context_risk(self):
         for label,risk in [('Cancel',False),('OK',False),('Allow',False),('OK',True),('Confirm',True)]:
             resolved,acted,_ = self.result(['click',label],[label],risk)
-            with patch.object(atticus,'hands_call',side_effect=[resolved,acted]) as call, \
+            with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call, \
                  patch.object(atticus,'ask_user',return_value='y') as ask:
                 self.assertTrue(atticus.hands('click',label)[1])
-            self.assertEqual(ask.call_count,int(risk)); self.assertEqual(call.call_count,2)
+            self.assertEqual(ask.call_count,int(risk)); self.assertEqual(call.call_count,1)
 
     def test_no_allow_channel_failures_and_cancel_never_act(self):
         resolved,acted,_ = self.result(['click','Send'],['Send'])
-        with patch.dict(os.environ,{},clear=True), patch.object(atticus,'hands_call',return_value=resolved) as call:
+        with patch.dict(os.environ,{},clear=True), patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call:
             self.assertFalse(atticus.hands('click','Send')[1]); self.assertEqual(call.call_count,1)
-        with patch.object(atticus,'wait_commit',return_value=False), patch.object(atticus,'hands_call') as call:
+        with patch.object(atticus,'wait_commit',return_value=False), patch.object(atticus,'hands_action') as call:
             self.assertFalse(atticus.hands('click','Export')[1]); call.assert_not_called()
-        with patch.object(atticus,'hands_call',return_value=Mock(returncode=1,stdout='The screen changed. Run see again.')) as call:
+        with patch.object(atticus,'hands_action',return_value=(None,Mock(returncode=1,stdout='The screen changed. Run see again.'))) as call:
             self.assertFalse(atticus.hands('click','12')[1]); self.assertEqual(call.call_count,1)
 
     def test_flags_unknown_verbs_and_forged_resolution_are_rejected(self):
-        with patch.object(atticus,'hands_call') as call:
+        with patch.object(atticus,'hands_action') as call:
             for args in [('click','Send','--yes'),('click','Send','--force'),('label','Send'),('approve','12'),('type','Name','text','--append')]:
                 self.assertFalse(atticus.hands(*args)[1])
             call.assert_not_called()
         resolved,_,_ = self.result(['click','Export'],['Export'],False)
-        with patch.object(atticus,'hands_call',return_value=resolved) as call:
+        with patch.object(atticus,'hands_action',side_effect=self.session((resolved,Mock(returncode=0,stdout='Clicked')))) as call:
             self.assertFalse(atticus.hands('click','Send')[1]); self.assertEqual(call.call_count,1)
 
     def test_exact_document_typing_uses_the_safety_wrapper(self):
         args = ['type-after','Question remains:',' Answer.']; resolved,acted,_ = self.result(args,['Question remains:'],False)
-        with patch.object(atticus,'hands_call',side_effect=[resolved,acted]) as call:
+        with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call:
             self.assertTrue(atticus.hands(*args)[1])
-        self.assertEqual(call.call_args.kwargs['receipt']['args'],args)
+        self.assertEqual(call.call_args.args[0],args)
 
     def test_secure_typing_requires_explicit_user_request_even_full_access(self):
         args = ['type','Password','private']; resolved,acted,_ = self.result(args,['Password'],False,True)
-        with patch.object(atticus,'hands_call',side_effect=[resolved,acted]) as call, patch.object(atticus,'pref',return_value=False):
+        with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call, patch.object(atticus,'pref',return_value=False):
             self.assertFalse(atticus.hands(*args)[1]); self.assertEqual(call.call_count,1)
         Path(self.root.name,'request').write_text('Type my password into Password')
-        with patch.object(atticus,'hands_call',side_effect=[resolved,acted]), patch.object(atticus,'pref',return_value=False):
+        with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))), patch.object(atticus,'pref',return_value=False):
             self.assertTrue(atticus.hands(*args)[1])
 
     def test_native_override_commands_are_denied_by_tool_gate(self):
@@ -222,17 +233,21 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
             calls.append(args)
             if args == ['see', 'MenuBarAgent']:
                 return Mock(returncode=0, stdout=bar)
-            if args[:2] == ['label', 'click']:
-                if args[2] == 'Wi-Fi': return Mock(returncode=1, stdout='No visible control named "Wi-Fi".')
-                return Mock(returncode=0, stdout=json.dumps({'args': args[1:], 'labels': [args[2]], 'pid': 1}))
             return Mock(returncode=0, stdout='Wi-Fi panel' if args[0] == 'see' else 'Clicked')
+        def action(args, authorize, timeout=30):
+            calls.append(['session', *args])
+            if args == ['click', 'Wi-Fi']:
+                return None, Mock(returncode=1, stdout='No visible control named "Wi-Fi".')
+            check = {'args':args, 'labels':[args[1]], 'pid':1, 'risky':False, 'secure':False}
+            return check, Mock(returncode=0, stdout='Clicked')
         with patch.object(atticus, 'hands_call', side_effect=call), patch.object(atticus, 'hands_map', return_value={'nodes': []}) as switch, \
+             patch.object(atticus, 'hands_action', side_effect=action), \
              patch.object(atticus.time, 'sleep'):
             self.assertEqual(atticus.menu_bar_icons(), [('Wi\u2011Fi, connected, 3 bars', ''), ('Battery', '95%')])   # not its own Edit menu
             self.assertIn('Menu bar icons, top right', atticus.with_icons('App: Chrome'))
             self.assertIn('Battery (95%)', atticus.hands('see')[0])
             atticus.hands('click', 'Wi-Fi')   # the AI aimed at the front app; the click still lands
-            self.assertIn(['label', 'click', 'Wi\u2011Fi, connected, 3 bars'], calls)
+            self.assertIn(['session', 'click', 'Wi\u2011Fi, connected, 3 bars'], calls)
             self.assertIn(['see', 'Control Center'], calls)
             switch.reset_mock()
             self.assertIsNone(atticus.menu_bar_click('Edit'))
@@ -259,25 +274,27 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
 
     def test_ring_relays_only_coordinates_not_typed_text(self):
         args = ['click','Export']; resolved,_,_ = self.result(args,['Export'],False)
-        with patch.object(atticus,'hands_call',side_effect=[resolved,Mock(returncode=0,stdout='Clicked Export\n@ 20 30\nNow: sheet')]):
+        acted = Mock(returncode=0,stdout='Clicked Export\n@ 20 30\nNow: sheet')
+        with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))):
             result,ok = atticus.hands(*args)
         self.assertTrue(ok); self.assertNotIn('@',result); event = next(Path(self.root.name).glob('hands-*')).read_text().splitlines(); self.assertEqual(event[1], '@ 20 30'); self.assertEqual(json.loads(event[0][2:])['windowID'], '42'); self.assertNotIn('text', event[0])
 
     def test_target_tag_only_for_successful_actions(self):
         for args in [('click','Export'), ('scroll','down'), ('type','Name','hello')]:
             resolved, acted, _ = self.result(args,['Export'],False)
-            with patch.dict(os.environ,{},clear=True), patch.object(atticus,'hands_call',side_effect=[resolved,acted]), patch.object(atticus,'say') as say:
+            with patch.dict(os.environ,{},clear=True), patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))), patch.object(atticus,'say') as say:
                 self.assertTrue(atticus.hands(*args)[1])
                 self.assertEqual(say.call_args.args[0], '▣')
                 self.assertEqual(json.loads(say.call_args.args[1])['pid'],123)
-            with patch.object(atticus,'hands_call',side_effect=[resolved,Mock(returncode=1,stdout='failed')]), patch.object(atticus,'say') as say:
+            failed = Mock(returncode=1,stdout='failed')
+            with patch.object(atticus,'hands_action',side_effect=self.session((resolved,failed))), patch.object(atticus,'say') as say:
                 self.assertFalse(atticus.hands(*args)[1]); say.assert_not_called()
         with patch.object(atticus,'hands_call',return_value=Mock(returncode=0,stdout='map')), patch.object(atticus,'say') as say:
             self.assertTrue(atticus.hands('see')[1]); say.assert_not_called()
 
     def test_request_owner_emits_targets_synchronously_and_relay_drains_helpers(self):
         resolved, acted, _ = self.result(['click','Export'],['Export'],False)
-        with patch.dict(os.environ,{'ATTICUS_RELAY_OWNER':str(os.getpid())}), patch.object(atticus,'hands_call',side_effect=[resolved,acted]), patch.object(atticus,'say') as say:
+        with patch.dict(os.environ,{'ATTICUS_RELAY_OWNER':str(os.getpid())}), patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))), patch.object(atticus,'say') as say:
             self.assertTrue(atticus.hands('click','Export')[1]); self.assertEqual(say.call_args.args[0],'▣')
             self.assertFalse(list(Path(self.root.name).glob('hands-*')))
         Path(self.root.name,'hands-1').write_text('▣ {"pid":123}\n@ 20 30')
@@ -288,10 +305,50 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
 
     def test_fake_app_cli_reports_nonzero_and_uses_scratch_environment(self):
         helper = Path(self.root.name,'fake.py')
-        helper.write_text('#!/usr/bin/env python3\nimport json,sys,os\nassert os.environ["ATTICUS_DIR"] == '+repr(self.root.name)+'\nif sys.argv[2] == "label": print(json.dumps({"args":sys.argv[3:],"labels":["Export"],"pid":123,"risky":False,"secure":False}))\nelse: print("Clicked Export"); assert json.load(sys.stdin)["pid"] == 123\n')
+        helper.write_text('#!/usr/bin/env python3\nimport json,sys,os\nassert os.environ["ATTICUS_DIR"] == '+repr(self.root.name)+'\nargs=sys.argv[2:]\nprint(json.dumps({"args":args,"labels":["Export"],"pid":123,"risky":False,"secure":False}),flush=True)\nassert sys.stdin.read().strip()=="y"\nprint("Clicked Export")\n')
         helper.chmod(0o700)
         with patch.object(atticus,'APP',str(helper)):
             self.assertEqual(atticus.hands('click','Export'),('Clicked Export',True))
+
+    def test_one_process_action_removes_one_fake_capture_and_measures_time(self):
+        helper, log = Path(self.root.name,'fake-capture.py'), Path(self.root.name,'captures')
+        helper.write_text('''#!/usr/bin/env python3
+import json, os, sys, time
+from pathlib import Path
+def capture():
+    with Path(os.environ["CAPTURE_LOG"]).open("a") as f: f.write("capture\\n")
+    time.sleep(.04)
+args = sys.argv[2:]
+actual = args[1:] if args[0] == "label" else args
+check = {"args":actual,"labels":["Export"],"pid":123,"risky":False,"secure":False}
+capture()
+if args[0] == "label":
+    print(json.dumps(check)); raise SystemExit
+if os.environ.get("ATTICUS_HANDS_SESSION") == "1":
+    print(json.dumps(check),flush=True)
+    if sys.stdin.read().strip() != "y": raise SystemExit(1)
+else:
+    json.load(sys.stdin)
+capture()
+print("Clicked Export")
+''')
+        helper.chmod(0o700)
+        args = ['click','Export']
+        def legacy():
+            checked = json.loads(atticus.hands_call(['label',*args]).stdout)
+            self.assertEqual(atticus.hands_call(args,receipt=checked).returncode,0)
+        def session():
+            self.assertEqual(atticus.hands_action(args,lambda _:True)[1].returncode,0)
+        def measure(run):
+            log.unlink(missing_ok=True); began = time.perf_counter()
+            for _ in range(3): run()
+            return len(log.read_text().splitlines()) / 3, (time.perf_counter() - began) * 1000 / 3
+        with patch.object(atticus,'APP',str(helper)), patch.dict(os.environ,{'CAPTURE_LOG':str(log)}):
+            before_captures,before_ms = measure(legacy)
+            after_captures,after_ms = measure(session)
+        self.assertEqual((before_captures,after_captures),(3,2))
+        self.assertLess(after_ms,before_ms)
+        print(f'HANDS FAKE ACTION: captures {before_captures:.0f} -> {after_captures:.0f}; wall {before_ms:.1f} -> {after_ms:.1f} ms/action',flush=True)
 
     def test_text_first_independent_of_request_wording(self):
         snap = Mock(shots=[('fake.jpg', 'Screen 1')])
@@ -373,7 +430,7 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
         resolved,acted,_ = self.result(['type','Password','x'],['Password'],False,True)
         for request in ("what is my password", "don't type my password", "never paste my password"):
             Path(self.root.name,'request').write_text(request)
-            with patch.object(atticus,'hands_call',return_value=resolved) as call:
+            with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call:
                 self.assertFalse(atticus.hands('type','Password','x')[1]); self.assertEqual(call.call_count,1)
 
     def test_replay_rejects_missing_targets_and_ambiguous_shell(self):
@@ -393,7 +450,7 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
                 Path(text.split('\t')[2]).write_text('y')
         with patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,hands_map=lambda _: {'nodes':[{'label':'Name'}]},
                             look=lambda:[],remember_turn=lambda *_:None,log_turn=lambda *_:None), \
-             patch('builtins.print',side_effect=display), patch.object(atticus,'say'), patch.object(atticus,'hands_call',side_effect=[resolved,acted]), \
+             patch('builtins.print',side_effect=display), patch.object(atticus,'say'), patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))), \
              patch.object(atticus,'start_claude') as model, patch.object(atticus,'ask_user',wraps=atticus.ask_user), \
              patch('sys.argv',['atticus.py','press cmd+q']), patch.dict(os.environ,{'ATTICUS_UI':'1'}):
             atticus.main()
@@ -410,7 +467,7 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
     def test_sigterm_and_timeout_kill_only_owned_fake_helper(self):
         helper = Path(self.root.name,'fake-slow')
         ready, marker = Path(self.root.name,'ready'),Path(self.root.name,'survived')
-        helper.write_text('#!/usr/bin/env python3\nimport json,sys,time\nfrom pathlib import Path\nif sys.argv[2] == "label": print(json.dumps({"args":sys.argv[3:],"labels":[],"pid":123,"risky":False,"secure":False}))\nelse:\n json.load(sys.stdin)\n Path('+repr(str(ready))+').touch()\n time.sleep(.5)\n Path('+repr(str(marker))+').touch()\n time.sleep(10)\n')
+        helper.write_text('#!/usr/bin/env python3\nimport json,sys,time,os\nfrom pathlib import Path\nargs=sys.argv[2:]\nif args[0] == "label": print(json.dumps({"args":args[1:],"labels":[],"pid":123,"risky":False,"secure":False}))\nelse:\n if os.environ.get("ATTICUS_HANDS_SESSION") == "1":\n  print(json.dumps({"args":args,"labels":[],"pid":123,"risky":False,"secure":False}),flush=True); sys.stdin.read()\n else: json.load(sys.stdin)\n Path('+repr(str(ready))+').touch()\n time.sleep(.5)\n Path('+repr(str(marker))+').touch()\n time.sleep(10)\n')
         helper.chmod(0o700)
         env = {**os.environ,'ATTICUS_APP':str(helper),'ATTICUS_DIR':self.root.name,'ATTICUS_HANDS_STATE':str(Path(self.root.name,'hands.json'))}
         process = subprocess.Popen([sys.executable,atticus.ME,'--hands','wait'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)

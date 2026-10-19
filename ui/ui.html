@@ -20,6 +20,9 @@
   .elapsed .redo { margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
   .elapsed .redo:hover { color: #f5f5f7; }
   .elapsed b { color: var(--fg2); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .elapsed .move-now { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
+  .elapsed .move-now:hover { color: #f5f5f7; } .elapsed .move-now:disabled { cursor: default; color: var(--fg2); }
+  .elapsed .move-now kbd { height: 16px; font-size: 10px; }
   #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, var(--fg2) 0%, #fff 45%, var(--fg2) 90%); background-size: 200% 100%;
     -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
@@ -41,6 +44,22 @@
     background: #fff; animation: blink 1s steps(1) infinite; }
   .q.empty:not(.hear) { display: none; }
   .q.empty.hear { color: var(--fg2); } .q.empty.hear::before { content: "Listening…"; }   /* voice: the bubble waits for words */
+  /* dictation: the orb (mic level while listening, working after release) beside the transcript, one note under it */
+  body.dictate #card { flex-direction: row; align-items: center; gap: 4px; padding: 6px 10px 6px 6px; }
+  body.dictate #head { height: auto; } body.dictate #head > :not(#orb), body.dictate #comp { display: none; }
+  body.dictate #orb { width: 30px; height: 30px; margin: 0; }
+  body.dictate #thread { flex: 1; min-width: 0; padding: 0; -webkit-mask-image: none; }
+  body.dictate .turn { padding: 0; }
+  body.dictate .turn.old { display: none; }
+  body.dictate .q { position: relative; overflow: hidden; width: auto; max-width: 100%; margin: 0; font-size: 15px; color: #fff; transition: opacity .3s var(--ease); }
+  body.dictate :is(.steps, .a, .sel, .elapsed) { display: none; }
+  .q.finishing::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; will-change: transform;
+    background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%); animation: appear .2s var(--ease) both, sweep 1.2s linear infinite; }
+  .dn { display: none; }
+  body.dictate .dn { display: flex; align-items: center; gap: 6px; margin: 5px 0 0 4px; font-size: 11.5px; line-height: 16px; color: var(--fg2); animation: in .25s var(--ease) both; }
+  body.dictate .dn:empty { display: none; }
+  .dn.ok { color: #f5f5f7; }
+  .dn.ok::before { content: ""; flex: none; width: 8px; height: 4px; border-left: 1.5px solid #30d158; border-bottom: 1.5px solid #30d158; transform: translateY(-1px) rotate(-45deg); }
 
   .steps { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
   .steps:empty { display: none; }
@@ -229,6 +248,7 @@
   .mem-i:hover em, .mem-i:focus-visible em { opacity: 1; }
 
   .turn:has(.ok:not(.move-option):not(.gone),.pk:not(.gone)) .move-option { display:none; }
+  .move-option .prefs { display:flex; justify-content:center; gap:16px; margin-top:9px; } .ok.offer .prefs .off { margin:0; }
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
   #comp { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin-top .24s var(--ease), opacity .18s; }
   #comp.open { height: 36px; margin-top: 12px; opacity: 1; }
@@ -249,12 +269,13 @@
     background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); transition: background .25s, box-shadow .25s, opacity .22s var(--ease), transform .38s var(--ease); }
   #ask::placeholder { color: var(--fg2); }
   #ask:focus { background: rgba(255,255,255,.12); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.22), 0 0 0 3px rgba(10,132,255,.35); }
-  #mic { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer;
+  #point, #mic { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer;
     background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.26), rgba(255,255,255,.07) 60%);
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 2px 6px rgba(0,0,0,.22); transition: transform .35s var(--spring), background .25s, opacity .22s var(--ease); }
-  #mic:hover { transform: scale(1.1); background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.4), rgba(255,255,255,.12) 60%); }
-  #mic:active { transform: scale(.94); }
-  #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; }
+  #point:hover, #mic:hover { transform: scale(1.1); background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.4), rgba(255,255,255,.12) 60%); }
+  #point:active, #mic:active { transform: scale(.94); }
+  #point svg, #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #point.active, #point.marked { background: rgba(10,132,255,.55); }
 
   /* resize: drag the bottom-right corner */
   #grip { position: absolute; right: 4px; bottom: 4px; width: 12px; height: 12px; opacity: 0; transition: opacity .25s; cursor: nwse-resize; }
@@ -271,6 +292,7 @@
   @keyframes pop { from { opacity: 0; transform: scale(.94) translateY(-6px); } to { opacity: 1; transform: none; } }
   @keyframes in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
   @keyframes word { from { opacity: 0; filter: blur(5px); transform: translateY(3px); } to { opacity: 1; filter: none; transform: none; } }
+  @keyframes appear { to { opacity: 1; } }
   @keyframes pulse { 50% { opacity: .3; } }
   @keyframes blink { 50% { opacity: 0; } }
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
@@ -308,6 +330,7 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
     #status.live span { background: none; color: #f5f5f7; }
+    .q.finishing { opacity: .6; } .q.finishing::after { content: none; }   /* still waiting, without the sweep */
     .mini { transform: none !important; transition: opacity .2s !important; }
     .mini-point { animation: none !important; transition: opacity .2s !important; }
   }
@@ -318,6 +341,7 @@
   <div id="thread"></div>
   <div id="comp" inert><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <div id="models" role="menu" aria-label="Model"></div><button id="model" title="Model" aria-label="Model" hidden></button>
+    <button id="point" title="Draw on screen" aria-label="Draw on screen" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 17c4-9 9 4 16-10M5 20h14"/></svg></button>
     <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
 </div>
 <div class="e" id="eL"></div><div class="e" id="eR"></div><div class="e" id="eT"></div><div class="e" id="eB"></div>
@@ -347,6 +371,12 @@
 
   const turn = () => $('thread').lastElementChild;
   const part = c => turn()?.querySelector('.' + c);
+  let finishTimer = 0;
+  const note = (s, ok) => {   // dictation's one line under the transcript
+    const t = turn(); if (!t) return;
+    let n = part('dn'); if (!n) { n = document.createElement('div'); n.setAttribute('role', 'status'); const q = part('q'); q ? q.after(n) : t.append(n); }
+    n.className = ok ? 'dn ok' : 'dn'; n.textContent = s || ''; fit();
+  };
   const post = m => webkit.messageHandlers.c.postMessage(m);
   let atBottom = true;   // the user scrolled up to read: new steps must not yank them back down
   // only the user's own wheel/trackpad decides (our scrolls and growing steps must not): up = stay put, back to the bottom = follow again
@@ -414,6 +444,7 @@
     pickTimer = setTimeout(() => pickRow(false), reduced.matches ? 0 : 170);
   };
   $('models').onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); pickRow(false); $('model').focus(); } };
+  $('point').onclick = () => post({ point: 1 });
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
     if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
@@ -547,7 +578,13 @@
     turn().append(clock); clockStart = performance.now(); clockTick();
   };
 
-  const moveClear=()=>{$('thread').querySelectorAll('.move-option').forEach(e=>e.remove());};
+  let movable=false;   // atticus.py watches the move file: Move to agent ⌃⌥↩ stays in the running box, whatever Long asks says
+  const moveClear=()=>{movable=false;$('thread').querySelectorAll('.move-option,.move-now').forEach(e=>e.remove());};
+  const moveNow=()=>{
+    if(!movable||!working||clock?.closest('.turn')!==turn()||clock.querySelector('.move-now'))return;
+    const b=keyButton('Move to agent','⌃⌥↩');b.className='move-now';b.setAttribute('aria-keyshortcuts','Control+Alt+Enter');
+    b.onclick=e=>{const r=b.getBoundingClientRect();e.stopPropagation();b.disabled=true;b.firstChild.textContent='Moving…';post({agentMove:true,cardRect:[r.x,r.y,r.width,r.height]});};clock.append(b);fit();
+  };
   // What an agent made, as it says: Google types by mimeType, files by extension, the rest by host.
   const AGENT_KINDS=[[/spreadsheet|\.(csv|xlsx?|numbers)$/i,'Spreadsheet','<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M2 10h12M6 2v12"/>'],[/presentation|\.(pptx?|key)$/i,'Presentation','<rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M8 11.5v2.5M5.5 14h5"/>'],
     [/document|\.(docx?|md|txt|pages|rtf)$/i,'Document','<path d="M4 1.5h5l3 3v10H4z"/><path d="M6 8h4M6 10.5h4"/>'],[/calendar|event/i,'Event','<rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/>'],
@@ -580,15 +617,26 @@
   document.addEventListener('keydown',e=>{const b=defaultButton();if(b&&e.key==='Enter'&&!e.isComposing&&!e.target.closest('button,input,textarea,select,a,[contenteditable=true]')){e.preventDefault();e.stopPropagation();b.click();}},true);
   window.ui = {
     agentDefaultAction(){defaultButton()?.click();},
+    moveReady(){movable=true;moveNow();},
+    moveEnd(){moveClear();fit();},
     moveOffer(){
+      movable=true;moveNow();
       if(!working||$('thread').querySelector('.move-option'))return;
       const d=document.createElement('div');d.className='ok offer move-option';
-      d.innerHTML='<b>Move this to an agent?</b><div class="keys"></div>';const keep=document.createElement('button'),move=keyButton('Move','↩',true);keep.textContent='Keep here';d.querySelector('.keys').append(keep,move);
-      [keep,move].forEach((b,i)=>b.onclick=()=>{post(i?{agentMove:true}:{agentMoveNo:true});if(i){b.disabled=true;b.firstChild.textContent='Moving…';}else d.remove();fit();});
+      d.innerHTML='<b>Move this to an agent?</b><p>Keeps working in the background. You can keep typing.</p><div class="keys"></div><div class="prefs"><button class="off" data-v="auto">Always move</button><button class="off" data-v="never">Don’t ask again</button></div>';
+      const keep=document.createElement('button'),move=keyButton('Move','↩',true);keep.textContent='Keep here';d.querySelector('.keys').append(keep,move);
+      [keep,move].forEach((b,i)=>b.onclick=()=>{const r=d.getBoundingClientRect();post(i?{agentMove:true,cardRect:[r.x,r.y,r.width,r.height]}:{agentMoveNo:true});if(i){b.disabled=true;b.firstChild.textContent='Moving…';}else d.remove();fit();});
+      d.querySelectorAll('.prefs button').forEach(b=>b.onclick=()=>{   // the Long asks setting, right here; one line says where it lives
+        const auto=b.dataset.v==='auto',r=d.getBoundingClientRect();post(auto?{longAsks:'auto',agentMove:true,cardRect:[r.x,r.y,r.width,r.height]}:{longAsks:'never',agentMoveNo:true});
+        const note=document.createElement('div');note.className='tip';note.dataset.k='Saved';note.setAttribute('role','status');
+        note.textContent=(auto?'Long asks move by themselves.':'Won’t ask again.')+' Change it in Settings → Intelligence.';d.replaceWith(note);
+        setTimeout(()=>{note.classList.add('gone');setTimeout(()=>{note.remove();fit();},400);},9000);fit();
+      });
       turn()?.append(d);fit();
     },
-    movePending(){moveClear();status('Moving to an agent…',true);fit();},
-    moveFailed(){const b=$('thread').querySelector('.move-option .go');if(b){b.disabled=false;b.firstChild.textContent='Move';}status('Could not move',true);fit();},
+    movePending(){moveClear();turn()?.querySelectorAll('.pk,.ok:not(.agent-card)').forEach(e=>e.remove());status('Moving to an agent…',true);fit();},   // a waiting pick or Allow goes with the ask
+    moveSource(){const r=$('orb').getBoundingClientRect();return [r.x,r.y,r.width,r.height];},
+    moveFailed(){const b=$('thread').querySelector('.move-option .go');if(b){b.disabled=false;b.firstChild.textContent='Move';}const n=$('thread').querySelector('.move-now');if(n){n.disabled=false;n.firstChild.textContent='Move to agent';}status('Could not move',true);fit();},
     paused(on=true){
       $('thread').querySelector('.paused')?.remove();
       if(!on){status('Atticus resumed');fit();return}
@@ -640,7 +688,15 @@
       bar.querySelector('.go').disabled = true; fit();
     },
     mini(m) { miniUpdate(m); },
+    point(value) {
+      const active = !!value?.active, marked = !!value?.marked, button = $('point');
+      button.classList.toggle('active', active); button.classList.toggle('marked', marked);
+      button.setAttribute('aria-pressed', active || marked);
+      if (active) status('Draw on screen');
+      else if (marked) status('Marked');
+    },
     finished() { moveClear(); clockStop(); miniFinish(false); },
+    dictate(on) { document.body.classList.toggle('dictate', !!on); fit(false); },
     visible(on) { visible = on; if (!on) { clockStop(); miniClear(); } fit(false); },
     limit(h) {
       const value = h + 'px';
@@ -649,7 +705,7 @@
       if ($('card').classList.contains('held')) $('card').style.minHeight = Math.min(h, parseFloat($('card').style.minHeight) || 0) + 'px';
       fit(false);
     },
-    reset() { miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
+    reset() { moveClear(); miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
       moveClear(); miniClear(); clockStop();
       $('thread').querySelectorAll('.rewrite').forEach(e => e.remove());
@@ -674,7 +730,17 @@
       listening = false;
       working = true;
       boost = 1; $('orb').style.transform = ''; setState('solving');
-      part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); fit();
+      part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); moveNow(); fit();
+    },
+    finishing(label) {   // dictation released: the caret stops now; without a label (Verbatim) the shimmer waits 150 ms so a fast insert never flashes it
+      listening = false; boost = 1; $('orb').style.transform = '';
+      const q = part('q'); q?.classList.remove('live'); clearTimeout(finishTimer);
+      const on = () => { if (!q || q !== part('q')) return; q.classList.add('finishing'); setState('solving'); note(label); };
+      if (label) on(); else finishTimer = setTimeout(on, 150);
+    },
+    dictated({ text, ok }) {   // inserted / copied (ok: a checkmark) or one plain failure line
+      clearTimeout(finishTimer); listening = false; boost = 1; $('orb').style.transform = '';
+      part('q')?.classList.remove('live', 'hear', 'finishing'); setState('breathing'); note(text, ok);
     },
     line(l) {
       const tag = l[0], s = l.slice(2);
@@ -718,14 +784,15 @@
       fit();
     },
     msg(s) {
-      miniFinish(false); clockStop();
+      if (document.body.classList.contains('dictate')) return window.ui.dictated({ text: s });   // its status line and answer are hidden
+      moveClear(); miniFinish(false); clockStop();
       listening = false; working = false; settle(); part('q')?.classList.remove('live'); setState('breathing'); status('');
       if (part('q')?.classList.contains('empty')) { turn().remove(); status(s); }
       else { const a = part('a'); if (a) { a.className = 'a cancel'; a.textContent = s; } }
       fit();
     },
     stopped(s) {   // Esc or the hotkey cut it off
-      miniClear(); clockStop();
+      moveClear(); miniClear(); clockStop();
       listening = false;
       working = false;
       $('thread').querySelectorAll('.ok, .pk, .rewrite').forEach(e => e.remove());
@@ -745,7 +812,7 @@
     compose(on) { comp(on, on); },
     draft(t) { $('ask').value = t; comp(true, true); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem');
+      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .move-now');
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
@@ -878,7 +945,7 @@
     },
     mode(safe) { $('mode').classList.toggle('on', !safe); },
     models({ list, pick }) {   // Claude's models, or the custom server's; none for a client without a choice
-      const name = v => /^(haiku|sonnet|opus)$/.test(v) ? v[0].toUpperCase() + v.slice(1) : v;
+      const name = v => ({cheapest: 'Cheapest', balanced: 'Balanced', capable: 'Most capable'})[v] || (/^(haiku|sonnet|opus)$/.test(v) ? v[0].toUpperCase() + v.slice(1) : v);
       $('model').hidden = !list.length; $('model').textContent = name(pick);
       $('models').replaceChildren(...list.map(v => { const b = document.createElement('button'); b.dataset.v = v; b.textContent = name(v); b.classList.toggle('on', v === pick); b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', v === pick); return b; }));
       spread();

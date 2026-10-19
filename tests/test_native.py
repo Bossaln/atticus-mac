@@ -261,13 +261,25 @@ print("caret safety ok")
             result = subprocess.run([str(binary)],capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
+    def test_typed_box_prewarms_but_confirmation_stays_at_submit(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        branch = source[source.index('if !replying && Prefs.str("input") == "type"'):source.index('\n        toggleTalk', source.index('if !replying && Prefs.str("input") == "type"'))]
+        self.assertIn('unwarm(); warm = spawn()', branch)
+        run = source[source.index('    func run(_ t: String'):source.index('\n    }\n}', source.index('    func run(_ t: String'))]
+        self.assertIn('try "go".write(toFile: commit', run)
+        self.assertIn('var data = try JSONSerialization.data(withJSONObject:request)', run)
+        self.assertLess(run.index('try "go".write(toFile: commit'), run.index('var data = try JSONSerialization.data(withJSONObject:request)'))
+
     def test_final_words_after_live_action_preserve_raw_remainder(self):
         source = (ROOT / 'Atticus.swift').read_text()
         finish = source[source.index('    func finish()', source.index('    func typed(')):source.index('    // atticus.py --wait, started')]
         swift = '''import Foundation
 final class Engine { var isRunning = false }
 final class Panel { func makeKey() {}; func makeFirstResponder(_ v: Int) {} }
+final class DrawingStub { var active = false, advances = 0; func advance() { advances += 1 } }
 final class Harness {
+    var drawingReply = false; let drawing = DrawingStub()
+    func typed(_ text: String) { request = text }
     var busy = true, selectionPending = false, fastBusy = false, liveRevised = false, pinned = false
     var offerText: String?, text = "Fixture left, Other right", ahead = "", answer = ""
     var did = ["Fixture: left."], consumed = 2, stops = 0, web = 0
@@ -283,6 +295,10 @@ final class Harness {
     func deliver(_ text: String) { delivered = text }
 ''' + finish + '''}
 func transcriptKey(_ t: String) -> String { t.lowercased() }
+let guide = Harness(); guide.offerText = "Original teaching request"; guide.text = "next"; guide.drawingReply = true; guide.finish()
+precondition(guide.drawing.advances == 1 && guide.request.isEmpty && !guide.drawingReply,"Spoken next started another AI ask")
+let changed = Harness(); changed.offerText = "Original teaching request"; changed.text = "Another question"; changed.drawingReply = true; changed.finish()
+precondition(changed.request == "Another question","New ask was swallowed by the guide")
 let partial = Harness(); partial.finish()
 precondition(partial.request == partial.text && partial.remaining == "Other right")
 let complete = Harness(); complete.consumed = 4; complete.finish()
@@ -314,6 +330,7 @@ func AXUIElementSetAttributeValue(_ e: Int, _ name: CFString, _ text: CFString) 
 final class FakeApp { var isTerminated = false }
 struct Harness {
  let element = 1, app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 3, length: 3)
+ enum Delivery { case landed, unchanged, unknown }
  static func selectedRange(_ element: Int) -> CFRange? { currentRange }
 """ + method + """
 let h = Harness()
@@ -462,13 +479,17 @@ final class Input { var cancelled=false; func finish() {cancelled=true}; func ca
 final class Analyzer { func cancelAndFinishNow() async {} }
 final class QuietAudio { func end() {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
+final class DrawingStub { var active = false, hasInput = false; func clear() { hasInput = false } }
 final class Harness {
+    var drawingReply = false; let drawing = DrawingStub()
     let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
     var retryOffer=false,offerText:String?,askFile="fixture-answer",agentCard="",listenID=0,stops=0
     var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?
     var shortcutDown = false, toggleTalk = false, clickTalk = false, busy = false, speaking = false
+    var dictateShortcutDown = false, dictating = false
     var events: [String] = [], text = "hello", began = Date(), wasUp = false, fresh = false, web = 0
     func start() { events.append("start"); engine.isRunning = true; toggleTalk = Prefs.toggle }
+    func startDictation() { events.append("dictate"); engine.isRunning = true; dictating = true }
     func cancel() { events.append("cancel"); hush(); shush() }
     func dismiss() { events.append("dismiss"); hush() }
     func shush() -> Bool { let was = speaking; speaking = false; if was { events.append("quiet") }; return was }

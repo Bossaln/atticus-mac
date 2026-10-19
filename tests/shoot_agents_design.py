@@ -224,6 +224,39 @@ class Round3Shots(unittest.TestCase):
         run_fixture(self, ROUND3.replace('OUTDIR', str(out)).replace('PAGE', PAGE).replace('OFFER', json.dumps(OFFER)).replace('ROWS', json.dumps(rows)), 'round3 shots ok', real_mini=True)
 
 
+# Moving a running ask: the box's Move to agent control, the Long asks card, its saved note, and the Settings row.
+MOVE = CARDS[:CARDS.index('let row=#"ROW"#')] + r'''let scenes:[(String,String,String)]=[
+ ("1-move-running","ui.reset();ui.agentCount(1);ui.listen(true);ui.words('Research the best standing desks under $600 and compare warranties');ui.think();ui.line('▸ Searching the web: standing desks under 600');ui.line('▸ Reading rtings.com');ui.moveReady();","!!document.querySelector('.elapsed .move-now kbd')"),
+ ("2-move-card","ui.moveOffer();","document.querySelector('.move-option p').textContent.startsWith('Keeps working')&&!!document.querySelector('.move-now')"),
+ ("3-move-saved","document.querySelector('.move-option [data-v=never]').click();","!!document.querySelector('.tip[data-k=Saved]')&&!!document.querySelector('.move-now')&&!document.querySelector('.move-option')")]
+final class Sink:NSObject,WKScriptMessageHandler{func userContentController(_ c:WKUserContentController,didReceive m:WKScriptMessage){}}
+let sink=Sink()
+func settings(){
+ let w=NSWindow(contentRect:NSRect(x:60,y:screen.frame.maxY-640,width:780,height:560),styleMask:[.titled,.closable,.fullSizeContentView],backing:.buffered,defer:false)
+ w.titlebarAppearsTransparent=true;w.titleVisibility = .hidden;w.appearance=NSAppearance(named:.darkAqua)
+ let cfg=WKWebViewConfiguration();cfg.userContentController.add(sink,name:"st")
+ let v=WKWebView(frame:NSRect(x:0,y:0,width:780,height:532),configuration:cfg);v.autoresizingMask=[.width,.height]
+ v.loadHTMLString(try! String(contentsOfFile:dir+"/ui/settings.html",encoding:.utf8),baseURL:nil);w.contentView=v;w.orderFrontRegardless();box.orderOut(nil)
+ after(2.0){v.evaluateJavaScript("st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'haiku',volume:.16,aheadDelay:.7,routing:'balanced',client:'claude',longAsks:'ask'}});st.tab('brain');document.querySelector('[data-k=longAsks]').scrollIntoView({block:'center'});!!document.querySelector('[data-k=longAsks] .on')"){value,error in
+  guard error == nil,value as? Bool == true else{print("settings scene failed: \(String(describing:error)) \(String(describing:value))");exit(1)}
+  after(1.2){let f=w.frame.insetBy(dx:-24,dy:-24).intersection(screen.frame),p=Process();p.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture");p.arguments=["-x","-R\(Int(f.minX)),\(Int(screen.frame.maxY-f.maxY)),\(Int(f.width)),\(Int(f.height))",out+"/4-settings-long-asks.png"];try! p.run();p.waitUntilExit();print("move shots ok");exit(0)}}}
+}
+func play(_ i:Int){
+ guard i<scenes.count else{settings();return}
+ web.evaluateJavaScript(scenes[i].1){_,error in guard error == nil else{print("scene failed: \(scenes[i].0): \(error!)");exit(1)};after(1.3){
+  web.evaluateJavaScript(scenes[i].2){value,error in guard error == nil,value as? Bool == true else{print("scene check failed: \(scenes[i].0): \(String(describing:error)) \(String(describing:value))");exit(1)};shot(scenes[i].0){play(i+1)}}}}}
+bridge.ready={after(1.0){play(0)}}
+nsapp.run()'''
+
+
+class MoveShots(unittest.TestCase):
+    def test_shoot(self):
+        import base64
+        out = ROOT / 'test-artifacts' / 'design' / 'move'; out.mkdir(parents=True, exist_ok=True)
+        run_fixture(self, MOVE.replace('OUTDIR', str(out)), 'move shots ok')
+        for png in sorted(out.glob('*.png')): print('PNG', png.name, base64.b64encode(png.read_bytes()).decode(), flush=True)   # the runner copies nothing back
+
+
 # Round 4: setup asks on an agent's chip, steering, and the new setup screens.
 ASKS = [dict(id='1' * 32, title='Fill the expense form', brief='Fill the expense form from the receipt photo.', status='needs-you', step='Waiting for you',
              created=NOW - 50, started=NOW - 50, directory='/tmp/fixture', steps=['Reading the form'],

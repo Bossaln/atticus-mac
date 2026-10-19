@@ -10,7 +10,7 @@
 </p>
 
 - **Fast.** Simple asks skip the AI: an app opens in 0.08 s. Ask for an action once and Atticus learns it, so next time it runs in a blink, with no AI and for free.
-- **No API key.** It runs on the Claude Pro or Max plan you already have, through Claude Code — or on your Devin plan through the Devin CLI (Settings → AI client). Nothing to sign up for, no key to paste, no extra bill.
+- **Use your provider.** Run on a Claude or Devin plan, choose any provider already configured in Pi, or connect Claude Code to a local model server (Settings → AI client).
 - **Remembers you.** Say "remember…" and every ask after that knows it. It picks up who you are (your name, your apps) and fixes its own mistakes when you correct it.
 
 > **On Windows?** [@FindlayHi](https://github.com/FindlayHi) built **[Atticus for Windows](https://github.com/FindlayHi/atticus-windows)**, with integrations for Home Assistant, Jellyfin, Immich and more.
@@ -38,8 +38,11 @@ https://github.com/user-attachments/assets/26822ad2-6281-477d-b676-2f490a4a207b
 | *"Find my notes about the Tokyo trip."* | Searches your files by what's inside them, opens the match on your other screen. |
 | *"What's wrong with this code?"* | Looks at your screen and answers in a line. |
 | *"Reply to this. Thursday works, send me a time."* | Reads the email on screen and writes the reply. Insert puts it at your cursor. It never sends. |
+| *"Move my dentist appointment to 4."* | Shows the old and new time on a card and moves it when you approve. Adds events right away; deletes ask first. |
+| *"Tell the agent in my terminal to also run the tests."* | Types it into that window in the background while you keep working. If it can't confirm the send, it leaves the text there and asks for the window. |
 | *"Find me a desk lamp under $30 on Amazon."* | Works in Chrome behind your apps; a live mini screen shows it. |
 | *"Where do I turn on Night Shift?"* | A ring lights up the exact spot on your screen (Show me where). |
+| *"Move my dentist appointment to 4."* | Shows the old and new time on a card and moves it when you approve. Adding events needs no card; moving or deleting always asks. |
 | *"Summarize this article in three bullets."* | Reads the page for you. |
 | *"Play my late night coding playlist on Spotify."* | Plays it in a second, no clicks. Any song, artist or playlist. |
 | *"When I say focus mode, close Slack and open my to-do list."* | Remembers it. Next time, two words do it all. |
@@ -52,7 +55,7 @@ https://github.com/user-attachments/assets/26822ad2-6281-477d-b676-2f490a4a207b
 <tr>
 <td width="33%" valign="top"><h3>Fast</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely (an app opens in 0.08 s). Actions you ask for once (opening apps, moving windows, playing music) become learned shortcuts: "Open Calculator and Chess" went from 5.5 s to 0.4 s, with no AI.</td>
 <td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. About 0.18¢ of plan usage per ask (~550 asks for $1 at API list rates). Atticus itself is free.</td>
-<td width="33%" valign="top"><h3>Remembers you</h3>"Remember: open means bring it to the front." Saved rules go with every ask. It learns lasting facts about you (name, city, favorite apps), and when you correct it, it saves a rule so it gets it right next time. Edit all of it in Settings.</td>
+<td width="33%" valign="top"><h3>Remembers you</h3>"Remember: open means bring it to the front." Saved rules go with every ask. It learns lasting facts about you (name, city, favorite apps), and when you correct it, it saves a rule so it gets it right next time. Ask what it remembers about anything, or tell it to forget something. Edit all of it in Settings.</td>
 </tr>
 <tr>
 <td valign="top"><h3>Private ears</h3>Apple's on-device speech turns your voice into text. Audio never leaves your Mac.</td>
@@ -71,17 +74,58 @@ Click any answer to copy it, including earlier answers still shown in the box. C
 
 Apple's final transcript confirms each voice request before AI tools or learned shortcuts run. AI reasoning can start during a pause, but its tools wait for confirmation. If speech finalization takes too long, Atticus offers the partial text for review. Instant commands still skip the AI entirely. Supported built-in commands run mid-sentence, before you send, with Instant commands and Act while I’m talking on (Settings → Intelligence). Learned shortcuts wait for confirmed words.
 
+When Atticus acts but can't see the result, it says so ("…but I couldn't confirm the result") and doesn't learn that shortcut. Try again checks what already happened before it acts again.
+
 </details>
+
+## Dictate anywhere
+
+Record a shortcut in Settings → General → Dictate anywhere. There is none until you set one; Fn and modifier-only chords like fn+Control work too. Hold it in any text field, speak, then let go. **Verbatim** types Apple's on-device transcript with no AI. **Clean up** makes one quick AI pass that fixes grammar, and rewrites highlighted text in place. Esc cancels. If the field changes or Atticus can't confirm the words landed, it copies them to your clipboard and tells you instead of typing twice.
+
+## Point at your screen
+
+Click **Draw on screen** in the ask box, then click, circle or scribble over what you mean and ask "what is this?". Atticus gets a crop of that spot with your question. The mark stays until you send; Esc clears it. While a mark is waiting, instant commands and early thinking wait too.
+
+## Draw on screen
+
+Ask how to do something and Atticus can show you: it draws boxes, circles, arrows and labels over your screen, with a pointer that moves to each spot. It speaks one step at a time and moves on when you click the highlighted spot, change that value, or say "next". The drawings let clicks through and never take focus. Esc clears them. Turn it off in Settings → Screen & Windows → Draw on screen to show you.
 
 ## Model choice
 
-In Settings → Intelligence, **Offer Sonnet for harder tasks** lets Haiku suggest Sonnet before a difficult foreground task or after a failure. Choose Sonnet, keep Haiku, or cancel. **Switch automatically** makes that choice without asking; it is off by default. Sonnet uses more of your Claude plan per ask, and the switch applies only to that task.
+In Settings → Intelligence, choose **Cheapest**, **Balanced** (the default) or **Most capable**. Cheapest keeps every ask, meeting question and new agent on Haiku. Balanced keeps questions and quick commands on Haiku and gives real work to your work model; if a task turns multi-step, fails, or ends without a confirmed result, it continues once on the work model. Most capable uses the work model for every AI ask and agent. Instant commands skip the AI in every mode. **Work model** picks Sonnet or Opus; Opus is stronger and uses more of your plan.
 
-Under **Background agents**, choose Haiku, Sonnet, or Opus as the default for new agents. With a custom server connected, choose an agent model from that server’s model list; leave it empty to use the main model. Running agents keep their current model, and the Claude selection is saved separately from the custom-server selection.
+With a custom server connected, Atticus uses that server's model. Under **Custom server**, choose an **Agent model** from its model list, or leave it empty to use the main model. Running agents keep their current model.
+
+## Use a local model
+
+Atticus can send Claude Code to a local server that implements the Anthropic Messages API. Claude Code must be installed, but you do not need a Claude account.
+
+1. Start a server and load a model:
+
+   | Server | Version with `/v1/messages` | Default address |
+   |---|---:|---|
+   | Ollama | 0.14.0+ | `http://localhost:11434` |
+   | LM Studio | 0.4.1+ | `http://localhost:1234` |
+   | llama.cpp `llama-server` | builds after Nov 28, 2025 | `http://localhost:8080` |
+   | vLLM | 0.11.1+ | `http://localhost:8000` |
+
+   Ollama starts with `ollama serve`; LM Studio uses `lms server start --port 1234`; llama.cpp uses `llama-server -m /path/to/model.gguf`; vLLM uses `vllm serve <model>`.
+2. Open setup → **Change provider** → **Custom server**, or Settings → Intelligence → **Custom server**. If a server is on a default port, Atticus offers **Use Ollama**, **Use LM Studio**, **Use llama.cpp**, or **Use vLLM**.
+3. Leave Key empty for an unauthenticated local server. Pick a model from the list Atticus reads from `GET /v1/models`, then ask normally.
+
+Small local models are usually weaker at reliable tool use and following long screen context. Screen reading also needs a vision-capable model; text-only models can still use accessible window and page text.
 
 ## Agents
 
 Ask for something big ("find me USB-C hubs") and Atticus hands it to a background agent. A chip shows up in the corner while you keep working. Hover it to see the live steps and a mini screen of the work. To change course, just talk: "tell the hub agent to check HDMI too" steers the running agent instead of starting a new one. When it finishes, a card shows the result once you stop typing. During a meeting or screen share, you get a quiet notification instead. If an agent needs a permission or a connector, it asks on its chip, then carries on. Turn on agents and their connectors in Settings → Agents (or the setup step).
+
+A long ask in the box can move too. While Atticus works, **Move to agent ⌃⌥↩** shows in the box; press ⌃⌥↩ from any app and the ask keeps going as an agent, without taking focus. Settings → Intelligence → **Long asks** decides what happens when an ask runs long: **Ask me** shows a card, **Move by itself** moves it with no card and starts offered agents without asking, **Never ask** shows nothing. ⌃⌥↩ works with every choice.
+
+### Named agents
+
+Say “make an agent called Researcher that finds sources and writes a short brief” to save reusable instructions, then “ask Researcher to…” to start it. Saved agents can include a folder or files and can be listed, renamed, or deleted by voice or in the Agents view.
+
+Background agents currently require Claude Code. Pi and Devin handle foreground asks; their meeting transcripts and recaps stay local. Pi has no built-in sandbox, so Atticus disables its direct file-edit and MCP tools and Safe mode asks before every shell command; its read tools still have your account’s file access.
 
 ## Meeting Copilot
 
@@ -101,7 +145,7 @@ Choose **Report Feedback…** in the menu bar, **Report feedback** in Settings, 
 
 You need:
 - **macOS 26** or later (Atticus uses Apple's new on-device speech)
-- **A paid Claude plan** (Pro or Max) and [Claude Code](https://claude.com/claude-code) — or the [Devin CLI](https://docs.devin.ai/cli) signed in to a Devin plan. Or a custom server (Ollama, LM Studio, DeepSeek) through Claude Code, no Claude account needed. Pick one in setup (“Change provider”) or Settings → Intelligence; setup installs it and signs you in.
+- **An AI client:** a paid Claude plan (Pro or Max) and [Claude Code](https://claude.com/claude-code), the [Devin CLI](https://docs.devin.ai/cli) signed in to a Devin plan, [Pi](https://pi.dev) with your chosen provider/model, or a custom server through Claude Code with no Claude account. Pick one in setup (“Change provider”) or Settings → Intelligence.
 - Apple's command line tools: `xcode-select --install`
 - Accessibility permission enables native clicks, scrolling, menus, keys, dragging and field typing.
 
@@ -126,7 +170,7 @@ The flake runs the standard installer, which keeps the writable clone Atticus us
 Working on the code instead? Clone the repo anywhere and run `./build.sh` after each change. A Devbox environment is included for Python regression tests; run `devbox shell`, then `devbox run test`.
 
 The first launch opens a setup window. It checks your AI plan, then asks for each macOS permission.
-After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: shortcut, sounds, model, speed, screen, memory and usage.
+After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: shortcut, sounds, model, speed, screen, memory and usage. Settings and setup follow your Mac's light or dark appearance.
 If you sign out of your AI client later, the setup window comes back by itself.
 To see it again: `defaults delete com.atticus.app onboarded`, then restart the app.
 
@@ -137,6 +181,10 @@ Remove: `launchctl bootout gui/$(id -u)/com.atticus.app`, then delete `~/Applica
 ## Watch for me
 
 Say "tell me when Codex is done" or "watch this page until it says shipped". Atticus sets it up once, then checks every 5 seconds on your Mac with no AI, so waiting is free. When it fires you get a notification, and it runs a follow-up if you asked for one. A window must stay open on this desktop (covered is fine). Coding agents like Codex are watched through their own log, with no screen at all. Say "stop watching" to cancel.
+
+## Routines
+
+Say "every weekday at 8, summarize my calendar" or "every 30 minutes, check my inbox". Atticus saves a routine and macOS wakes it on time, so it costs nothing while it waits. Each run starts a background agent on Cheapest unless you chose another mode, and you get a notification with the result. Runs are skipped while Atticus is paused, and a restart never repeats one. See and remove routines in Settings → General → Scheduled routines, or ask Atticus to remove one. Like other agents, routines need Claude Code.
 
 ## Budget
 

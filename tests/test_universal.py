@@ -182,7 +182,7 @@ class UniversalTests(unittest.TestCase):
         p = Mock(); p.ask = ''; p.stdin = io.StringIO(); p.returncode = 0
         p.stdout = map(json.dumps, [
             {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't', 'name': 'Bash', 'input': {'command': 'fixture read'}}]}},
-            {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't'}]}},
+            {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't', 'content': 'Observed fixture state'}]}},
             {'type': 'result', 'result': 'Done.', 'is_error': False}])
         timer = Mock()
         with patch.object(atticus.threading, 'Timer', return_value=timer) as factory, patch.object(atticus, 'say'):

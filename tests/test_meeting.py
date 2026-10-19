@@ -92,6 +92,16 @@ class MeetingTests(unittest.TestCase):
             self.assertEqual(atticus.meeting_save({'save': False}), '')
             self.assertEqual(saved.read_text(), '00:12  Hello\n')
 
+    def test_meeting_questions_and_preparation_follow_the_same_modes(self):
+        for mode, question, work in [('cheapest','haiku','haiku'), ('balanced','haiku','opus'), ('capable','opus','opus')]:
+            with self.subTest(mode=mode), patch.object(atticus,'pref',side_effect=lambda k,d:{'routing':mode,'model':'opus'}.get(k,d)), \
+                 patch.object(atticus.subprocess,'Popen') as launch, patch.object(atticus,'stop_claude'):
+                atticus.meeting_process('Fixture')
+                args=launch.call_args.args[0]; self.assertEqual(args[args.index('--model')+1],question)
+                launch.return_value.communicate.return_value=('Fixture brief',''); launch.return_value.returncode=0
+                atticus.meeting_connector_call({},'',[],10,[])
+                args=launch.call_args.args[0]; self.assertEqual(args[args.index('--model')+1],work)
+
     def test_claude_is_tool_free_and_receives_no_personal_settings(self):
         class Worker:
             pid = 12345
@@ -209,14 +219,16 @@ class MeetingTests(unittest.TestCase):
         self.assertIn('No Gmail or Drive connectors', result['notice'])
         self.assertIn('My note', result['brief'])
 
-    def test_devin_meeting_and_prep_stay_local(self):
-        with patch.object(atticus, 'client', return_value='devin'), patch.object(atticus.subprocess, 'Popen') as start:
-            with self.assertRaisesRegex(RuntimeError, 'stays on this Mac'):
-                atticus.meeting_call('Stable prefix', 'A question', 'private screenshot')
-            result = atticus.meeting_gather({'event': {'title': 'Pilot'}, 'text': 'Private notes'})
-        start.assert_not_called()
-        self.assertIn('stays on this Mac', result['notice'])
-        self.assertIn('Private notes', result['brief'])
+    def test_non_claude_meeting_and_prep_stay_local(self):
+        for selected in ('devin', 'pi'):
+            with self.subTest(client=selected), patch.object(atticus, 'client', return_value=selected), \
+                 patch.object(atticus.subprocess, 'Popen') as start:
+                with self.assertRaisesRegex(RuntimeError, 'stays on this Mac'):
+                    atticus.meeting_call('Stable prefix', 'A question', 'private screenshot')
+                result = atticus.meeting_gather({'event': {'title': 'Pilot'}, 'text': 'Private notes'})
+                start.assert_not_called()
+                self.assertIn('stays on this Mac', result['notice'])
+                self.assertIn('Private notes', result['brief'])
 
     def test_stop_cancels_claude_group(self):
         class Worker:

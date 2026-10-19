@@ -17,13 +17,13 @@ class SelectionTests(unittest.TestCase):
 import CoreFoundation
 let kAXFocusedUIElementAttribute = "focus", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value"
 var keys: [Int] = [], field = "old", deaf = false, hidEvents = 0
-var focused = 1, selected = "old", currentRange = CFRange(location: 0, length: 3), events = 0, directWrites = 0, directOK = true
+var focused = 1, selected = "old", currentRange = CFRange(location: 0, length: 3), events = 0, directWrites = 0, directOK = true, activations = 0
 func AXUIElementCreateApplication(_ pid: Int) -> Int { pid }
 func AXUIElementSetMessagingTimeout(_ element: Int, _ timeout: Double) {}
 func axAttribute(_ e: Any, _ name: String) -> CFTypeRef? { name == "focus" ? NSNumber(value: focused) : name == "value" ? field as CFString : selected as CFString }
 final class FakeApp: Equatable {
  var isTerminated = false, processIdentifier = 42
- func activate() { NSWorkspace.shared.frontmostApplication = self }
+ func activate() { activations += 1; NSWorkspace.shared.frontmostApplication = self }
  static func == (a: FakeApp, b: FakeApp) -> Bool { a === b }
 }
 final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: FakeApp? }
@@ -52,10 +52,15 @@ final class CGEvent {
  let key: Int
  init?(keyboardEventSource: Int?, virtualKey: Int, keyDown: Bool) { key = virtualKey }
  func postToPid(_ pid: Int) { events += 1; keys.append(key); precondition(pid == 42 && flags == (key == 51 ? [] : .maskCommand)); if !deaf { field = key == 51 ? "" : "draft" } }
- func post(tap: CGEventTapLocation) { hidEvents += 1 }
+ func post(tap: CGEventTapLocation) {
+  hidEvents += 1; events += 1; keys.append(key)
+  if !deaf { field = key == 51 ? "" : String(data: NSPasteboard.general.pasteboardItems!.first!.data(forType: .string)!, encoding: .utf8)! }
+ }
 }
 struct Harness {
  let element: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 0, length: 3)
+ enum Delivery { case landed, unchanged, unknown }
+ static let settle: TimeInterval = 0.05
  var editable = false, pastable = true
  static func selectedRange(_ e: CFTypeRef) -> CFRange? { currentRange }
  func replace(_ text: String) -> Bool { if directOK { directWrites += 1; field = text }; return directOK }
@@ -92,16 +97,20 @@ reset(); let count = pb.changeCount; h.apply("", valid: { true }) { ok = $0 }; p
 precondition(ok && pb.changeCount == count && Array(keys.suffix(2)) == [51, 51], "delete key/clipboard regressed")
 reset(); pb.failWrite = true; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.2)
 precondition(!ok && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "failed write lost clipboard")
-reset(); deaf = true; ok = true; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.9)
-precondition(!ok && hidEvents == 2 && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "ignored paste reported success or kept the draft on the clipboard")
+reset(); deaf = true; ok = true; let hidBefore = hidEvents; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.9)
+precondition(!ok && hidEvents == hidBefore + 2 && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "ignored paste reported success or kept the draft on the clipboard")
 var readonly = h; readonly.pastable = false; let before = events
 readonly.apply("", valid: { true }) { ok = $0 }; pump(0.2); precondition(!ok && events == before, "read-only delete posted")
 var editable = h; editable.editable = true; editable.pastable = false
 editable.apply("direct", valid: { true }) { ok = $0 }
+ pump(0.1)
 precondition(ok && directWrites == 1 && events == before, "editable custom role rejected")
 reset(); editable.pastable = true; directOK = false
 editable.apply("fallback", valid: { true }) { ok = $0 }; pump(0.6)
 precondition(ok && events == before + 2, "failed AX write did not fall back to paste")
+reset(); directOK = false; let other = FakeApp(); NSWorkspace.shared.frontmostApplication = other; let eventCount = events, activationCount = activations
+h.apply("private", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication === h.app }) { ok = $0 }; pump(0.2)
+precondition(!ok && events == eventCount && activations == activationCount && NSWorkspace.shared.frontmostApplication === other, "focus-preserving insert raised the old app or typed there")
 print("paste safety ok")
 '''
         self.assertIn('paste safety ok', run_swift(self, swift))
@@ -112,8 +121,8 @@ print("paste safety ok")
         typing_guard = next(line for line in source.splitlines() if 'guard let selected = TextSelection.capture(enabled: true' in line)
         swift = '''import Foundation
 import CoreFoundation
-let kAXFocusedUIElementAttribute = "focus", kAXSubroleAttribute = "subrole", kAXSelectedTextAttribute = "text", kAXSecureTextFieldSubrole = "secure"
-var selectedText = "", subrole = "field", canEdit = true
+let kAXFocusedUIElementAttribute = "focus", kAXSubroleAttribute = "subrole", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value", kAXSecureTextFieldSubrole = "secure"
+var selectedText = "", subrole = "field", canEdit = true, exposesSelectedText = true
 struct Prefs { static func bool(_ key: String) -> Bool { true } }
 final class NSRunningApplication: Equatable {
  static let current = NSRunningApplication()
@@ -125,7 +134,9 @@ typealias AXUIElement = Int
 func AXIsProcessTrusted() -> Bool { true }
 func AXUIElementCreateApplication(_ pid: Int) -> Int { pid }
 func AXUIElementSetMessagingTimeout(_ e: Int, _ timeout: Double) {}
-func axAttribute(_ e: Int, _ name: String) -> Any? { name == "focus" ? 1 : name == "subrole" ? subrole : selectedText }
+func axAttribute(_ e: Int, _ name: String) -> Any? {
+ return name == "focus" ? 1 : name == "subrole" ? subrole : name == "value" ? selectedText : exposesSelectedText ? selectedText : nil
+}
 struct TextSelection {
  let element: Int, app: NSRunningApplication, text: String, range: CFRange?
  var editable: Bool { canEdit }; var pastable: Bool { false }
@@ -140,7 +151,12 @@ precondition(TextSelection.capture()?.caret == true, "a cursor in a text box was
 canEdit = false; precondition(TextSelection.capture() == nil, "an empty read-only spot became a draft target"); canEdit = true
 precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text == "", "typing rejected an empty field")
 selectedText = "old"; precondition(TextSelection.capture()?.text == "old")
+exposesSelectedText = false; precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text == "old", "field value did not recover a missing selected-text attribute")
+exposesSelectedText = true
 precondition(TextSelection.capture(enabled: false, allowEmpty: true) == nil)
+NSWorkspace.shared.frontmostApplication = .current
+precondition(TextSelection.capture(enabled: true, allowEmpty: true) == nil, "Atticus captured its own field")
+NSWorkspace.shared.frontmostApplication = NSRunningApplication()
 subrole = "secure"; precondition(TextSelection.capture(enabled: true, allowEmpty: true) == nil, "password field captured")
 subrole = "field"; selectedText = String(repeating: "x", count: 6001)
 precondition(TextSelection.capture() == nil, "AI selection budget exceeded")
@@ -151,7 +167,7 @@ print("typing capture ok")
 
     def test_capture_is_async_and_cancelled_or_stale_results_are_ignored(self):
         source = (ROOT / 'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
-        capture = source[source.index('    func captureSelection()'):source.index('    func start()')]
+        capture = source[source.index('    func captureSelection()'):source.index('    func captureDictationSelection()')]
         finish = source[source.index('    func finish()'):source.index('        aheadItem?.cancel()', source.index('    func finish()'))] + '        finished += 1\n    }\n'
         swift = '''import Foundation
 struct Prefs { static func bool(_ key: String) -> Bool { true } }
@@ -161,7 +177,11 @@ struct TextSelection {
  var caret: Bool { text.isEmpty }
  static func capture(_ app: String?, enabled: Bool) -> TextSelection? { Thread.sleep(forTimeInterval: 0.15); return TextSelection(text: app ?? "") }
 }
+final class DrawingStub { var active = false; func advance() {} }
+func transcriptKey(_ s: String) -> String { s.lowercased() }
 final class Harness {
+ var drawingReply = false; let drawing = DrawingStub(); var proc: Process?
+ func cancel() {}; func typed(_ s: String) {}
  var selectionID = 0, selectionPending = false, selection: TextSelection?, messages: [String] = []
  var warm: Int? = 1, warmSel = "", respawns = 0
  var busy = true, fastBusy = false, stops = 0, finished = 0

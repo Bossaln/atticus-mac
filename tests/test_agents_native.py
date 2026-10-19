@@ -57,13 +57,15 @@ final class AppStub{
  let panel=KeyPanel(contentRect:NSRect(x:40,y:40,width:340,height:120),styleMask:[.nonactivatingPanel,.borderless],backing:.buffered,defer:false)
  let mini=MiniScreen(),engine=EngineStub();var busy=false,composing=false,pinned=false,gen=0,escRef:EventHotKeyRef?,agentCard=""
  var calls:[String]=[],defaultKeys:[EventHotKeyRef]=[],allowUntil=Date.distantPast,allowUserApp=false
+ var askFile="",retryOffer=false,moveRef:EventHotKeyRef?
+ var agentMoveFile=""{didSet{moveKey()}}
  var defaultWanted=false,defaultObservers:[NSObjectProtocol]=[]
  func js(_ call:String,_ data:Any?=nil){calls.append(call)}
  func modelChoices()->[String:Any]{[:]}
  func frame(_ f:NSRect){panel.setFrame(f,display:true)}
  func cue(_ name:String){}
  func hide(after:Double){}
- func escape(){};func shortcut(_ pressed:Bool){}
+ func escape(){};func shortcut(_ pressed:Bool){};func dictateShortcut(_ pressed:Bool){}
 ''' + show + defaults + '''
 }
 let app=AppStub()
@@ -99,6 +101,16 @@ def run_fixture(test,body,marker,real_mini=False):
 
 @unittest.skipUnless(sys.platform=='darwin','macOS native agent panels')
 class AgentNativeTests(unittest.TestCase):
+    def test_long_asks_move_by_itself_starts_offered_agents(self):
+        run_fixture(self,'''let agentsUI=AgentPanels()
+func offer(_ id:String){agentsUI.receive(["event":"offer","agent":["id":id,"title":"Standing desks","status":"offered","created":Date().timeIntervalSince1970]])}
+Prefs.set("longAsks","ask");offer(String(repeating:"a",count:32))
+precondition(app.agentCard==String(repeating:"a",count:32)&&app.calls.contains("agentOffer"),"Ask me shows the card")
+app.agentCard="";app.calls=[];Prefs.set("longAsks","auto");offer(String(repeating:"b",count:32))
+precondition(app.agentCard.isEmpty && !app.calls.contains("agentOffer") && agentsUI.rows[String(repeating:"b",count:32)]?["status"] as? String=="running","Move by itself starts it")
+print("long asks offer ok");exit(0)
+''','long asks offer ok')
+
     def test_badge_counts_only_working_agents_but_restart_guard_keeps_live_work(self):
         run_fixture(self,'''let agentsUI=AgentPanels()
 let now=Date().timeIntervalSince1970
@@ -153,7 +165,9 @@ Timer.scheduledTimer(withTimeInterval:0.05,repeats:true){_ in
   }
   for screen in NSScreen.screens{agentsUI.placeShelf(screen);guard screen.visibleFrame.contains(agentsUI.shelf!.frame),agentsUI.shelf!.frame.height>=52 else{fail("Shelf placement escaped display bounds")}}
   guard agentsUI.shelf!.collectionBehavior.contains(.canJoinAllSpaces),agentsUI.shelf!.collectionBehavior.contains(.fullScreenAuxiliary) else{fail("Shelf cannot join full-screen Spaces")}
-  print("Placement checked on \\(NSScreen.screens.count) VM display(s)");stage=1;at=Date();agentsUI.js("shelf","arrive",id);agentsUI.fly(id,from:[10,10,30,30])
+  print("Placement checked on \\(NSScreen.screens.count) VM display(s)");stage=1;at=Date()
+  agentsUI.moveFrom=[10,10,30,30]
+  agentsUI.receive(["event":"offer","start":true,"agent":["id":id,"title":"Flight","brief":"Research task","status":"offered","created":Date().timeIntervalSince1970]])
  case 1:
   // One transient panel; the orb swims a curved path on Core Animation (nothing per frame in the app), then the panel goes.
   guard let panel=agentsUI.flight,panel.isVisible else{fail("No orb flight")}
@@ -183,7 +197,7 @@ app.panel.orderFrontRegardless();app.defaultKey(true)
 print("Return registrations: \\(app.defaultKeys.count)");fflush(stdout)
 func require(_ value:Bool,_ message:String){if !value{print(message);fflush(stdout);agentsUI.process?.terminate();exit(1)}}
 require(app.defaultKeys.count==2,"Return hotkeys failed to register")
-func press(){DispatchQueue.global().async{for down in [true,false]{CGEvent(keyboardEventSource:CGEventSource(stateID:.hidSystemState),virtualKey:CGKeyCode(kVK_Return),keyDown:down)?.post(tap:.cghidEventTap);usleep(50_000)}}}
+func press(){DispatchQueue.global().async{for down in [true,false]{let e=CGEvent(keyboardEventSource:CGEventSource(stateID:.privateState),virtualKey:CGKeyCode(kVK_Return),keyDown:down);e?.flags=[];e?.post(tap:.cghidEventTap);usleep(50_000)}}}
 var stage=0,tries=0,other:KeyPanel?
 Timer.scheduledTimer(withTimeInterval:0.15,repeats:true){_ in
  tries+=1;require(tries<40,"Real Return did not reach the native card default")
@@ -200,6 +214,35 @@ Timer.scheduledTimer(withTimeInterval:0.15,repeats:true){_ in
  }
 }
 nsapp.run()''','native Return checks ok')
+
+    def test_move_shortcut_is_held_only_while_movable_and_keeps_focus(self):
+        run_fixture(self,'''let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)
+let agentsUI=AgentPanels()
+func require(_ value:Bool,_ message:String){if !value{print(message);fflush(stdout);agentsUI.process?.terminate();exit(1)}}
+let file=ProcessInfo.processInfo.environment["ATTICUS_DIR"]!+"/move-fixture"
+require(app.moveRef==nil,"Move shortcut held with nothing to move")
+NSWorkspace.shared.runningApplications.first{$0.bundleIdentifier=="com.apple.finder"}?.activate(options:[])
+app.busy=true;app.agentMoveFile=file;app.askFile="/tmp/atticus-fixture-pending"
+require(app.moveRef != nil,"Move shortcut did not register while the ask can move")
+func press(){DispatchQueue.global().async{   // real modifier downs and ups: flags on a lone Return leave Control held for later tests
+ let source=CGEventSource(stateID:.privateState),held:CGEventFlags=[.maskControl,.maskAlternate]
+ for (key,down,flags) in [(kVK_Control,true,CGEventFlags.maskControl),(kVK_Option,true,held),(kVK_Return,true,held),(kVK_Return,false,held),(kVK_Option,false,CGEventFlags.maskControl),(kVK_Control,false,CGEventFlags())]{let e=CGEvent(keyboardEventSource:source,virtualKey:CGKeyCode(key),keyDown:down);e?.flags=flags;e?.post(tap:.cghidEventTap);usleep(50_000)}}}
+var stage=0,tries=0,front:pid_t?
+Timer.scheduledTimer(withTimeInterval:0.15,repeats:true){_ in
+ tries+=1;require(tries<40,"A real Control-Option-Return did not move the ask")
+ if stage==0{front=NSWorkspace.shared.frontmostApplication?.processIdentifier;require(front != ProcessInfo.processInfo.processIdentifier,"A separate front app is required");stage=1;press()}
+ else if stage==1,app.calls.contains("movePending"){
+  require((try? String(contentsOfFile:file,encoding:.utf8))=="go","The move file was not written")
+  require(app.moveRef==nil && app.agentMoveFile.isEmpty && app.askFile.isEmpty,"The shortcut or a waiting card outlived the move")
+  require(NSWorkspace.shared.frontmostApplication?.processIdentifier==front && !app.panel.isKeyWindow,"Moving the ask stole focus")
+  app.busy=false;app.agentMoveFile=file;app.moveToAgent()
+  require(app.calls.filter{$0=="movePending"}.count==1,"An ask that already ended moved")
+  app.agentMoveFile="";require(app.moveRef==nil,"The shortcut stayed registered with nothing to move")
+  usleep(500_000);require(CGEventSource.flagsState(.combinedSessionState).isDisjoint(with:[.maskControl,.maskAlternate]),"The test left Control or Option held")
+  agentsUI.process?.terminate();print("move shortcut checks ok");exit(0)
+ }
+}
+nsapp.run()''','move shortcut checks ok')
 
     def test_complete_app_compiles_and_native_selftest(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -299,7 +342,7 @@ let id="11111111111111111111111111111111"
 let row:[String:Any]=["id":id,"title":"Cheapest e-bikes","brief":"Find the five cheapest e-bikes.","status":"running","step":"Reading amazon.com","created":Date().timeIntervalSince1970-40,"started":Date().timeIntervalSince1970-40,"steps":["Searching the web"],"timeline":[["tool":"WebSearch","text":"Searching the web"]],"sources":[["title":"Amazon","url":"https://www.amazon.com/s?k=e-bike","domain":"www.amazon.com"]],"target":["pid":123,"windowID":"77","windowFrame":[10.0,20.0,600.0,400.0],"window":"Deals","app":"Browser Fixture"] as [String:Any]]
 var stage=0,tries=0
 func fail(_ text:String)->Never{print(text);agentsUI.process?.terminate();exit(1)}
-func click(_ p:CGPoint){for type in [CGEventType.mouseMoved,.leftMouseDown,.leftMouseUp]{let e=CGEvent(mouseEventSource:CGEventSource(stateID:.hidSystemState),mouseType:type,mouseCursorPosition:p,mouseButton:.left);e?.setIntegerValueField(.mouseEventClickState,value:1);e?.post(tap:.cghidEventTap);usleep(type == .mouseMoved ? 900_000 : 100_000)}}
+func click(_ p:CGPoint){for type in [CGEventType.mouseMoved,.leftMouseDown,.leftMouseUp]{let e=CGEvent(mouseEventSource:CGEventSource(stateID:.privateState),mouseType:type,mouseCursorPosition:p,mouseButton:.left);e?.flags=[];e?.setIntegerValueField(.mouseEventClickState,value:1);e?.post(tap:.cghidEventTap);usleep(type == .mouseMoved ? 900_000 : 100_000)}}
 agentsUI.receive(["event":"state","agent":row])
 Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
  tries+=1;if tries>120{fail("Real click test timed out at stage \\(stage)")}
@@ -352,7 +395,7 @@ CGWarpMouseCursorPosition(CGPoint(x:60,y:400))
 var resizes=0,stage=0,tries=0,heads:[CGPoint]=[]
 NotificationCenter.default.addObserver(forName:NSWindow.didResizeNotification,object:nil,queue:.main){n in if (n.object as? NSWindow)===agentsUI.shelf{resizes+=1}}
 func fail(_ text:String)->Never{print(text);fflush(stdout);agentsUI.process?.terminate();exit(1)}
-func move(_ p:CGPoint){CGEvent(mouseEventSource:CGEventSource(stateID:.hidSystemState),mouseType:.mouseMoved,mouseCursorPosition:p,mouseButton:.left)?.post(tap:.cghidEventTap)}
+func move(_ p:CGPoint){let e=CGEvent(mouseEventSource:CGEventSource(stateID:.privateState),mouseType:.mouseMoved,mouseCursorPosition:p,mouseButton:.left);e?.flags=[];e?.post(tap:.cghidEventTap)}
 Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
  tries+=1;if tries>200{fail("Frame fixture timed out at stage \\(stage)")}
  guard stage==0,tries>25,agentsUI.ready.contains("shelf"),let shelf=agentsUI.shelf,shelf.isVisible else{return};stage=1

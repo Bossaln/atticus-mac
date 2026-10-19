@@ -151,7 +151,7 @@ class MiniScreenNativeTests(unittest.TestCase):
         cls.env = {**os.environ, 'ATTICUS_DIR':str(cls.root), 'ATTICUS_RESOURCES_DIR':str(ROOT)}
         swift = (ROOT / 'Atticus.swift').read_text()
         ax = swift[swift.index('func axAttribute('):swift.index('struct TextSelection')]
-        mini = swift[swift.index('final class MiniScreen:'):swift.index('final class App:')]
+        mini = swift[swift.index('final class PassView:'):swift.index('final class App:')]
         source = cls.root / 'main.swift'; source.write_text(HARNESS.replace('__NATIVE__',ax + mini))
         result = subprocess.run(['swiftc','-O',str(source),'-o',str(cls.binary)],capture_output=True,text=True,env=cls.env)
         if result.returncode: raise AssertionError(result.stderr)
@@ -218,7 +218,7 @@ class MiniScreenNativeTests(unittest.TestCase):
 
     def test_target_selection_and_minimized_fallback_with_fake_ax(self):
         swift = (ROOT / 'Atticus.swift').read_text()
-        mini = swift[swift.index('final class MiniScreen:'):swift.index('final class App:')]
+        mini = swift[swift.index('final class PassView:'):swift.index('final class App:')]
         stub = r'''
 import Cocoa
 import AVFoundation
@@ -237,13 +237,16 @@ func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 func axWindowNumber(_ element: AXUIElement) -> NSNumber? { NSNumber(value:42) }
 '''
         start_at=swift.index('    func start()')
-        start=swift[start_at:swift.index('        if replying { offerText = text } else { captureSelection(); replacement = nil }',start_at)]+'    }\n'
-        starter='''enum Prefs { static func bool(_ name:String)->Bool { false } }
+        start=swift[start_at:swift.index('        guard !Prefs.bool("paused")',start_at)]+'    }\n'
+        starter='''enum Prefs { static func bool(_ name:String)->Bool { false }; static func str(_ name:String)->String { "back" } }
 final class EngineStub { var isRunning=false }
 final class PanelStub { var isVisible=false }
+final class DrawingStub { var active=false,hasInput=false,clears=0;func clear() {clears += 1;active=false;hasInput=false};func stopVoice() {} }
 final class Starter {
+ let drawing=DrawingStub();var drawingReply=false
  let mini=MiniScreen(),engine=EngineStub(),panel=PanelStub();var busy=false,fresh=false,retryOffer=false,askFile="",focusFile=NSTemporaryDirectory()+"atticus-focus-fixture"
  func shush() {}
+ func hush(clearDrawing:Bool) {if clearDrawing {drawing.clear();drawingReply=false}}
  func dismiss() {}
  func cancel() {}
  func cancelFast() {}
@@ -277,6 +280,8 @@ precondition(mini.target?["minimized"] as? Bool == false && events.last?["minimi
 mini.reset();
 let starter=Starter();starter.mini.target=["pid":pid,"windowID":"42"];starter.mini.shown=true
 precondition(starter.mini.holds);starter.start();precondition(starter.mini.target == nil && !starter.mini.holds)
+let guide=Starter();guide.drawing.active=true;guide.start()
+precondition(guide.drawing.active && guide.drawingReply && guide.drawing.clears == 0,"Starting a spoken guide reply cleared the guide")
 print("target, minimized fallback and next-ask release fixture ok")
 '''
         source=self.root/'minimized.swift';source.write_text(stub+mini+starter+check)

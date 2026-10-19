@@ -62,12 +62,12 @@ class WorkflowTests(unittest.TestCase):
     def test_learns_the_way_that_worked_without_the_ai_writing_a_tag(self):
         menu = atticus.HANDS + ' click "Zoom Workplace > Start meeting"'
         tool = lambda i, c: {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': i, 'name': 'Bash', 'input': {'command': c}}]}}
-        result = lambda i, err: {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': i, 'is_error': err, 'content': ''}]}}
+        result = lambda i, err, content='': {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': i, 'is_error': err, 'content': content}]}}
         p = unittest.mock.Mock()
         p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
         p.stdout = map(json.dumps, [tool('a', atticus.HANDS + ' see zoom.us'), result('a', False),
                                     tool('b', 'osascript -e "click New meeting"'), result('b', True),   # tried, failed, dropped
-                                    tool('c', menu), result('c', False),
+                                    tool('c', menu), result('c', False, 'Meeting controls are visible.'),
                                     {'type': 'result', 'result': 'Your Zoom meeting started.'}])
         with patch.object(atticus, 'say'):
             reply, _, _ = atticus.run('Um, make a new Zoom meeting', p)

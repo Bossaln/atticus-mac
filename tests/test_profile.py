@@ -143,6 +143,31 @@ function Application(name) {
         recipient = atticus.profile_context('Email my dad', '')
         self.assertIn('Pat Example', recipient)
         self.assertIn('sam@example.test', recipient)
+        self.assertIn('1 Main St', atticus.profile_context('What do you remember about places?', ''))
+
+    def test_memory_search_finds_profile_facts_and_rules_without_guessing_a_category(self):
+        self.add('people', 'teammate', 'Pat Example')
+        (self.root / 'memory.md').write_text('- Keep project updates concise\n')
+        found = atticus.memory_find('project')
+        self.assertIn('Rules:', found)
+        self.assertIn('Keep project updates concise', found)
+        found = atticus.memory_find('Pat')
+        self.assertIn('People:', found)
+        self.assertIn('teammate: Pat Example', found)
+        self.assertIn(atticus.me()['facts'][0]['id'], found)
+
+    def test_concurrent_duplicate_rules_are_saved_once_and_privately(self):
+        code = """import atticus,sys
+atticus.remember_rule(sys.argv[1])
+"""
+        env = {**os.environ, 'ATTICUS_DIR': str(self.root)}
+        children = [subprocess.Popen([atticus.sys.executable, '-c', code, 'Keep replies concise'], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(6)]
+        results = [(child, child.communicate(timeout=10)) for child in children]
+        for child, (_, err) in results:
+            self.assertEqual(child.returncode, 0, err)
+        self.assertEqual((self.root / 'memory.md').read_text(), '- Keep replies concise\n')
+        self.assertEqual((self.root / 'memory.md').stat().st_mode & 0o777, 0o600)
 
     def test_screen_injection_cannot_mutate_and_sensitive_values_never_leave_storage(self):
         ask = self.root / 'ask'; ask.mkdir(); (ask / 'request').write_text('Summarize this page')

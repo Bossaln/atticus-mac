@@ -54,6 +54,16 @@ class NativeHandsTests(unittest.TestCase):
         receipt = json.loads(self.call('label', *args))
         return self.call(*args, receipt=receipt)
 
+    def session_action(self, *args, before_allow=None, ok=True):
+        process = subprocess.Popen([str(self.binary), '--hands', *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env={**self.env, 'ATTICUS_HANDS_SESSION':'1'}, text=True)
+        receipt = json.loads(process.stdout.readline())
+        if before_allow: before_allow()
+        out, err = process.communicate('y\n', timeout=10)
+        if ok: self.assertEqual(process.returncode,0,out + err)
+        else: self.assertNotEqual(process.returncode,0,out + err)
+        return receipt, out
+
     def test_native_selftest(self):
         result = subprocess.run([str(self.binary), '--selftest'], env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -118,7 +128,8 @@ class NativeHandsTests(unittest.TestCase):
         self.call('scroll', 'up', 'all')
         self.assertIn('Already at the end', self.call('scroll', 'up'))
         self.assertIn('Window settled', self.call('wait', '2'))
-        self.assertIn('Typed into', self.action('type', 'Name', 'Sam', 'submit'))
+        self.assertIn('Typed into', self.action('type', 'Name', 'Sam'))
+        self.call('press', 'return')   # finish editing; this fixture has no submit action to verify
         data = json.loads((self.root / 'hands.json').read_text())
         self.assertEqual(next(n['value'] for n in data['nodes'] if n['label'] == 'Name'), 'Sam')
         self.action('type', 'Name', 'append') # Text "append" is not the append option.
@@ -138,8 +149,9 @@ class NativeHandsTests(unittest.TestCase):
                 self.action('drag', 'Enabled', 'Name')
             finally: self.env['ATTICUS_AX_ONLY'] = saved
         self.call('see', pid)
-        command('stale')
-        self.assertIn('The screen changed. Run see again.', self.call('click', str(export['id']), ok=False))
+        receipt, stale = self.session_action('click',str(export['id']),before_allow=lambda:command('stale'),ok=False)
+        self.assertEqual(receipt['labels'],['Export'])
+        self.assertIn('screen changed',stale.lower())
         self.assertIn('a sheet opened', self.call('click', 'Export'))
         command('close-sheet'); command('duplicate'); self.call('see', pid)
         self.assertIn('More than one', self.call('click', 'Export', ok=False))

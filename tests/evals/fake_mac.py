@@ -213,6 +213,33 @@ class _FakeProc:
         self.returncode = -9
 
 
+class _SessionProc(_FakeProc):
+    def __init__(self, args, receipt, finish):
+        super().__init__(args, returncode=None, stdin_pipe=True)
+        self.stdout = tempfile.TemporaryFile(mode='w+')
+        self._finish = finish
+        self.stdout.write(receipt.rstrip('\n') + '\n')
+        self.stdout.seek(0)
+
+    def communicate(self, input=None, timeout=None):
+        try:
+            if (input or '').strip() == 'y':
+                self._buf, self.returncode = self._finish()
+            else:
+                self._buf, self.returncode = 'Action cancelled.', 1
+            return self._buf, self._stderr
+        finally:
+            self.stdout.close()
+
+    def terminate(self):
+        self.stdout.close()
+        super().terminate()
+
+    def kill(self):
+        self.stdout.close()
+        super().kill()
+
+
 def run(args, **kwargs):
     state = _load()
     cmd = list(args)
@@ -303,6 +330,8 @@ def popen(args, **kwargs):
     if hand_args[:1] == ['label'] or hand_args[:1] == ['see']:
         out, code = finish()
         return _FakeProc(args, out, returncode=code, stdin_pipe=stdin_pipe)
+    if (kwargs.get('env') or os.environ).get('ATTICUS_HANDS_SESSION') == '1':
+        return _SessionProc(args, _hands_label(hand_args, state), finish)
 
     proc = _FakeProc(args, '', returncode=0, stdin_pipe=stdin_pipe)
 

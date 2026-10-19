@@ -65,6 +65,22 @@ class NightTests(unittest.TestCase):
             expanded = atticus.tool_help('send using fixtureone and fixturetwo')
             self.assertEqual(len(expanded), 8000)
 
+    def test_prompt_send_receipts_are_confirmation_not_a_reason_to_retry(self):
+        root = 'Terminals:\n  terminal read    Read output\n  terminal send    Send input\n'
+        branch = 'Commands:\n  read    Read output\n  send    Send input\n'
+        send = 'Options:\n  --enter    Append Enter\n  --json    Machine-readable receipt\n  --wait-submit    Observe without resending\n'
+        def help_(args, **kw):
+            path = args[1:-1]
+            return subprocess.CompletedProcess(args, 0, root if not path else branch if path == ['terminal'] else send, '')
+        with patch.object(atticus.shutil, 'which', side_effect=lambda word: '/orca' if word == 'orca' else None), \
+             patch.object(atticus.os.path, 'getmtime', return_value=1), \
+             patch.object(atticus.subprocess, 'run', side_effect=help_):
+            got = atticus.tool_help('send that prompt to the agent in the orca terminal')
+        self.assertIn('orca terminal send --help', got)
+        self.assertIn('--wait-submit', got)
+        self.assertIn('accepted/queued + Enter means sent', atticus.SYSTEM)
+        self.assertIn('Confirm in one short line', atticus.SYSTEM)
+
     def test_relationships_use_actual_contact_labels_and_never_guess(self):
         cards = [{'name': 'Pat Example', 'emails': ['pat@example.test']}, {'name': 'Robin Example', 'emails': ['robin@example.test']}]
         own = {'related': [{'label': 'guardian', 'value': 'Pat Example'}]}

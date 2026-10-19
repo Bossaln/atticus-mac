@@ -19,7 +19,7 @@ from tests import scratch_dir
 
 class BrainTests(unittest.TestCase):
     def setUp(self):
-        scratch_dir(self)   # never the user's real log, chat or rules (and CI has no ~/.config/atticus)
+        self.root = scratch_dir(self)   # never the user's real log, chat or rules (and CI has no ~/.config/atticus)
 
     def test_custom_server_replaces_claude_sign_in_and_models(self):
         self.assertEqual(atticus.server(), {})   # empty address: plain Claude
@@ -50,85 +50,176 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(atticus.models(), [])
         self.assertEqual(atticus.models(), [])   # no address
 
-    def test_failure_retry_uses_current_model_once_and_sonnet_remains_explicit(self):
-        for answer, model, offer, expected in [('r', 'haiku', True, 'haiku'), ('try again', 'haiku', False, 'haiku'),
-                                                ('retry', 'sonnet', True, 'sonnet'), ('y', 'haiku', True, 'sonnet'),
-                                                ('n', 'haiku', True, None)]:
-            with self.subTest(answer=answer, model=model, offer=offer):
-                def attempt(prompt, *args):
-                    attempt.ok = brain.call_count > 1
-                    attempt.cmds = attempt.ran = []
-                    return ('Finished.' if attempt.ok else 'Fixture failed.'), .001, ['fixture step']
-                brain = unittest.mock.Mock(side_effect=attempt)
-                # main reads the status from run itself, just as the real streaming run does.
-                def status_attempt(*args):
-                    result = attempt(*args); brain.ok = attempt.ok; brain.ran = ['second action'] if attempt.ok else ['first attempted action']; return result
-                brain.side_effect = status_attempt
-                brain.cmds = brain.ran = []
-                with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
-                                    front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
-                                    describe=lambda *a: '', me_line=lambda: '', selection_context=lambda: '',
-                                    relevant_rules=lambda _: '', recent=lambda: [], workflows=lambda *a: '',
-                                    screen_for=lambda *a: None, wait_commit=lambda: True, run=brain,
-                                    remember_turn=lambda *a: None, restore_focus=lambda *a: None,
-                                    remember_workflow=lambda task, reply, *a: (reply, False), learn=lambda *a: False, tip=lambda *a: None), \
-                     patch.object(atticus, 'pref', side_effect=lambda k, d: {'model': model, 'escalate': offer, 'escalateAuto': False}.get(k, d)), \
-                     patch.object(atticus, 'ask_user', return_value=answer) as ask, \
-                     patch.object(atticus, 'start_ai', return_value=object()) as start, \
-                     patch.object(atticus, 'log_turn') as log, patch.object(atticus.threading, 'Thread') as threads, \
-                     patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.argv', ['atticus.py', 'Do fixture']), patch('sys.stdout', io.StringIO()):
-                    atticus.main()
-                self.assertEqual(brain.call_count, 2 if expected else 1)
-                ask.assert_called_once(); self.assertTrue(ask.call_args.args[0]['retry'])
-                self.assertEqual(sum(c.kwargs.get('target') is atticus.relay for c in threads.call_args_list), 1, 'standalone failure must not start a competing question relay')
-                self.assertEqual(bool(ask.call_args.args[0]['off']), offer and model == 'haiku')
-                if expected:
-                    start.assert_called_once_with(expected)
-                    self.assertEqual(brain.call_args.args[0], brain.call_args_list[0].args[0].removesuffix(atticus.MODEL_OFFER) + '\nA previous try failed: Fixture failed.\nPrior attempted actions (check their effects before repeating):\nfirst attempted action')
-                    self.assertEqual(log.call_args.args[3:5], (.002, ['fixture step', 'fixture step']))
-                    self.assertEqual(log.call_args.args[5], ['first attempted action', 'second action'])
-                else:
-                    start.assert_not_called()
+    def test_local_server_discovery_uses_v1_models(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class Fake(BaseHTTPRequestHandler):
+            paths = []
+            def do_GET(self):
+                self.paths.append(self.path); self.send_response(200); self.end_headers()
+                self.wfile.write(b'{"data": [{"id": "local-model"}]}')
+            def log_message(self, *a): pass
+        srv = HTTPServer(('127.0.0.1', 0), Fake)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        port = srv.server_port
+        with patch.dict(os.environ, {'http_proxy': 'http://127.0.0.1:1', 'no_proxy': '', 'NO_PROXY': ''}), \
+             patch.object(atticus, 'LOCAL_SERVERS', (('Fixture', f'http://localhost:{port}', f'http://127.0.0.1:{port}'),)):
+            self.assertEqual(atticus.local_servers(), [{'name': 'Fixture', 'base': f'http://localhost:{port}', 'models': ['local-model']}])
+        self.assertEqual(Fake.paths, ['/v1/models'])
 
-    def test_task_difficulty_offer_switches_only_this_ask_before_actions(self):
-        cases = [('0', False, 'sonnet', {}), ('1', False, 'haiku', {}), (None, False, None, {}), (None, True, 'sonnet', {})]
-        cases += [(None, True, None, prefs) for prefs in [
-            {'escalate': False}, {'model': 'sonnet'}, {'model': 'opus'}, {'client': 'devin'}, {'apiBase': 'https://fixture.invalid/anthropic'}]]
-        for answer, auto, expected, prefs in cases:
-            with self.subTest(answer=answer, auto=auto, prefs=prefs):
-                def attempt(*args):
-                    brain.ok = True; brain.cmds = brain.ran = []; brain.handoff = None
-                    return ('[sonnet]' if brain.call_count == 1 and not prefs else 'Finished.'), .001, []
-                brain = unittest.mock.Mock(side_effect=attempt)
-                with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
-                                    front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
-                                    describe=lambda *a: '', selection_context=lambda: '', relevant_rules=lambda _: '',
-                                    recent=lambda: [], workflows=lambda *a: '', screen_for=lambda *a: None, wait_commit=lambda: True,
-                                    run=brain, remember_turn=lambda *a: None, restore_focus=lambda *a: None,
-                                    remember_workflow=lambda task, reply, *a: (reply, False), learn=lambda *a: False, tip=lambda *a: None), \
-                     patch.object(atticus, 'pref', side_effect=lambda k, d: {**prefs, 'escalateAuto': auto}.get(k, d)), \
-                     patch.object(atticus, 'ask_user', return_value=answer) as ask, \
-                     patch.object(atticus, 'start_ai', return_value=object()) as start, \
-                     patch.object(atticus, 'log_turn') as log, patch.object(atticus.threading, 'Thread'), \
-                     patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.argv', ['atticus.py', 'Reason through fixture']), \
-                     patch('sys.stdout', io.StringIO()):
-                    atticus.main()
-                self.assertEqual(brain.call_args_list[0].args[0].endswith(atticus.MODEL_OFFER), not bool(prefs))
-                self.assertEqual(brain.call_count, 2 if expected else 1)
-                if expected:
-                    start.assert_called_once_with(expected)
-                    self.assertNotIn(atticus.MODEL_OFFER, brain.call_args.args[0])
-                    self.assertEqual(log.call_args.args[3], .002)
-                else: start.assert_not_called()
-                if auto: ask.assert_not_called()
-                else:
-                    ask.assert_called_once()
-                    self.assertIn('more of your plan', ask.call_args.args[0]['options'][0])
+    def test_local_discovery_does_not_follow_redirects(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class Fake(BaseHTTPRequestHandler):
+            paths = []
+            def do_GET(self):
+                self.paths.append(self.path)
+                self.send_response(302 if self.path == '/v1/models' else 200)
+                self.send_header('Location', '/elsewhere'); self.end_headers()
+                if self.path != '/v1/models': self.wfile.write(b'{"data": [{"id": "remote"}]}')
+            def log_message(self, *a): pass
+        srv = HTTPServer(('127.0.0.1', 0), Fake)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        base = f'http://127.0.0.1:{srv.server_port}'
+        with patch.object(atticus, 'LOCAL_SERVERS', (('Fixture', base, base),)):
+            self.assertEqual(atticus.local_servers(), [])
+        self.assertEqual(Fake.paths, ['/v1/models'])
+
+    def test_local_discovery_has_a_total_response_deadline(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        class Fake(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200); self.end_headers()
+                try:
+                    for _ in range(40):
+                        self.wfile.write(b' '); self.wfile.flush(); time.sleep(.05)
+                except (BrokenPipeError, ConnectionResetError): pass
+            def log_message(self, *a): pass
+        srv = ThreadingHTTPServer(('127.0.0.1', 0), Fake)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        base = f'http://127.0.0.1:{srv.server_port}'
+        started = time.monotonic()
+        with patch.object(atticus, 'LOCAL_SERVERS', (('Fixture', base, base),)):
+            self.assertEqual(atticus.local_servers(), [])
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_custom_server_env_reaches_anthropic_messages_endpoint(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        class Fake(BaseHTTPRequestHandler):
+            request = None
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                Fake.request = (self.path, self.headers['Authorization'], body)
+                self.send_response(200); self.end_headers()
+                self.wfile.write(b'{"content": [{"type": "text", "text": "Local answer."}]}')
+            def log_message(self, *a): pass
+        srv = HTTPServer(('127.0.0.1', 0), Fake)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close); self.addCleanup(srv.shutdown)
+        fake = self.root / 'claude'
+        fake.write_text(f'''#!{sys.executable}
+import json, os, sys, urllib.request
+turn = json.loads(sys.stdin.readline())
+payload = json.dumps({{"model": os.environ["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "messages": [turn["message"]]}}).encode()
+req = urllib.request.Request(os.environ["ANTHROPIC_BASE_URL"] + "/v1/messages", data=payload,
+    headers={{"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["ANTHROPIC_AUTH_TOKEN"]}})
+answer = json.load(urllib.request.urlopen(req))["content"][0]["text"]
+print(json.dumps({{"type": "result", "result": answer, "total_cost_usd": 0}}))
+''')
+        fake.chmod(0o755)
+        prefs = {'apiBase': f'http://127.0.0.1:{srv.server_port}', 'apiKey': 'fixture-key', 'apiModel': 'local-model'}
+        with patch.object(atticus, 'pref', side_effect=lambda k, d: prefs.get(k, d)), \
+             patch.object(atticus.signal, 'signal'), patch.object(atticus.atexit, 'register'), \
+             patch.dict(os.environ, {'ATTICUS_CLAUDE': str(fake)}):
+            reply, cost, _ = atticus.run('Request: hello', atticus.start_claude())
+        self.assertEqual((reply, cost), ('Local answer.', 0))
+        self.assertEqual(Fake.request[:2], ('/v1/messages', 'Bearer fixture-key'))
+        self.assertEqual(Fake.request[2]['model'], 'local-model')
+
+    def test_routing_migrates_legacy_choices_and_honors_one_mode(self):
+        cases = [({}, 'balanced'), ({'escalate': False}, 'cheapest'),
+                 ({'escalateAuto': False}, 'cheapest'), ({'model': 'sonnet'}, 'capable'),
+                 ({'model': 'opus', 'escalate': False}, 'capable')]
+        cases += [({'routing': mode, 'model': 'opus', 'escalate': False}, mode)
+                  for mode in ('cheapest', 'balanced', 'capable')]
+        for prefs, expected in cases:
+            with self.subTest(prefs=prefs), patch.object(atticus, 'pref', side_effect=lambda k,d:prefs.get(k,d)):
+                self.assertEqual(atticus.routing_mode(), expected)
+                self.assertEqual(atticus.main_model(), atticus.work_model() if expected == 'capable' else 'haiku')
+                self.assertEqual(atticus.agent_model(), 'haiku' if expected == 'cheapest' else atticus.work_model())
+        with patch.object(atticus, 'pref', side_effect=lambda k,d:{'apiBase':'https://fixture.invalid', 'routing':'capable', 'model':'haiku', 'apiModel':'custom'}.get(k,d)):
+            self.assertEqual(atticus.main_model(), 'haiku')  # server() maps the alias to its chosen model
+            self.assertEqual(atticus.agent_model(), 'custom')
+
+    def routing_ask(self, prefs, outcomes, *, quick=None, retry='n'):
+        def attempt(*args, **kwargs):
+            reply, ok, actions = outcomes[min(brain.call_count - 1, len(outcomes) - 1)]
+            brain.ok = ok; brain.cmds = actions[:] if ok else []; brain.ran = actions[:]; brain.handoff = None; brain.work = bool(actions)
+            brain.observed = [{'action': action, 'result': 'Verified fixture state', 'error': False} for action in actions]
+            return reply, .001, actions[:]
+        brain = unittest.mock.Mock(side_effect=attempt)
+        with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: quick,
+                            front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
+                            describe=lambda *a: '', selection_context=lambda: '', relevant_rules=lambda _: '',
+                            recent=lambda: [], workflows=lambda *a: '', screen_for=lambda *a: None, wait_commit=lambda: True,
+                            run=brain, remember_turn=lambda *a: None, restore_focus=lambda *a: None,
+                            remember_workflow=lambda task, reply, *a: (reply, False), learn=lambda *a: False, tip=lambda *a: None), \
+             patch.object(atticus, 'pref', side_effect=lambda k,d:prefs.get(k,d)), \
+             patch.object(atticus, 'ask_user', return_value=retry) as ask, \
+             patch.object(atticus, 'start_ai', return_value=None) as start, \
+             patch.object(atticus, 'log_turn') as log, patch.object(atticus.threading, 'Thread'), \
+             patch('sys.argv', ['atticus.py', 'Fixture task']), patch('sys.stdout', io.StringIO()):
+            atticus.main()
+        return brain, start, ask, log
+
+    def test_modes_route_questions_work_and_failures_without_loops(self):
+        for mode in ('cheapest', 'balanced', 'capable'):
+            for reply, ok, actions in [('Answer.', True, []), ('[sonnet]', True, []),
+                                        ('[sonnet]', True, ['inspect']), ('Stopped.', False, ['inspect']),
+                                        ('Stopped.', False, [])]:
+                with self.subTest(mode=mode, reply=reply, ok=ok, actions=actions):
+                    brain, start, ask, log = self.routing_ask({'routing':mode}, [(reply,ok,actions), ('Finished.',True,['verify'])])
+                    escalates = mode == 'balanced' and (reply == '[sonnet]' or not ok and bool(actions))
+                    self.assertEqual(brain.call_count, 2 if escalates else 1)
+                    self.assertEqual(brain.call_args_list[0].args[0].endswith(atticus.MODEL_OFFER), mode == 'balanced')
+                    self.assertEqual(brain.call_args_list[0].args[3], mode == 'balanced')
+                    if escalates:
+                        start.assert_called_once_with('sonnet'); ask.assert_not_called()
+                        self.assertNotIn(atticus.MODEL_OFFER, brain.call_args.args[0])
+                        if actions:
+                            self.assertIn('Verified fixture state', brain.call_args.args[0])
+                            path = Path(os.environ['ATTICUS_ASK']) / 'prior-work.json'
+                            self.assertEqual(json.loads(path.read_text())['actions'], actions)
+                            self.assertEqual(log.call_args.args[5], ['inspect','verify'])
+                            self.assertEqual(brain.cmds, [], 'a continuation must not teach a partial shortcut')
+                    else: start.assert_not_called()
+        brain, start, ask, _ = self.routing_ask({'routing':'balanced', 'model':'opus'}, [('Stopped.',False,['inspect'])])
+        self.assertEqual(brain.call_count, 2); start.assert_called_once_with('opus'); ask.assert_not_called()
+
+    def test_fast_commands_and_other_clients_never_add_a_routing_call(self):
+        for mode in ('cheapest','balanced','capable'):
+            brain, start, ask, _ = self.routing_ask({'routing':mode}, [], quick='Done instantly.')
+            brain.assert_not_called(); start.assert_not_called(); ask.assert_not_called()
+        for prefs in ({'client':'devin'}, {'client':'pi'}, {'apiBase':'https://fixture.invalid'}):
+            brain, start, ask, _ = self.routing_ask(prefs, [('Answer.',True,[])])
+            self.assertEqual(brain.call_count,1); start.assert_not_called()
+            self.assertNotIn(atticus.MODEL_OFFER,brain.call_args.args[0])
+
+    def test_explicit_same_model_retry_stays_in_cheapest(self):
+        # No implicit model upgrade, even when the first attempt failed.
+        brain, start, ask, _ = self.routing_ask({'routing':'cheapest'}, [('Stopped.',False,['inspect'])])
+        self.assertEqual(brain.call_count,1); start.assert_not_called(); ask.assert_called_once()
+        brain, start, ask, _ = self.routing_ask({'routing':'cheapest'}, [('Stopped.',False,['inspect']), ('Finished.',True,['verify'])], retry='r')
+        self.assertEqual(brain.call_count,2); start.assert_called_once_with('haiku'); ask.assert_called_once()
+        self.assertIn('Verified fixture state', brain.call_args.args[0])
+        work = json.loads((Path(os.environ['ATTICUS_ASK']) / 'prior-work.json').read_text())
+        self.assertEqual(work['observations'], [{'action': 'inspect', 'result': 'Verified fixture state', 'error': False}])
 
     def test_escalation_and_retry_handoffs_are_terminal_with_unknown_usage(self):
         for first in ('[sonnet]', 'Failed attempt.'):
             with self.subTest(first=first):
-                def attempt(*args):
+                def attempt(*args, **kwargs):
                     brain.ok = False; brain.cmds = []; brain.ran = ['attempt']
                     brain.handoff = {'accepted': True} if brain.call_count == 2 else None
                     return ('', None, ['moved']) if brain.handoff else (first, .001, [])
@@ -193,12 +284,20 @@ class BrainTests(unittest.TestCase):
         tool.write_text(f'#!/bin/sh\necho x >> {runs}\necho "usage: fixturetool send <text>"\n')
         tool.chmod(0o755)
         with patch.dict(os.environ, {'PATH': f'{bin_}:/usr/bin:/bin'}):
+            self.assertEqual(atticus.tool_help('fixturetool', cached_only=True), '')
+            self.assertFalse(runs.exists(), 'cached-only prompt lookup ran an uncached CLI')
             got = atticus.tool_help('ask fixturetool to send hi, then env')
             self.assertIn('usage: fixturetool send <text>', got)
             self.assertIn('untrusted data', got)
             self.assertNotIn('`env --help`', got)   # /usr/bin/env is the system's, not the user's
-            self.assertIn('usage: fixturetool', atticus.tool_help('fixturetool again'))
+            self.assertIn('usage: fixturetool', atticus.tool_help('fixturetool again', cached_only=True))
         self.assertEqual(runs.read_text(), 'x\n')   # cached by (path, mtime): --help ran once
+
+    def test_main_never_waits_for_background_tool_help(self):
+        source = Path(atticus.ME).read_text()
+        critical = source[source.index('help_ = tool_help(task, cached_only=True)'):source.index('reply, cost, steps = run(', source.index('help_ = tool_help(task, cached_only=True)'))]
+        self.assertIn('threading.Thread(target=tool_help', critical)
+        self.assertNotIn('helping.join', critical)
 
     def test_slow_success_gets_memory_tip_even_on_first_ask(self):
         with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.stdout', new_callable=io.StringIO) as out:
@@ -211,6 +310,10 @@ class BrainTests(unittest.TestCase):
         with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.stdout', new_callable=io.StringIO) as out:
             atticus.tip('Could not join Zoom.', task='join Zoom', elapsed=30)
         self.assertIn(atticus.MISS, out.getvalue())
+        with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch.object(atticus, 'pref', return_value=False), \
+             patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.tip('Done.', 'Learned: procedure saved for next time.')
+        self.assertIn('Learned: procedure saved for next time.', out.getvalue())
 
     def test_domain_dots_and_url_case_survive(self):
         with patch.object(atticus, 'skills', return_value={}), \
@@ -446,8 +549,99 @@ raise SystemExit(4)
                     reply, _, _ = atticus.run_devin('test')
             finally:
                 signal.signal(signal.SIGTERM, previous)
-            self.assertIn('Devin failed: fixture failure', reply)
+            self.assertIn('Devin stopped before answering. Please try again.', reply)
             self.assertFalse(atticus.run.ok)
+
+    def test_external_client_errors_do_not_expose_tracebacks(self):
+        for client in ('pi', 'devin'):
+            with self.subTest(client=client):
+                fake = self.root / client
+                fake.write_text(f'#!{sys.executable}\nimport sys\nprint("Traceback: fixture/internal.py line 12", file=sys.stderr)\nraise SystemExit(4)\n')
+                fake.chmod(0o755)
+                previous = signal.getsignal(signal.SIGTERM)
+                try:
+                    with patch.dict(os.environ, {'PATH': str(self.root) + os.pathsep + os.environ['PATH']}), \
+                         patch.object(atticus, 'pref', side_effect=lambda k, d: client if k == 'client' else d), \
+                         patch.object(atticus, 'plan', return_value={'ok': True}), \
+                         patch.object(atticus, 'delete_devin_session', return_value=True):
+                        reply, _, _ = atticus.run('test')
+                finally:
+                    signal.signal(signal.SIGTERM, previous)
+                self.assertEqual(reply, f'{client.title()} stopped before answering. Please try again.')
+                self.assertFalse(atticus.run.ok)
+
+    def test_pi_does_not_start_before_confirmation(self):
+        with tempfile.TemporaryDirectory() as root:
+            fake, marker = Path(root, 'pi'), Path(root, 'started')
+            fake.write_text(f'#!{sys.executable}\nfrom pathlib import Path\nPath({str(marker)!r}).touch()\n')
+            fake.chmod(0o755)
+            with patch.dict(os.environ, {'PATH': root + os.pathsep + os.environ['PATH']}), \
+                 patch.object(atticus, 'wait_commit', return_value=False):
+                reply, _, _ = atticus.run_pi('unconfirmed')
+            self.assertIn('cancelled', reply)
+            self.assertFalse(marker.exists())
+
+    def test_pi_uses_json_mode_images_and_atticus_gate(self):
+        with tempfile.TemporaryDirectory() as root:
+            fake, log, frame = Path(root, 'pi'), Path(root, 'launch.json'), Path(root, 'frame.png')
+            frame.write_bytes(b'fixture')
+            fake.write_text(f'''#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+Path(os.environ['PI_LOG']).write_text(json.dumps(sys.argv[1:]))
+print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content':[{{'type':'text','text':'Ready.'}}],'usage':{{'cost':{{'total':0.012}}}}}}}}))
+''')
+            fake.chmod(0o755)
+            previous = signal.getsignal(signal.SIGTERM)
+            try:
+                with patch.dict(os.environ, {'PATH': root + os.pathsep + os.environ['PATH'], 'PI_LOG': str(log)}), \
+                     patch.object(atticus, 'pref', side_effect=lambda k, d: 'pi' if k == 'client' else False if k == 'safe' else d), \
+                     patch.object(atticus, 'wait_commit', return_value=True):
+                    reply, usd, _ = atticus.run_pi('test', [(str(frame), 'screen')])
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+            self.assertEqual((reply, usd), ('Ready.', .012))
+            args = json.loads(log.read_text())
+            self.assertEqual(args[-2:], ['@' + str(frame), 'test'])
+            self.assertEqual(args[args.index('--mode') + 1], 'json')
+            self.assertIn('--no-session', args)
+            self.assertEqual(args[args.index('--tools') + 1], 'bash,read,grep,find,ls')
+            extension = Path(args[args.index('--extension') + 1]).read_text()
+            self.assertIn('tool_call', extension)
+            self.assertIn('--gate', extension)
+
+    def test_pi_gate_blocks_wrapped_denied_commands(self):
+        event = {'tool_name': 'exec', 'tool_input': {'command': 'env FIXTURE=1 rm /tmp/file'}}
+        with patch.dict(os.environ, {'ATTICUS_CLIENT': 'pi'}), patch.object(atticus, 'wait_commit', return_value=True), \
+             patch('sys.stdin', io.StringIO(json.dumps(event))), patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.gate()
+        self.assertEqual(json.loads(out.getvalue())['decision'], 'block')
+
+    def test_external_gates_normalize_shell_quoting_before_hard_denials(self):
+        for client in ('pi', 'devin'):
+            for command in ("r''m /tmp/file", r'r\m /tmp/file', "echo ready;r''m /tmp/file", "g''it p''ush", "rm /tmp/file\necho '"):
+                with self.subTest(client=client, command=command):
+                    event = {'tool_name': 'exec', 'tool_input': {'command': command}}
+                    with patch.dict(os.environ, {'ATTICUS_CLIENT': client}), patch.object(atticus, 'wait_commit', return_value=True), \
+                         patch.object(atticus, 'pref', side_effect=lambda k, d: False if k == 'safe' else d), \
+                         patch('sys.stdin', io.StringIO(json.dumps(event))), patch('sys.stdout', new_callable=io.StringIO) as out:
+                        atticus.gate()
+                    self.assertEqual(json.loads(out.getvalue())['decision'], 'block')
+
+    def test_pi_safe_mode_asks_before_shell_commands(self):
+        event = {'tool_name': 'exec', 'tool_input': {'command': 'echo hello'}}
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {'ATTICUS_CLIENT': 'pi', 'ATTICUS_ASK': root}), \
+             patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'pref', return_value=True), \
+             patch.object(atticus, 'ask_user', return_value='n') as ask, \
+             patch('sys.stdin', io.StringIO(json.dumps(event))), patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.gate()
+        ask.assert_called_once()
+        self.assertEqual(json.loads(out.getvalue())['decision'], 'block')
+
+    def test_pi_plan_only_requires_the_cli(self):
+        with patch.object(atticus.shutil, 'which', side_effect=[None, '/fake/pi']):
+            self.assertEqual(atticus.pi_plan()['need'], 'install')
+            self.assertTrue(atticus.pi_plan()['ok'])
 
     def test_devin_auth_uses_status_exit_code(self):
         ok = subprocess.CompletedProcess([], 0, stdout='localized output')
@@ -523,6 +717,77 @@ raise SystemExit(4)
             mocks['front'].assert_not_called()
             mocks['say'].assert_called_once_with('✓', 'Opened Notes.')
 
+    def test_stream_routes_observed_work_and_unverified_giveup_without_word_matching(self):
+        tool = lambda n: {'type':'assistant','message':{'content':[{'type':'tool_use','id':str(n),'name':'Bash','input':{'command':f'change-fixture {n}'}}]}}
+        result = lambda n, error=False: {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':str(n),'is_error':error,'content':f'Observed state {n}'}]}}
+        cases = [(True, [tool(1),result(1)], 'Verified. [done]', 'Verified.', True),
+                 (True, [tool(1),result(1)], 'An arbitrary abandonment in any language.', '[sonnet]', False),
+                 (True, [tool(1),result(1,True)], 'Still stuck. [done]', 'Still stuck.', False),
+                 (True, [tool(1),result(1),tool(2),result(2)], 'Ignored final.', '[sonnet]', False),
+                 (False, [tool(1),result(1),tool(2),result(2)], 'Finished.', 'Finished.', True),
+                 (True, [], 'A quick answer.', 'A quick answer.', True)]
+        for auto, events, answer, expected, ok in cases:
+            with self.subTest(auto=auto, answer=answer), patch.object(atticus,'TURN',{}):
+                p = unittest.mock.Mock()
+                p.stdin=io.StringIO(); p.ask=''; p.returncode=0
+                p.stdout=map(json.dumps,events+[{'type':'result','result':answer,'total_cost_usd':.001}])
+                with patch.object(atticus,'stop_claude') as stop, patch.object(atticus,'say'), patch.object(atticus,'preview_commands'):
+                    reply,cost,_=atticus.run('Fixture request'+(atticus.MODEL_OFFER if auto else ''),p,auto_work=auto)
+                self.assertEqual(reply,expected); self.assertEqual(atticus.run.ok,ok)
+                if events: self.assertEqual(atticus.run.observed[0]['result'],'Observed state 1')
+                if auto and len(events)>2:
+                    stop.assert_called_once_with(p); self.assertIsNone(cost)
+                else: stop.assert_not_called()
+
+    def test_action_success_and_learning_require_observed_tool_evidence(self):
+        tool = {'type':'assistant','message':{'content':[{'type':'tool_use','id':'action','name':'Bash','input':{'command':'fixture action'}}]}}
+        for observed, expected, ok in [('', 'I sent it — but I couldn’t confirm the result.', False),
+                                       ('The destination now contains it.', 'I sent it.', True)]:
+            with self.subTest(observed=observed):
+                result = {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'action','content':observed}]}}
+                p = unittest.mock.Mock(); p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0
+                p.stdout = map(json.dumps, [tool, result, {'type':'result','result':'I sent it.'}])
+                with patch.object(atticus, 'say'), patch.object(atticus, 'preview_commands'):
+                    reply, _, _ = atticus.run('send it', p)
+                self.assertEqual(reply, expected)
+                self.assertEqual(atticus.run.ok, ok)
+                self.assertEqual(atticus.run.cmds, ['fixture action'] if ok else [])
+                self.assertEqual(atticus.run.ran, ['fixture action'])
+
+    def test_read_only_question_tools_stay_on_haiku_without_a_completion_marker(self):
+        events=[]
+        for n, name, inp in [('1','WebSearch',{'query':'fixture question'}), ('2','WebFetch',{'url':'https://fixture.invalid'}),
+                             ('3','Bash',{'command':f'{sys.executable} {atticus.ME} --window'})]:
+            events.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':n,'name':name,'input':inp}]}},
+                           {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':n,'content':'Source text'}]}}])
+        p=unittest.mock.Mock(); p.stdin=io.StringIO(); p.ask=''; p.returncode=0
+        p.stdout=map(json.dumps,events+[{'type':'result','result':'A sourced answer.'}])
+        with patch.object(atticus,'TURN',{}), patch.object(atticus,'stop_claude') as stop, patch.object(atticus,'say'), patch.object(atticus,'preview_commands'):
+            reply,_,_=atticus.run('A question'+atticus.MODEL_OFFER,p,auto_work=True)
+        stop.assert_not_called(); self.assertFalse(atticus.run.work)
+        self.assertEqual(reply,'A sourced answer.'); self.assertTrue(atticus.run.ok)
+
+    def test_long_read_only_work_moves_on_without_waiting_for_a_routing_marker(self):
+        events=[]
+        for n in ('1','2'):
+            events.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':n,'name':'WebFetch','input':{}}]}},
+                           {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':n,'content':'Observed research'}]}}])
+        p=unittest.mock.Mock(); p.stdin=io.StringIO(); p.ask=''; p.returncode=0; p.stdout=map(json.dumps,events)
+        with patch.object(atticus,'TURN',{}), patch.object(atticus.time,'monotonic',side_effect=[0,31]), \
+             patch.object(atticus,'stop_claude') as stop, patch.object(atticus,'say'), patch.object(atticus,'preview_commands'):
+            reply,cost,_=atticus.run('Research',p,auto_work=True)
+        stop.assert_called_once_with(p); self.assertEqual(reply,'[sonnet]')
+        self.assertIsNone(cost); self.assertFalse(atticus.run.ok)
+
+    def test_warmed_models_follow_routing_without_a_classifier(self):
+        for mode, expected in (('cheapest','haiku'),('balanced','haiku'),('capable','opus')):
+            with self.subTest(mode=mode), patch.object(atticus,'pref',side_effect=lambda k,d:{'routing':mode,'model':'opus'}.get(k,d)), \
+                 patch.object(atticus.shutil,'which',return_value='/fake/claude'), patch.object(atticus.subprocess,'Popen') as launch, \
+                 patch.object(atticus.atexit,'register'), patch.object(atticus.signal,'signal'):
+                process=atticus.start_ai(); process.errors.close()
+                args=launch.call_args.args[0]
+                self.assertEqual(args[args.index('--model')+1],expected)
+
     def test_stream_requires_a_real_terminal_answer(self):
         for stream, expected in [([], 'No answer came back. Please try again.'),
                                  ([{'type': 'result', 'result': ''}], 'No answer came back. Please try again.'),
@@ -535,6 +800,20 @@ raise SystemExit(4)
             self.assertEqual(reply, expected)
             self.assertEqual(atticus.run.cmds, [])
             self.assertEqual(atticus.run.ok, expected == 'Found it.')
+
+    def test_cli_preference_write_failure_preserves_existing_settings(self):
+        prefs = self.root / 'settings.json'
+        original = '{"model":"opus","safe":true}'
+        prefs.write_text(original)
+        (self.root / 'q').write_text(json.dumps({'set': 'tips', 'value': False}))
+        def failed_dump(data, file, **kwargs):
+            file.write('{'); file.flush()
+            raise OSError('fixture disk full')
+        process = unittest.mock.Mock(); process.ask = str(self.root); process.poll.return_value = None
+        with patch.dict(os.environ, {'ATTICUS_UI': '0'}), patch.object(atticus, 'PREFS', str(prefs)), \
+             patch.object(atticus.json, 'dump', side_effect=failed_dump), self.assertRaises(OSError):
+            atticus.relay(process)
+        self.assertEqual(prefs.read_text(), original)
 
     def test_truncated_history_preserves_valid_turns(self):
         with tempfile.TemporaryDirectory() as root:
@@ -695,6 +974,36 @@ time.sleep(30)
                 p.wait(timeout=3)
                 time.sleep(.7)
                 self.assertFalse(survived.exists(), 'Devin child survived Stop')
+            finally:
+                if p.poll() is None:
+                    p.kill(); p.wait(timeout=3)
+
+    def test_pi_sigterm_stops_its_descendant(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            ready, survived = root / 'ready', root / 'survived'
+            child = f'import time; from pathlib import Path; Path({str(ready)!r}).touch(); time.sleep(.6); Path({str(survived)!r}).touch()'
+            fake = root / 'pi'
+            fake.write_text(f'''#!{sys.executable}
+import subprocess, sys, time
+subprocess.Popen([sys.executable, '-c', {child!r}])
+time.sleep(30)
+''')
+            fake.chmod(0o755)
+            runner = root / 'run.py'
+            runner.write_text("import atticus\natticus.pref=lambda k,d: 'pi' if k=='client' else False if k=='safe' else d\natticus.run_pi('test')\n")
+            p = subprocess.Popen([sys.executable, str(runner)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
+                                      'ATTICUS_DIR': str(root), 'PYTHONPATH': str(Path(atticus.ME).parent)})
+            try:
+                deadline = time.monotonic() + 3
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists(), 'fake Pi never started')
+                p.send_signal(signal.SIGTERM)
+                p.wait(timeout=3)
+                time.sleep(.7)
+                self.assertFalse(survived.exists(), 'Pi child survived Stop')
             finally:
                 if p.poll() is None:
                     p.kill(); p.wait(timeout=3)
@@ -880,6 +1189,7 @@ class WatchAndBudgetTests(unittest.TestCase):
     def test_prompt_stays_under_budget(self):
         # Every ask pays for this prompt. Raising the cap is a decision: check `atticus.py --budget` first.
         full = atticus.SYSTEM + atticus.ASK_ME + atticus.POINTER + atticus.LEARN_ME + atticus.TEACH + atticus.ASK_FIRST + atticus.WORKFLOW
+        self.assertLessEqual(len(atticus.MODEL_OFFER), 211)
         self.assertLessEqual(len(full), 10000)
         self.assertLessEqual(len(full.replace(atticus.ME, os.path.expanduser('~/Applications/Atticus.app/Contents/Resources/atticus.py'))), 10000)
 
@@ -959,6 +1269,15 @@ class WebAndHistoryTests(unittest.TestCase):
             self.assertIn('needs the user', atticus.web('click', '4'))   # no Allow card (a shortcut): never click blind
             ask.assert_not_called()
 
+
+class AppleEventTests(unittest.TestCase):
+    def test_no_front_app_skips_window_query_and_stuck_scripts_time_out(self):
+        with patch.dict(os.environ, {'ATTICUS_FRONT': ''}), patch.object(atticus, 'osa', return_value='') as osa:
+            self.assertEqual(atticus.front(), ('', ''))
+            self.assertEqual(osa.call_count, 1, 'an empty app name must not reach "tell process"')
+        started = time.monotonic()
+        self.assertEqual(atticus.osa('delay 5', timeout=1), '')
+        self.assertLess(time.monotonic() - started, 3)
 
 if __name__ == '__main__':
     unittest.main()
