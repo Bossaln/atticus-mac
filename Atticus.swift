@@ -536,7 +536,7 @@ struct DrawingStep: Decodable {
     let wait: Bool?, hit: [Double]?, timeout: Double?
 }
 struct DrawingRequest: Decodable {
-    let steps: [DrawingStep], target: DrawingWindow, state: String
+    let steps: [DrawingStep], teaching: Bool, target: DrawingWindow, state: String
     let receipt: String?
 }
 struct DrawingWindow: Decodable {
@@ -553,11 +553,20 @@ final class DrawingView: NSView {
         let p = convert(event.locationInWindow, from:nil)
         return CGPoint(x:origin.x + p.x, y:origin.y + p.y)
     }
-    override func mouseDown(with event: NSEvent) { inputStart?(inputPoint(event)) }
+    var pointing: Bool { inputStart != nil && window?.ignoresMouseEvents == false }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        if inputStart != nil { addTrackingArea(NSTrackingArea(rect:.zero,options:[.activeAlways,.mouseMoved,.mouseEnteredAndExited,.cursorUpdate,.inVisibleRect],owner:self)) }
+    }
+    override func cursorUpdate(with event: NSEvent) { if pointing { NSCursor.crosshair.set() } else { super.cursorUpdate(with:event) } }   // Atticus never activates, so set it on every move too
+    override func mouseEntered(with event: NSEvent) { if pointing { NSCursor.crosshair.set() } }
+    override func mouseMoved(with event: NSEvent) { if pointing { NSCursor.crosshair.set() } }
+    override func mouseDown(with event: NSEvent) { if pointing { NSCursor.crosshair.set() }; inputStart?(inputPoint(event)) }
     override func mouseDragged(with event: NSEvent) { inputMove?(inputPoint(event)) }
     override func mouseUp(with event: NSEvent) { inputEnd?(inputPoint(event)) }
-    func render(_ shapes: [DrawingShape], animate: Bool, previous: CGPoint?) {
-        wantsLayer = true; layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
+    func render(_ shapes: [DrawingShape], animate: Bool, previous: CGPoint?, append: Bool = false) {
+        wantsLayer = true
+        if !append { layer?.sublayers?.forEach { $0.removeFromSuperlayer() } }
         let colors: [String:NSColor] = ["red":.systemRed, "blue":.systemBlue, "green":.systemGreen, "yellow":.systemYellow, "white":.white]
         func local(_ p: [Double]) -> CGPoint { CGPoint(x:p[0]-origin.x, y:p[1]-origin.y) }
         for shape in shapes {
@@ -603,10 +612,43 @@ final class DrawingView: NSView {
         }
     }
 }
+final class DrawingCaptionView: NSView {
+    var onClose: (() -> Void)?
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    init(frame: CGRect, step: Int, total: Int, captions: [String]) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(calibratedWhite:0.08,alpha:0.94).cgColor
+        layer?.cornerRadius = 12
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.22).cgColor
+        layer?.shadowColor = NSColor.black.cgColor; layer?.shadowOpacity = 0.35; layer?.shadowRadius = 8
+        let progress = NSTextField(labelWithString:step < total ? "Step \(step) of \(total) · building" : "Step \(step) of \(total) · complete")
+        progress.font = .systemFont(ofSize:11,weight:.semibold); progress.textColor = NSColor.white.withAlphaComponent(0.68)
+        progress.frame = CGRect(x:18,y:12,width:frame.width-36,height:16); addSubview(progress)
+        let scroll = NSScrollView(frame:CGRect(x:18,y:34,width:frame.width-36,height:frame.height-78))
+        scroll.drawsBackground = false; scroll.borderType = .noBorder; scroll.hasVerticalScroller = true
+        let body = NSTextView(frame:CGRect(origin:.zero,size:scroll.contentSize))
+        body.string = captions.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator:"\n\n")
+        body.font = .systemFont(ofSize:14,weight:.medium); body.textColor = .white; body.drawsBackground = false
+        body.isEditable = false; body.isSelectable = true; body.textContainerInset = .zero; body.isVerticallyResizable = true
+        body.textContainer?.containerSize = NSSize(width:scroll.contentSize.width,height:.greatestFiniteMagnitude)
+        body.textContainer?.widthTracksTextView = true; body.autoresizingMask = [.width]
+        scroll.documentView = body; addSubview(scroll)
+        DispatchQueue.main.async { body.scrollToEndOfDocument(nil) }
+        let close = NSButton(title:"Close",target:self,action:#selector(closeGuide))
+        close.bezelStyle = .rounded; close.frame = CGRect(x:18,y:frame.height-36,width:72,height:26)
+        close.setAccessibilityLabel("Close guide"); addSubview(close)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    @objc func closeGuide() { onClose?() }
+}
 final class ScreenDrawing {
     var panels: [DrawingPanel] = [], request: DrawingRequest?, index = 0
+    var captionPanel: DrawingPanel?
     var timer: Timer?, monitors: [Any] = [], voice: Process?, element: AXUIElement?, originalValue: CFTypeRef?
-    var target: DrawingWindow?, hit: CGRect?, deadline = Date.distantPast, ready = Date.distantPast
+    var target: DrawingWindow?, hit: CGRect?, deadline = Date.distantPast, ready = Date.distantPast, advanceAt = Date.distantPast
     var previousPointer: CGPoint?
     var inputPath: [CGPoint] = [], inputMode = false
     var inputDone: (([CGPoint]) -> Void)?, inputCleared: (() -> Void)?
@@ -617,6 +659,7 @@ final class ScreenDrawing {
     }
     var cleanup: (() -> Void)?
     var status: ((String) -> Void)?
+    var speechEnabled: () -> Bool = { false }
     var active: Bool { request != nil }
     var hasInput: Bool { inputMode || !inputPath.isEmpty }
     static func numbers(_ v: [Double], _ n: Int) -> Bool { v.count == n && v.allSatisfy { $0.isFinite && abs($0) <= 100000 } }
@@ -624,6 +667,8 @@ final class ScreenDrawing {
     static func rect(_ v: [Double]) -> CGRect { CGRect(x:v[0],y:v[1],width:v[2],height:v[3]) }
     static func valid(_ r: DrawingRequest) -> Bool {
         guard r.target.valid, (1...12).contains(r.steps.count) else { return false }
+        let teaching = r.steps.allSatisfy { $0.wait != true && $0.target == nil && $0.hit == nil }
+        guard r.teaching == teaching, !teaching || r.steps.allSatisfy({ $0.say?.isEmpty == false }) else { return false }
         return r.steps.allSatisfy { step in
             guard (1...40).contains(step.shapes.count), (5...120).contains(step.timeout ?? 60), (step.say?.count ?? 0) <= 1000,
                   step.hit.map(validRect) ?? true, step.wait != true || step.target != nil || step.hit != nil else { return false }
@@ -654,7 +699,9 @@ final class ScreenDrawing {
         guard let r = try? JSONDecoder().decode(DrawingRequest.self,from:data), Self.valid(r), Self.onDisplays(r) else { return false }
         clear(); request = r; index = 0
         let click: (NSEvent) -> Void = { [weak self] event in
-            guard let self, let target, let point = event.cgEvent?.location else { return }
+            guard let self, event.window !== captionPanel, let point = event.cgEvent?.location else { return }
+            if request?.teaching == true { return }
+            guard let target else { return }
             let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []
             let clickedWindow = windows.first { info in
                 guard (info[kCGWindowLayer as String] as? Int) == 0,
@@ -668,17 +715,19 @@ final class ScreenDrawing {
         if let m = NSEvent.addGlobalMonitorForEvents(matching:.leftMouseDown,handler:click) { monitors.append(m) }
         if let m = NSEvent.addLocalMonitorForEvents(matching:.leftMouseDown,handler:{ e in click(e); return e }) { monitors.append(m) }
         showStep()
-        if let path = r.receipt { try? (active ? "shown" : "The target changed; read again.").write(toFile:path,atomically:true,encoding:.utf8) }
+        let shown = active && (!r.teaching || captionPanel?.isVisible == true)
+        if let path = r.receipt { try? (shown ? "shown" : "The target changed; read again.").write(toFile:path,atomically:true,encoding:.utf8) }
         if active { timer = Timer.scheduledTimer(withTimeInterval:0.15,repeats:true) { [weak self] _ in self?.tick() } }
         return active
     }
     func clear() {
         let hadInput = hasInput
         timer?.invalidate(); timer = nil; monitors.forEach(NSEvent.removeMonitor); monitors.removeAll()
-        stopVoice(); panels.forEach { $0.close() }; panels.removeAll()
+        stopVoice(); panels.forEach { $0.close() }; panels.removeAll(); captionPanel?.close(); captionPanel = nil
         request = nil; target = nil; hit = nil; element = nil; originalValue = nil; previousPointer = nil
+        advanceAt = .distantPast
         inputPath = []; inputMode = false; inputDone = nil
-        if hadInput { inputCleared?() }
+        if hadInput { NSCursor.arrow.set(); inputCleared?() }
         cleanup?()
     }
     func beginInput(_ done: @escaping ([CGPoint]) -> Void) {
@@ -687,7 +736,7 @@ final class ScreenDrawing {
             let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
             let panel = DrawingPanel(contentRect:screen.frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
             panel.isReleasedWhenClosed = false
-            panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = false
+            panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = false; panel.acceptsMouseMovedEvents = true
             panel.hidesOnDeactivate = false; panel.level = .statusBar; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
             applySharing(panel)
             let view = DrawingView(frame:CGRect(origin:.zero,size:screen.frame.size)); view.origin = CGDisplayBounds(displayID).origin
@@ -697,15 +746,19 @@ final class ScreenDrawing {
             panel.contentView = view; panel.orderFrontRegardless(); panels.append(panel)
         }
     }
-    func startInput(_ point: CGPoint) { inputPath = [point]; renderInput() }
+    func startInput(_ point: CGPoint) { guard inputMode else { return }; inputPath = [point]; renderInput() }   // a new stroke replaces the last one
     func moveInput(_ point: CGPoint) {
         guard inputMode, !inputPath.isEmpty else { return }
         if inputPath.count < 256 && hypot(point.x - inputPath.last!.x, point.y - inputPath.last!.y) >= 2 { inputPath.append(point); renderInput() }
     }
     func endInput(_ point: CGPoint) {
         guard inputMode, !inputPath.isEmpty else { return }
-        moveInput(point); inputMode = false; panels.forEach { $0.ignoresMouseEvents = true }
-        renderInput(); inputDone?(inputPath); inputDone = nil
+        moveInput(point); renderInput(); inputDone?(inputPath)
+    }
+    func finishInput() {   // Done: the mark stays on screen until the ask is sent; clicks reach the user's apps again
+        guard inputMode else { return }
+        if inputPath.isEmpty { clear(); return }
+        inputMode = false; inputDone = nil; panels.forEach { $0.ignoresMouseEvents = true }; NSCursor.arrow.set()
     }
     func renderInput() {
         guard let first = inputPath.first else { return }
@@ -715,9 +768,44 @@ final class ScreenDrawing {
         for panel in panels { (panel.contentView as? DrawingView)?.render([shape],animate:false,previous:nil) }
     }
     func stopVoice() { if let voice, voice.isRunning { voice.terminate() }; voice = nil }
+    func shapeBounds(_ shapes: [DrawingShape]) -> CGRect? {
+        var result = CGRect.null
+        for shape in shapes {
+            if let r = shape.rect { result = result.union(Self.rect(r)) }
+            if let p = shape.at { result = result.union(CGRect(x:p[0],y:p[1],width:1,height:1)) }
+            for p in shape.points ?? [] { result = result.union(CGRect(x:p[0],y:p[1],width:1,height:1)) }
+        }
+        return result.isNull ? nil : result
+    }
+    func showCaption(_ captions: [String], step: Int, total: Int, near drawing: CGRect?) {
+        captionPanel?.close(); captionPanel = nil
+        let text = captions.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator:"\n\n")
+        let screens = NSScreen.screens
+        guard let screen = drawing.flatMap({ area in screens.first { s in
+            let id = s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
+            return CGDisplayBounds(id).contains(CGPoint(x:area.midX,y:area.midY))
+        } }) ?? NSScreen.main ?? screens.first else { return }
+        let visible = screen.visibleFrame, width = min(480,visible.width-48), textWidth = width-36
+        let textHeight = ceil((text as NSString).boundingRect(with:CGSize(width:textWidth,height:.greatestFiniteMagnitude),
+            options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:NSFont.systemFont(ofSize:14,weight:.medium)]).height)
+        let height = min(visible.height-48,max(118,textHeight+86))
+        let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
+        let display = CGDisplayBounds(id), area = drawing ?? display
+        let x = area.midX < display.midX ? visible.maxX-width-24 : visible.minX+24
+        let y = area.midY < display.midY ? visible.minY+24 : visible.maxY-height-24
+        let panel = DrawingPanel(contentRect:CGRect(x:x,y:y,width:width,height:height),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+        panel.isReleasedWhenClosed = false; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
+        panel.appearance = NSAppearance(named:.darkAqua)
+        panel.ignoresMouseEvents = false; panel.hidesOnDeactivate = false; panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]; applySharing(panel)
+        let caption = DrawingCaptionView(frame:CGRect(x:0,y:0,width:width,height:height),step:step,total:total,captions:captions)
+        caption.onClose = { [weak self] in self?.clear() }
+        panel.contentView = caption; panel.orderFrontRegardless(); captionPanel = panel
+    }
     func showStep() {
         guard let r = request, r.steps.indices.contains(index) else { clear(); return }
-        stopVoice(); panels.forEach { $0.close() }; panels.removeAll()
+        stopVoice(); captionPanel?.close(); captionPanel = nil
+        if !r.teaching { panels.forEach { $0.close() }; panels.removeAll() }
         let step = r.steps[index]; target = r.target; hit = step.hit.map(Self.rect); element = nil; originalValue = nil
         var shapes = step.shapes
         if let label = step.target {
@@ -733,32 +821,50 @@ final class ScreenDrawing {
                 }
             } catch { status?("The screen changed. Ask again to continue."); clear(); return }
         }
-        guard let target, Self.current(target) else { clear(); return }
+        guard let target else { clear(); return }
+        if !r.teaching || index == 0 {
+            guard Self.current(target) else { clear(); return }
+        }
         let animate = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        for screen in NSScreen.screens {
-            let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
-            let panel = DrawingPanel(contentRect:screen.frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
-            panel.isReleasedWhenClosed = false
-            panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = true
-            panel.hidesOnDeactivate = false; panel.level = .statusBar; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
-            applySharing(panel)
-            let view = DrawingView(frame:CGRect(origin:.zero,size:screen.frame.size)); view.origin = CGDisplayBounds(displayID).origin
-            panel.contentView = view; panel.orderFrontRegardless(); view.render(shapes,animate:animate,previous:previousPointer); panels.append(panel)
+        if r.teaching && panels.count == NSScreen.screens.count {
+            for panel in panels { (panel.contentView as? DrawingView)?.render(shapes,animate:animate,previous:previousPointer,append:true) }
+        } else {
+            panels.forEach { $0.close() }; panels.removeAll()
+            for screen in NSScreen.screens {
+                let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
+                let panel = DrawingPanel(contentRect:screen.frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
+                panel.isReleasedWhenClosed = false
+                panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = true
+                panel.hidesOnDeactivate = false; panel.level = .statusBar; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
+                applySharing(panel)
+                let view = DrawingView(frame:CGRect(origin:.zero,size:screen.frame.size)); view.origin = CGDisplayBounds(displayID).origin
+                panel.contentView = view; panel.orderFrontRegardless(); view.render(shapes,animate:animate,previous:previousPointer); panels.append(panel)
+            }
         }
         if let point = shapes.last(where: { $0.kind == "pointer" })?.at { previousPointer = CGPoint(x:point[0],y:point[1]) }
-        let now = Date(); deadline = now.addingTimeInterval(step.timeout ?? 60); ready = now.addingTimeInterval(0.35)
+        let now = Date(); deadline = r.teaching ? .distantFuture : now.addingTimeInterval(step.timeout ?? 60); ready = now.addingTimeInterval(0.35)
+        let words = step.say ?? ""
+        advanceAt = now.addingTimeInterval(max(2.5,min(5,Double(words.split(separator:" ").count)/4)))
         if let words = step.say, !words.isEmpty {
             status?(words)
-            let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/say"); p.arguments = ["--",words]
-            try? p.run(); voice = p
+            if r.teaching {
+                let captions = r.steps[...index].compactMap(\.say)
+                showCaption(captions,step:index+1,total:r.steps.count,near:shapeBounds(r.steps[...index].flatMap(\.shapes)))
+            }
+            if speechEnabled() {
+                let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/say"); p.arguments = ["--",words]
+                try? p.run(); voice = p
+            }
         }
     }
     func advance() {
         guard let r = request else { return }
-        if index+1 < r.steps.count { index += 1; showStep() } else { clear() }
+        if index+1 < r.steps.count { index += 1; showStep() } else if !r.teaching { clear() }
     }
     func clicked(_ point: CGPoint) {
-        guard let r = request, r.steps[index].wait == true, Date() >= ready, hit?.contains(point) == true else { return }
+        guard let r = request, Date() >= ready else { return }
+        let step = r.steps[index]
+        guard step.wait != true || hit?.contains(point) == true else { return }
         advance()
     }
     static func current(_ target: DrawingWindow) -> Bool {
@@ -769,12 +875,14 @@ final class ScreenDrawing {
     }
     func tick() {
         guard let r = request, let target else { return }
-        guard Self.current(target) else { clear(); return }
-        if Date() >= deadline { clear(); return }
+        if !r.teaching {
+            guard Self.current(target) else { clear(); return }
+            if Date() >= deadline { clear(); return }
+        }
         let step = r.steps[index]
         if step.wait == true, Date() >= ready, let element {
             if let value = readValue(element), let originalValue, !CFEqual(value,originalValue) { advance() }
-        } else if step.wait != true, index+1 < r.steps.count, Date() >= ready.addingTimeInterval(1.5), voice?.isRunning != true { advance() }
+        } else if step.wait != true, index+1 < r.steps.count, Date() >= advanceAt, voice?.isRunning != true { advance() }
     }
 }
 
@@ -1049,7 +1157,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
     var toggleTalk = false, shortcutDown = false, pausedNotice = Date.distantPast
     var dictating = false, dictateCleanup = false, dictateShortcutDown = false, dictateSelectionPending = false
-    var dictateSelection: TextSelection?, dictateProcess: Process?, dictateID = 0
+    var dictateSelection: TextSelection?, dictateProcess: Process?, dictateInput: FileHandle?, dictateOutput: FileHandle?, dictateID = 0
     var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
     var askNeed: [String:Any] = [:]
     var agentMoveFile = "" { didSet { moveKey() } }   // set while atticus.py watches it: the running ask can move to an agent
@@ -1167,14 +1275,30 @@ final class App: NSObject, WKScriptMessageHandler {
         ]
         if capturing && capture.terminationStatus == 0 && FileManager.default.fileExists(atPath:path) { context["image"] = path }
         if context["image"] == nil && (context["element"] as? String)?.isEmpty != false {
-            drawing.clear(); js("msg","Couldn’t capture that mark."); return
+            drawing.clear(); js("notice","Couldn’t capture that mark."); return
         }
-        pointContext = context; js("point", ["active":false,"marked":true])
+        if let old = pointContext?["image"] as? String { try? FileManager.default.removeItem(atPath:old) }   // a redrawn mark replaces the last crop
+        pointContext = context
+        js("point", ["active":drawing.inputMode,"marked":true,"thumb":(context["image"] as? String).map(pointThumb) ?? ""])
+    }
+    func pointThumb(_ path: String) -> String {   // the box's chip: a small data URL, since the page can't read temporary files
+        guard let image = NSImage(contentsOfFile:path), image.size.width > 0, image.size.height > 0 else { return "" }
+        let scale = min(1, 120 / image.size.width, 72 / image.size.height)
+        let small = NSImage(size:NSSize(width:image.size.width * scale,height:image.size.height * scale),flipped:false) { image.draw(in:$0); return true }
+        guard let tiff = small.tiffRepresentation, let jpg = NSBitmapImageRep(data:tiff)?.representation(using:.jpeg,properties:[.compressionFactor:0.7]) else { return "" }
+        return "data:image/jpeg;base64," + jpg.base64EncodedString()
     }
     func startPointing() {
-        guard panel.isVisible, !busy, !engine.isRunning, !drawing.active else { return }
+        guard panel.isVisible else { return }
+        guard !busy, !engine.isRunning else { js("notice","Finish or stop listening first."); return }
+        if drawing.active { drawing.clear() }
         drawing.beginInput { [weak self] points in self?.finishPoint(points) }
+        panel.orderFrontRegardless()   // same level as the overlay: ordered last, the box stays clickable for Done, Cancel and typing
         pinned = true; js("point", ["active":true,"marked":false])
+    }
+    func finishPointing() {
+        drawing.finishInput()
+        if pointContext != nil { js("point", ["active":false,"marked":true]) }
     }
 
     override init() {
@@ -1184,6 +1308,7 @@ final class App: NSObject, WKScriptMessageHandler {
         drawing.resolve = { label, state in try Hands.drawAnchor(label,state:state) }
         drawing.cleanup = Hands.restoreAccessibility
         drawing.status = { [weak self] words in self?.js("msg",words) }
+        drawing.speechEnabled = { Prefs.bool("speak") }
         drawing.inputCleared = { [weak self] in self?.clearPointContext() }
         cfg.userContentController.add(self, name: "h")
         cfg.userContentController.add(self, name: "c")
@@ -1342,10 +1467,13 @@ final class App: NSObject, WKScriptMessageHandler {
             if b["replace"] != nil, !busy { applyReplacement() }
             if b["retry"] != nil, !busy, !engine.isRunning { typed(text, keep: true) }
             if let t = b["send"] as? String { typed(t, keep: true) }
-            if b["point"] != nil { startPointing() }
+            if b["point"] != nil { drawing.inputMode ? finishPointing() : startPointing() }
+            if b["pointDone"] != nil { finishPointing() }
+            if b["pointClear"] != nil, drawing.hasInput { drawing.clear() }
+            if b["pointCoached"] != nil { Prefs.set("pointCoached", true) }
             if b["mic"] != nil { fresh = false }
             if b["mic"] != nil && (!busy || retryOffer) && !engine.isRunning { clickTalk = true; start(); if !engine.isRunning { clickTalk = false } }
-            if b["ready"] != nil { js("size", Prefs.num("boxH")) }
+            if b["ready"] != nil { js("size", Prefs.num("boxH")); if Prefs.bool("tips") && !Prefs.bool("pointCoached") { js("pointCoach") } }
             if b["safe"] != nil { Prefs.set("safe", true); js("mode", true); Atticus.settings.push() }
             if let m = b["model"] as? String {   // picked in the box: the same setting Settings shows; a worker warmed on the old model goes
                 Atticus.settings.apply(Prefs.str("apiBase").isEmpty ? "routing" : "apiModel", m); Atticus.settings.push()
@@ -1501,7 +1629,7 @@ final class App: NSObject, WKScriptMessageHandler {
         clickTalk = false; toggleTalk = false; quiet?.cancel(); stops += 1   // stops: a late "words landed" from this listen does nothing
         listenID += 1; selectionID += 1; selectionPending = false; replacing = false
         dictating = false; dictateID += 1; dictateSelectionPending = false; dictateSelection = nil
-        dictateProcess?.terminate(); dictateProcess = nil
+        stopDictationCleanup()
         cancelFast()
         aheadItem?.cancel(); dropAhead()
         proc?.terminate(); proc = nil; askFile = ""; agentMoveFile = ""; replacement = nil; retryOffer = false
@@ -1636,6 +1764,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if dictate {
             dictateCleanup = Prefs.str("dictateMode") == "cleanup"
             captureDictationSelection(); replacement = nil
+            if dictateCleanup { warmDictationCleanup() }
         } else if replying { offerText = text } else { captureSelection(); replacement = nil }
         if !dictate { targetScreen = currentRequestScreen() }
         text = ""; ahead = ""; speechFailed = false; consumed = 0; consumedText = ""; liveRevised = false; did = []
@@ -1854,6 +1983,27 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
+    func stopDictationCleanup() {
+        try? dictateInput?.close()
+        dictateProcess?.terminate()
+        dictateProcess = nil; dictateInput = nil; dictateOutput = nil
+    }
+
+    func warmDictationCleanup() {
+        stopDictationCleanup()
+        let p = py(["--dictate-cleanup-wait"]), input = Pipe(), output = Pipe()
+        p.standardInput = input; p.standardOutput = output
+        fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        do {
+            try p.run()
+            dictateProcess = p
+            dictateInput = input.fileHandleForWriting
+            dictateOutput = output.fileHandleForReading
+        } catch {
+            stopDictationCleanup()
+        }
+    }
+
     func finishDictation() {
         if dictateSelectionPending {
             let id = dictateID
@@ -1863,27 +2013,30 @@ final class App: NSObject, WKScriptMessageHandler {
             return
         }
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = dictateCleanup && dictateSelection?.text.isEmpty == false ? dictateSelection!.text : spoken
+        let source = spoken
         guard !source.isEmpty else {
+            stopDictationCleanup()
             busy = false; dictating = false; cue("soundStop"); hide(after: 0.2)
             return
         }
         if !dictateCleanup { return insertDictation(source) }
-        let id = dictateID, p = py(["--dictate-cleanup"]), input = Pipe(), output = Pipe()
-        p.standardInput = input; p.standardOutput = output
-        dictateProcess = p
+        if dictateProcess?.isRunning != true { warmDictationCleanup() }
+        guard let p = dictateProcess, let input = dictateInput, let output = dictateOutput else {
+            dictationDeliveryFailed(source, cleanup: true); return
+        }
+        let id = dictateID
         do {
-            try p.run()
-            try input.fileHandleForWriting.write(contentsOf: Data(source.utf8))
-            try input.fileHandleForWriting.close()
+            try input.write(contentsOf: Data(source.utf8))
+            try input.close()
+            dictateInput = nil
         } catch {
-            dictateProcess = nil; dictationDeliveryFailed(source, cleanup: true); return
+            stopDictationCleanup(); dictationDeliveryFailed(source, cleanup: true); return
         }
         DispatchQueue.global().async { [weak self] in
-            let data = output.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+            let data = output.readDataToEndOfFile(); p.waitUntilExit()
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.dictateID == id, self.dictateProcess === p else { return }
-                self.dictateProcess = nil
+                self.dictateProcess = nil; self.dictateOutput = nil
                 let cleaned = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if p.terminationStatus == 0 && !cleaned.isEmpty { self.insertDictation(cleaned) }
                 else { self.dictationDeliveryFailed(source, cleanup: true) }
@@ -2236,6 +2389,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             js("shelf","list",sorted); js("view","list",sorted); js("view","named",named)
         } else if kind == "named" {
             named = event["named"] as? [[String:Any]] ?? []; js("view","named",named)
+            if let reply = event["reply"] as? String { js("view","namedReply",reply) }
         }
         if let row = event["agent"] as? [String:Any], let id = row["id"] as? String {
             rows[id] = row
@@ -3188,7 +3342,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         send("agents", ["count": agentsUI.count])
         js("st.motion(\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))")
         var d: [String: Any] = ["prefs": Prefs.d, "mics": microphoneChoices(), "version": Updater.version, "update": Updater.status,
-                                "hotkeyTaken": ref == nil, "dictateHotkeyTaken": !Prefs.str("dictateHotkeyLabel").isEmpty && dictateRef == nil]
+                                "hotkeyTaken": !hotkeyRegistered, "dictateHotkeyTaken": !Prefs.str("dictateHotkeyLabel").isEmpty && !dictateHotkeyRegistered]
         let routines = (Prefs.path as NSString).deletingLastPathComponent + "/routines.json"
         d["routines"] = (try? JSONSerialization.jsonObject(with:Data(contentsOf:URL(fileURLWithPath:routines)))) as? [[String:Any]] ?? []
         if let t = NSApp.applicationIconImage?.tiffRepresentation, let png = NSBitmapImageRep(data: t)?.representation(using: .png, properties: [:]) {
@@ -3263,7 +3417,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         let otherRegistered = recording == "dictate" ? registerHotkey() : registerDictateHotkey()
         let registered = otherRegistered && (recording == "dictate" ? registerDictateHotkey() : registerHotkey())
         if !registered {   // taken by another app or the other Atticus shortcut: keep the old one
-            let own = new?.label == Prefs.str(recording == "dictate" ? "hotkeyLabel" : "dictateHotkeyLabel")
+            let own = new != nil && !Prefs.str("dictateHotkeyLabel").isEmpty && hotkeysConflict(hotkey(),dictateHotkey())
             Prefs.set(stem + "Code", old.0!); Prefs.set(stem + "Mods", old.1!); Prefs.set(stem + "Label", old.2!)
             registerHotkey(); registerDictateHotkey()
             say("taken(\(Hands.quote(recording)),\(own))")
@@ -5519,10 +5673,14 @@ InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in
 }, 2, &specs, nil, nil)
 var ref: EventHotKeyRef?
 var dictateRef: EventHotKeyRef?
+var hotkeyRegistered = false
+var dictateHotkeyRegistered = false
 var specialGlobalHotkeys: Any?, specialLocalHotkeys: Any?, specialMainDown = false, specialDictateDown = false
 func specialHotkey(_ h: (code: Int, mods: Int, flags: NSEvent.ModifierFlags)) -> Bool { h.code < 0 || h.mods & atticusFnKey != 0 }
-func sameHotkey(_ a: (code: Int, mods: Int, flags: NSEvent.ModifierFlags), _ b: (code: Int, mods: Int, flags: NSEvent.ModifierFlags)) -> Bool {
-    a.code == b.code && a.mods == b.mods
+func hotkeysConflict(_ a: (code: Int, mods: Int, flags: NSEvent.ModifierFlags), _ b: (code: Int, mods: Int, flags: NSEvent.ModifierFlags)) -> Bool {
+    a.code == b.code && a.mods == b.mods ||
+    a.code < 0 && a.mods & b.mods == a.mods ||
+    b.code < 0 && b.mods & a.mods == b.mods
 }
 func stopSpecialHotkeys() {
     if let m = specialGlobalHotkeys { NSEvent.removeMonitor(m); specialGlobalHotkeys = nil }
@@ -5533,12 +5691,12 @@ func updateSpecialHotkey(_ e: NSEvent, _ h: (code: Int, mods: Int, flags: NSEven
     guard specialHotkey(h) else { return }
     let next: Bool
     if h.code < 0 {
-        next = shortcutModifiers(e.modifierFlags) & h.mods == h.mods
+        next = shortcutModifiers(e.modifierFlags) == h.mods
     } else {
-        if e.type == .flagsChanged, down, shortcutModifiers(e.modifierFlags) & h.mods != h.mods { next = false }
+        if e.type == .flagsChanged, down, shortcutModifiers(e.modifierFlags) != h.mods { next = false }
         else {
             guard Int(e.keyCode) == h.code else { return }
-            if e.type == .keyDown { guard shortcutModifiers(e.modifierFlags) & h.mods == h.mods else { return }; next = true }
+            if e.type == .keyDown { guard shortcutModifiers(e.modifierFlags) == h.mods else { return }; next = true }
             else if e.type == .keyUp { next = false }
             else { return }
         }
@@ -5562,25 +5720,25 @@ func refreshSpecialHotkeys() {
 @discardableResult func registerHotkey() -> Bool {   // false: another app already owns that shortcut
     if let r = ref { UnregisterEventHotKey(r); ref = nil }
     let h = hotkey()
-    let conflict = !Prefs.str("dictateHotkeyLabel").isEmpty && sameHotkey(h, dictateHotkey())
-    let ok = !conflict && (specialHotkey(h) || RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref) == noErr)
-    refreshSpecialHotkeys(); return ok
+    let conflict = !Prefs.str("dictateHotkeyLabel").isEmpty && hotkeysConflict(h, dictateHotkey())
+    hotkeyRegistered = !conflict && (specialHotkey(h) || RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 1), GetApplicationEventTarget(), 0, &ref) == noErr)
+    refreshSpecialHotkeys(); return hotkeyRegistered
 }
 @discardableResult func registerDictateHotkey() -> Bool {
     if let r = dictateRef { UnregisterEventHotKey(r); dictateRef = nil }
-    guard !Prefs.str("dictateHotkeyLabel").isEmpty else { refreshSpecialHotkeys(); return true }
+    guard !Prefs.str("dictateHotkeyLabel").isEmpty else { dictateHotkeyRegistered = true; refreshSpecialHotkeys(); return true }
     let h = dictateHotkey()
-    let ok = !sameHotkey(h, hotkey()) && (specialHotkey(h) || RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 6), GetApplicationEventTarget(), 0, &dictateRef) == noErr)
-    refreshSpecialHotkeys(); return ok
+    dictateHotkeyRegistered = !hotkeysConflict(h, hotkey()) && (specialHotkey(h) || RegisterEventHotKey(UInt32(h.code), UInt32(h.mods), EventHotKeyID(signature: 0x41545443, id: 6), GetApplicationEventTarget(), 0, &dictateRef) == noErr)
+    refreshSpecialHotkeys(); return dictateHotkeyRegistered
 }
-let hotkeyFree = registerHotkey()
-let dictateHotkeyFree = registerDictateHotkey()
+registerHotkey()
+registerDictateHotkey()
 if Prefs.bool("speak") { siriVoice() }
 let settings = SettingsWindow()
 let bar = MenuBar()
 let delegate = Delegate()
 NSApplication.shared.delegate = delegate
-if !hotkeyFree || !dictateHotkeyFree { DispatchQueue.main.async { settings.open() } }   // another app owns a saved shortcut: show the warning, not a silent dead key
+if !hotkeyRegistered || !dictateHotkeyRegistered { DispatchQueue.main.async { settings.open() } }   // another app owns a saved shortcut: show the warning, not a silent dead key
 Updater.schedule()
 
 // Test hook: `defaults write com.atticus.app demo -string "<request>"` then restart runs it once without the mic.

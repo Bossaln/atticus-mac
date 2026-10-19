@@ -234,7 +234,6 @@
   <button data-s="usage"><i class="ni" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg></i>Usage</button>
   <button data-s="apps"><i class="ni" style="background:#ff453a"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg></i>Apps</button>
   <button data-s="account"><i class="ni" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></i>Account &amp; Access</button>
-  <button data-s="lab"><i class="ni" style="background:#64d2ff"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3M7.5 15h9"/></svg></i>Experimental</button>
   <button data-s="about"><i class="ni" style="background:#5e5ce6"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg></i>About &amp; Updates</button>
   <div class="spacer"></div>
   <button data-s="feedback">Report feedback</button>
@@ -258,7 +257,7 @@
     <h3>Dictate anywhere</h3>
     <div class="group">
       <div class="row"><div class="t"><b id="dictatelabel">Dictation shortcut</b><span id="dictatehint"></span></div><div class="keyfield"><button class="kf" id="dictatechange" aria-labelledby="dictatelabel" aria-describedby="dictatehint"></button><button class="x" id="dictateclear" aria-label="Clear dictation shortcut">×</button></div></div>
-      <div class="row"><div class="t"><b>Dictated text</b><span>Clean up fixes grammar and rewrites selected text.</span></div><div class="seg" data-k="dictateMode"><button data-v="verbatim">Verbatim</button><button data-v="cleanup">Clean up</button></div></div>
+      <div class="row"><div class="t"><b>Dictated text</b><span id="dictatemodehint">Clean up drops fillers and slips but keeps your words.</span></div><div class="seg" data-k="dictateMode"><button data-v="verbatim">Verbatim</button><button data-v="cleanup">Clean up</button></div></div>
     </div>
     <h3>Speech</h3>
     <div class="group">
@@ -340,7 +339,7 @@
       <div class="row"><div class="t"><b>Look at my screen</b><span>Automatic looks only when you mean it, like “this” or “my screen”. The picture goes with that one ask.</span></div><div class="seg" data-k="screen"><button data-v="auto">Automatic</button><button data-v="never">Never</button></div></div>
       <div class="row"><div class="t"><b>Include selected text</b><span>Ask about or rewrite highlighted text in any app. You review before it’s replaced.</span></div><label class="sw"><input type="checkbox" data-k="selection"></label></div>
       <div class="row"><div class="t"><b>Hide from screen sharing</b><span>On a call or recording, others see your screen but not Atticus.</span></div><label class="sw"><input type="checkbox" data-k="hideWhenSharing"></label></div>
-      <div class="row"><div class="t"><b>Draw on screen to show you</b><span>Point out what matters and guide you one spoken step at a time. Esc clears the drawings.</span></div><label class="sw"><input type="checkbox" data-k="draw" aria-label="Draw on screen to show you"></label></div>
+      <div class="row"><div class="t"><b>Draw on screen to show you</b><span>Atticus marks what matters and guides you one step at a time, or builds an explanation like a whiteboard. Esc clears the drawings. To show Atticus a spot yourself, use Point at your screen in the ask box.</span></div><label class="sw"><input type="checkbox" data-k="draw" aria-label="Draw on screen to show you"></label></div>
     </div>
     <h3>Apps &amp; windows</h3>
     <div class="group">
@@ -429,14 +428,6 @@
     <h3>Atticus</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Quit Atticus</b><span>Open it again from Spotlight or Applications.</span></div><button class="btn red" data-do="quit">Quit</button></div>
-    </div>
-  </section>
-
-  <section id="lab">
-    <h1>Experimental</h1>
-    <p class="lede">New ideas, still rough. Turn them on and see what you think.</p>
-    <div class="group">
-      <div class="row"><div class="t"><b>Show me where</b><span>Ask “where’s the dark mode setting?” or “how do I share this?” and a ring lights up the spot on your screen.</span></div><label class="sw"><input type="checkbox" data-k="pointer"></label></div>
     </div>
   </section>
 
@@ -540,7 +531,7 @@
   $('change').onclick = () => {
     if (recording) return cancelRecord();
     recording = 'main'; $('shortcut').classList.add('rec'); $('change').textContent = 'Cancel Recording';
-    showCaps('', 'Recording — press your shortcut'); $('schint').textContent = 'Use modifiers with a key, or an F-key. Esc or click away to cancel.'; $('schint').className = '';
+    showCaps('', 'Recording — press your shortcut'); $('schint').textContent = 'Press a key combo, a modifier on its own, or an F-key. Esc or click away cancels.'; $('schint').className = '';
     post({ do: 'record' });
   };
   const dictateHint = () => dictateHotkeyTaken ? 'Another app uses this shortcut. Record another to dictate.' : 'Hold it in any text field, speak, then let go. Esc cancels.';
@@ -551,7 +542,7 @@
   $('dictatechange').onclick = () => {
     if (recording) return cancelRecord();
     recording = 'dictate'; $('dictatechange').classList.add('rec'); $('dictateclear').hidden = true; showKeys('', 'Type Shortcut');
-    $('dictatehint').textContent = 'Use modifiers with a key, or an F-key. Esc cancels.'; $('dictatehint').className = '';
+    $('dictatehint').textContent = 'Press a key combo, a modifier on its own, or an F-key. Esc cancels.'; $('dictatehint').className = '';
     post({ do: 'recordDictate' });
   };
   $('dictateclear').onclick = () => post({ do: 'clearDictate' });
@@ -583,6 +574,7 @@
     capable: 'Your work model for every ask and agent. Slower, and uses the most of your plan.' };
   const dim = (k, off) => { const e = document.querySelector(`[data-k=${k}]`); e.closest('.row').classList.toggle('dim', off); if (e.type === 'range') e.disabled = off; };   // greyed, not hidden: rows below stay put
   function paint() {
+    const devin = P.client === 'devin', pi = P.client === 'pi', other = devin || pi;
     if (!P.routing) P.routing = P.model && P.model !== 'haiku' ? 'capable' : P.escalate === false || P.escalateAuto === false ? 'cheapest' : 'balanced';
     if (!recording) showCaps(P.hotkeyLabel);
     $('reset').style.display = P.hotkeyLabel === '⌃⌥Space' ? 'none' : '';
@@ -591,6 +583,8 @@
     $('dictatechange').classList.toggle('bad', dictateHotkeyTaken && recording !== 'dictate');
     if (recording !== 'dictate' && $('dictatehint').className !== 'warn') { $('dictatehint').textContent = dictateHint(); $('dictatehint').className = dictateHotkeyTaken ? 'taken' : ''; }
     dim('dictateMode', !P.dictateHotkeyLabel);
+    document.querySelector('[data-k=dictateMode] [data-v=cleanup]').disabled = other;
+    $('dictatemodehint').textContent = other ? 'Clean up needs Claude. Use Verbatim instead.' : 'Clean up drops fillers and slips but keeps your words.';
     document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => {
       const value = g.dataset.k === 'model' && P.model === 'haiku' ? (P.agentModel === 'opus' ? 'opus' : 'sonnet') : P[g.dataset.k];
       const on = value === b.dataset.v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
@@ -609,7 +603,6 @@
     $('delayv').textContent = (+P.aheadDelay).toFixed(1) + ' s';
     $('routingwhy').textContent = WHY[P.routing] || '';
     SERVER.forEach(k => { if (document.activeElement !== $(k)) $(k).value = P[k] || ''; });
-    const devin = P.client === 'devin', pi = P.client === 'pi', other = devin || pi;
     $('agentServerModel').hidden = !P.apiBase || other;
     $('brainlede').textContent = devin ? 'Atticus thinks with Devin, on your Devin plan.' : pi ? 'Atticus thinks with the provider and model selected in Pi.'
       : P.apiBase ? 'Atticus thinks with the model on your custom server.' : 'Atticus thinks with Claude, on your Claude plan.';

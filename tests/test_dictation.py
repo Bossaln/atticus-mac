@@ -1,4 +1,5 @@
 """Dictation routing and delivery with fake model, focus, and selection targets."""
+import io
 from pathlib import Path
 import re
 import shutil
@@ -17,8 +18,8 @@ class DictationCleanupTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT))
         import atticus
         with patch.object(atticus, 'relevant_rules', return_value='Spell my name Saarth.'), \
-             patch.object(atticus, 'meeting_call', return_value=('Clean text.', {})) as call:
-            self.assertEqual(atticus.dictate_cleanup('um ' + 'x' * 7000), 'Clean text.')
+             patch.object(atticus, 'meeting_call', return_value=('<cleaned>Clean text.</cleaned>', {})) as call:
+            self.assertEqual(atticus.dictate_cleanup('um Clean text. ' + 'x' * 7000), 'Clean text.')
         self.assertEqual(call.call_count, 1)
         args, kwargs = call.call_args
         self.assertEqual(kwargs['model'], 'haiku')
@@ -29,6 +30,24 @@ class DictationCleanupTests(unittest.TestCase):
             self.assertEqual(atticus.dictate_cleanup('   '), '')
             empty.assert_not_called()
 
+    def test_cleanup_accepts_small_grammar_and_saved_spelling_edits(self):
+        import atticus
+        self.assertEqual(atticus.dictate_result('he go to school', '<cleaned>He goes to school.</cleaned>'), 'He goes to school.')
+        with patch.object(atticus, 'relevant_rules', return_value='Spell my name Saarth.'), \
+             patch.object(atticus, 'meeting_call', return_value=('<cleaned>My name is Saarth.</cleaned>', {})):
+            self.assertEqual(atticus.dictate_cleanup('My name is Sarth.'), 'My name is Saarth.')
+
+    def test_non_claude_cleanup_falls_back_without_starting_claude(self):
+        import atticus
+        with patch.object(atticus, 'client', return_value='pi'), patch.object(atticus, 'meeting_call') as call:
+            self.assertEqual(atticus.dictate_cleanup('Um, keep every word.'), 'keep every word.')
+        call.assert_not_called()
+        with patch.object(atticus, 'client', return_value='pi'), patch.object(atticus, 'meeting_process') as process, \
+             patch('sys.stdin', io.StringIO('Um, keep every word.')), patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.dictate_cleanup_wait()
+        process.assert_not_called()
+        self.assertEqual(out.getvalue(), 'keep every word.\n')
+
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift regression')
 class DictationNativeTests(unittest.TestCase):
@@ -36,11 +55,12 @@ class DictationNativeTests(unittest.TestCase):
         source = (ROOT / 'Atticus.swift').read_text()
         start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
         self.assertIn('if !dictate && !replying { unwarm(); warm = spawn() }', start)
-        method = source[source.index('    func finishDictation()'):source.index('    func dictationDeliveryFailed(')]
+        self.assertIn('if dictateCleanup { warmDictationCleanup() }', start)
+        method = source[source.index('    func stopDictationCleanup()'):source.index('    func dictationDeliveryFailed(')]
         swift = r'''import Foundation
 var processCalls = 0
 func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
-    precondition(args == ["--dictate-cleanup"])
+    precondition(args == ["--dictate-cleanup-wait"])
     processCalls += 1
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/cat"); return p
 }
@@ -48,7 +68,7 @@ struct Selection { let text: String }
 final class Harness {
     var dictateSelectionPending = false, dictateCleanup = false, busy = true, dictating = true
     var dictateID = 1, text = "Exact words.", inserted: [String] = []
-    var dictateSelection: Selection?, dictateProcess: Process?
+    var dictateSelection: Selection?, dictateProcess: Process?, dictateInput: FileHandle?, dictateOutput: FileHandle?
     func insertDictation(_ value: String) { inserted.append(value); busy = false; dictating = false }
     func dictationDeliveryFailed(_ value: String, cleanup: Bool = false) { busy = false; dictating = false }
     func cue(_ value: String) {}
@@ -62,10 +82,10 @@ let verbatim = Harness()
 verbatim.finishDictation()
 precondition(verbatim.inserted == ["Exact words."] && processCalls == 0, "verbatim called AI or changed the transcript")
 let clean = Harness(); clean.dictateCleanup = true; clean.dictateSelection = Selection(text: "um selected words")
-clean.finishDictation(); pump(0.5)
-precondition(clean.inserted == ["um selected words"] && processCalls == 1, "cleanup did not use exactly one call or the selection")
+clean.warmDictationCleanup(); clean.finishDictation(); pump(0.5)
+precondition(clean.inserted == ["Exact words."] && processCalls == 1, "cleanup did not use exactly one call or threw away the speech")
 let cancelled = Harness(); cancelled.dictateCleanup = true
-cancelled.finishDictation(); cancelled.dictateID += 1; cancelled.dictateProcess?.terminate(); pump(0.5)
+cancelled.warmDictationCleanup(); cancelled.finishDictation(); cancelled.dictateID += 1; cancelled.dictateProcess?.terminate(); pump(0.5)
 precondition(cancelled.inserted.isEmpty && processCalls == 2, "cancelled cleanup inserted late output")
 print("dictation routing ok")
 '''
@@ -181,7 +201,8 @@ print(String(format: "fake release-to-insert %.3f", inserted!))
         source = (ROOT / 'Atticus.swift').read_text()
         helpers = source[source.index('let atticusFnKey'):source.index('func configuredHotkey')]
         recorder = source[source.index('    // "Change shortcut"'):source.index('    func done(', source.index('    // "Change shortcut"'))]
-        registration = source[source.index('var specialGlobalHotkeys'):source.index('let hotkeyFree')]
+        registration_start = source.index('var specialGlobalHotkeys')
+        registration = source[registration_start:source.index('if Prefs.bool("speak")', registration_start)]
         self.assertIn('done((-2, shortcutModifiers(held)', recorder)
         self.assertIn('.function', recorder)
         self.assertIn('addGlobalMonitorForEvents', registration)

@@ -3,6 +3,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,7 +46,7 @@ class DrawingTests(unittest.TestCase):
     def test_actual_retina_and_two_display_pixel_mapping(self):
         mapping = {'1':{'frame':[0,0,1440,900],'pixels':[2880,1800]},
                    '2':{'frame':[-1920,-180,1920,1080],'pixels':[1280,720]}}
-        step = lambda n,p: {'screen':n,'shapes':[{'kind':'pointer','at':p}]}
+        step = lambda n,p: {'screen':n,'say':'Look here.','shapes':[{'kind':'pointer','at':p}]}
         result = atticus.drawing({'steps':[step(1,[1440,900]),step(2,[640,360])]},mapping)
         self.assertEqual(result['steps'][0]['shapes'][0]['at'],[720,450])
         self.assertEqual(result['steps'][1]['shapes'][0]['at'],[-960,360])
@@ -65,7 +66,7 @@ class DrawingTests(unittest.TestCase):
         self.assertFalse(atticus.replayable(atticus.DRAW + " '{}'"))
 
     def test_confirmation_and_request_relay(self):
-        data = {'steps':[{'shapes':[{'kind':'pointer','at':[10,10]}]}]}
+        data = {'steps':[{'say':'Look here.','shapes':[{'kind':'pointer','at':[10,10]}]}]}
         target = {'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
         with patch.dict(os.environ,{'ATTICUS_ASK':str(self.root)},clear=False), \
              patch.object(atticus,'draw_target',return_value=target), patch.object(atticus,'emit') as emit:
@@ -75,10 +76,26 @@ class DrawingTests(unittest.TestCase):
             def shown(lines):
                 Path(json.loads(lines[0][2:])['receipt']).write_text('shown')
             emit.side_effect = shown
-            with patch.object(atticus,'wait_commit',return_value=True): atticus.draw(data)
+            with patch.object(atticus,'wait_commit',return_value=True):
+                self.assertEqual(atticus.draw(data),'Guide shown (step 1 of 1). Leave it running.')
             value = json.loads(emit.call_args.args[0][0][2:])
             self.assertEqual(value['target'],target)
             self.assertEqual(value['state'],atticus.hands_state())
+            self.assertTrue(value['teaching'])
+
+    def test_teaching_steps_keep_order_and_visible_captions(self):
+        data = {'steps':[
+            {'id':'triangle','say':'Draw the right triangle.','shapes':[{'kind':'path','points':[[10,10],[10,80],[90,80],[10,10]]}]},
+            {'id':'labels','say':'Label the three sides.','shapes':[{'kind':'label','at':[20,50],'text':'a'}]},
+            {'id':'formula','say':'Now use a² + b² = c².','shapes':[{'kind':'label','at':[20,20],'text':'a² + b² = c²'}]},
+            {'id':'example','say':'For 3 and 4, c is 5.','shapes':[{'kind':'label','at':[20,35],'text':'3² + 4² = 5²'}]},
+        ]}
+        value = atticus.drawing(data)
+        self.assertTrue(value['teaching'])
+        self.assertEqual([step['id'] for step in value['steps']],['triangle','labels','formula','example'])
+        self.assertEqual([step['say'] for step in value['steps']],[step['say'] for step in data['steps']])
+        with self.assertRaisesRegex(ValueError,'visible say caption'):
+            atticus.drawing({'steps':[{'shapes':[{'kind':'pointer','at':[10,10]}]}]})
 
     def test_app_lifecycle_connects_to_clear(self):
         source = (ROOT/'Atticus.swift').read_text()
@@ -88,6 +105,21 @@ class DrawingTests(unittest.TestCase):
         self.assertIn('if drawing.active { cancel(); return }',app)
         self.assertIn('!stuck, !drawing.active',app)
         self.assertIn('!mini.holds, !drawing.active',app)
+        ask_finish = app.split('func spawn()',1)[1].split('func unwarm()',1)[0]
+        self.assertNotIn('drawing.clear()',ask_finish)
+
+    def test_teaching_dismissal_caption_and_voice_policy(self):
+        source = (ROOT/'Atticus.swift').read_text()
+        drawing = source.split('final class ScreenDrawing {',1)[1].split('// The box can take typing',1)[0]
+        self.assertIn('r.steps[...index].flatMap(\\.shapes)',drawing)
+        self.assertIn('render(shapes,animate:animate,previous:previousPointer,append:true)',drawing)
+        self.assertIn('r.steps[...index].compactMap(\\.say)',drawing)
+        self.assertIn('caption.onClose = { [weak self] in self?.clear() }',drawing)
+        self.assertIn('guard step.wait != true || hit?.contains(point) == true',drawing)
+        self.assertIn('deadline = r.teaching ? .distantFuture',drawing)
+        self.assertIn('else if !r.teaching { clear() }',drawing)
+        self.assertIn('if speechEnabled()',drawing)
+        self.assertIn('shown = active && (!r.teaching || captionPanel?.isVisible == true)',drawing)
 
     def test_user_mark_reaches_the_ask_and_has_bounded_fallback(self):
         with tempfile.NamedTemporaryFile(prefix='atticus-point-',suffix='.jpg') as image:
@@ -106,6 +138,66 @@ class DrawingTests(unittest.TestCase):
         self.assertIn('if let point { request["point"] = point }',app)
         self.assertIn('if drawing.hasInput { drawing.clear(); return }',app)
         self.assertIn('if !dictate && !drawing.hasInput { drawing.clear() }',app)
+
+    def test_point_controls_reach_the_app(self):
+        app = (ROOT/'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
+        for wiring in ('drawing.inputMode ? finishPointing() : startPointing()', 'if b["pointDone"] != nil { finishPointing() }',
+                       'if b["pointClear"] != nil, drawing.hasInput { drawing.clear() }', 'Prefs.set("pointCoached", true)',
+                       '!Prefs.bool("pointCoached") { js("pointCoach") }'):
+            self.assertIn(wiring,app)
+        start = app.split('func startPointing()',1)[1].split('func finishPointing()',1)[0]
+        self.assertLess(start.index('drawing.beginInput'),start.index('panel.orderFrontRegardless()'),'the box must stay above the pointing overlay')
+        finish = app.split('func finishPoint(',1)[1].split('func startPointing()',1)[0]
+        self.assertLess(finish.index('removeItem(atPath:old)'),finish.index('pointContext = context'),'a redrawn mark must delete the last crop')
+        self.assertNotIn('thumb',finish.split('pointContext = context',1)[0].split('var context',1)[1],'the thumbnail is for the box, not the model request')
+        ui = (ROOT/'ui'/'ui.html').read_text()
+        self.assertIn('Click, circle or scribble on anything, then ask',ui)
+        self.assertNotIn('Draw on screen',ui)   # that name belongs to Atticus's own drawings
+        for page in ('README.md','ui/settings.html','ui/onboarding.html'):
+            self.assertIn('Point at your screen',(ROOT/page).read_text(),page)
+
+
+@unittest.skipUnless(shutil.which('node'),'Node runs the box state check')
+class PointBoxTests(unittest.TestCase):
+    def test_point_states_with_fake_page(self):
+        page = (ROOT/'ui'/'ui.html').read_text()
+        setup = page[page.index('  // Point at your screen. The app owns'):page.index("  $('mic').onclick")]
+        methods = page[page.index('    point(value) {'):page.index('    finished() {')]
+        script = r'''
+const el = (more = {}) => ({ dataset: {}, hidden: false, innerHTML: '', textContent: '', attrs: {}, src: '',
+  classList: { s: new Set(), toggle(c, on) { on ? this.s.add(c) : this.s.delete(c); }, contains(c) { return this.s.has(c); } },
+  setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return this.attrs[k]; }, removeAttribute(k) { delete this.attrs[k]; if (k === 'src') this.src = ''; }, ...more });
+const parts = { '.chip i': el(), '.done': el(), '.cancel': el(), '.rm': el(), '.gotit': el(), '.hint': el(), img: el({ hidden: true }) };
+const els = { point: el({ innerHTML: '<svg></svg>' }), pointbar: el({ querySelector: s => parts[s] }), comp: el(), status: el() };
+const $ = id => els[id], messages = [], post = m => messages.push(m), fit = () => {}, comps = [];
+const status = s => { els.status.textContent = s; };
+let working = false;
+const comp = (on, focus) => { comps.push([on, !!focus]); els.comp.classList.toggle('open', on); if (on) coachShow(); };
+''' + setup + 'const ui = {\n' + methods + r'''};
+const fail = m => { console.error(m); process.exit(1); }, img = parts.img;
+if (parts['.chip i'].innerHTML !== '<svg></svg>') fail('the chip has no pointer glyph for marks without a picture');
+ui.pointCoach(); if (bar.dataset.s) fail('coach mark showed with the button hidden');
+comp(true); if (bar.dataset.s !== 'coach' || !parts['.hint'].innerHTML.includes('Point at your screen')) fail('coach mark missing');
+parts['.gotit'].onclick(); if (bar.dataset.s || messages.filter(m => m.pointCoached).length !== 1) fail('Got it did not end the coach mark');
+comp(true); if (bar.dataset.s) fail('coach mark came back');
+ui.point({ active: true, marked: false });
+if (bar.dataset.s !== 'on' || parts['.hint'].textContent !== 'Click, circle or scribble on anything, then ask' || bar.classList.contains('has')) fail('pointing hint missing');
+if (els.status.textContent !== 'Pointing…' || els.point.getAttribute('aria-pressed') !== 'true' || !els.point.classList.contains('active') || comps.at(-1).join() !== 'true,true') fail('pointing is not unmistakable: ' + els.status.textContent);
+ui.point({ active: true, marked: true, thumb: 'data:image/jpeg;base64,AA' });
+if (!bar.classList.contains('has') || img.hidden || img.src !== 'data:image/jpeg;base64,AA' || parts['.hint'].textContent) fail('a mark did not show its thumbnail');
+ui.point({ active: false, marked: true });
+if (bar.dataset.s !== 'marked' || img.src !== 'data:image/jpeg;base64,AA' || els.status.textContent !== 'Marked' || els.point.getAttribute('aria-pressed') !== 'false') fail('Done lost the chip');
+parts['.rm'].onclick(); parts['.cancel'].onclick(); parts['.done'].onclick();
+if (messages.filter(m => m.pointClear).length !== 2 || !messages.some(m => m.pointDone)) fail('chip and buttons do not reach the app');
+ui.point(false);
+if (bar.dataset.s || !img.hidden || img.src || els.status.textContent !== '' || els.point.classList.contains('marked')) fail('clearing left the chip or status');
+status('Thinking…'); ui.point(false); if (els.status.textContent !== 'Thinking…') fail('clearing a mark wiped another status');
+ui.point({ active: false, marked: true, thumb: '' }); if (!img.hidden) fail('an empty thumbnail showed a broken image');
+working = true; const before = messages.length; els.point.onclick();
+if (messages.slice(before).some(m => m.point) || els.status.textContent !== 'Finish or stop the current answer first') fail('pointing during an answer gave no reason');
+'''
+        result = subprocess.run(['node','--input-type=module'],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
 
 
 HARNESS = r'''
@@ -143,16 +235,26 @@ let steps: [[String:Any]] = [
  ["id":"finish","shapes":[["kind":"line","points":[[x+60,y+120],[x+650,y+120]],"color":"blue"],
   ["kind":"label","at":[x+450,y+210],"text":"You did it"],
   ["kind":"pointer","at":[x+450,y+240]]]]]
-func data(_ steps: [[String:Any]]) -> Data { try! JSONSerialization.data(withJSONObject:["steps":steps,"target":target,"state":"fixture"]) }
+func data(_ steps: [[String:Any]], teaching: Bool = false) -> Data { try! JSONSerialization.data(withJSONObject:["steps":steps,"teaching":teaching,"target":target,"state":"fixture"]) }
 let drawing = ScreenDrawing()
 var marked: [CGPoint] = []
 drawing.beginInput { marked = $0 }
 precondition(drawing.panels.count == NSScreen.screens.count && drawing.panels.allSatisfy { !$0.ignoresMouseEvents && !$0.canBecomeKey && !$0.canBecomeMain })
 precondition(app.keyWindow === keyBefore && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontBefore,
              "Point input changed the focused app or key window")
+precondition(drawing.panels.allSatisfy { ($0.contentView as? DrawingView)?.pointing == true && $0.acceptsMouseMovedEvents },"Pointing has no crosshair cursor")
 drawing.startInput(CGPoint(x:x+100,y:y+200)); drawing.moveInput(CGPoint(x:x+140,y:y+240)); drawing.endInput(CGPoint(x:x+140,y:y+240))
-precondition(marked.count == 2 && drawing.hasInput && drawing.panels.allSatisfy(\.ignoresMouseEvents),"Point input did not retain the mark")
+precondition(marked.count == 2 && drawing.inputMode && drawing.panels.allSatisfy { !$0.ignoresMouseEvents },"A stroke ended pointing before Done")
+drawing.startInput(CGPoint(x:x+300,y:y+300)); drawing.endInput(CGPoint(x:x+300,y:y+300))
+precondition(marked == [CGPoint(x:x+300,y:y+300)] && drawing.inputPath.count == 1,"A new stroke did not replace the last mark")
+drawing.finishInput()
+precondition(!drawing.inputMode && drawing.hasInput && drawing.panels.allSatisfy { $0.ignoresMouseEvents && ($0.contentView as? DrawingView)?.pointing == false },"Done did not keep the mark and hand clicks back")
+drawing.startInput(CGPoint(x:x+10,y:y+10)); precondition(drawing.inputPath.count == 1,"A click after Done changed the mark")
 drawing.clear(); precondition(!drawing.hasInput && drawing.panels.isEmpty,"Point input did not clear")
+var cleared = 0; drawing.inputCleared = { cleared += 1 }
+drawing.beginInput { _ in }; drawing.finishInput()
+precondition(!drawing.hasInput && drawing.panels.isEmpty && cleared == 1,"Done with no mark did not cancel")
+drawing.inputCleared = nil
 precondition(drawing.receive(data(steps)))
 precondition(drawing.panels.count == NSScreen.screens.count)
 precondition(app.keyWindow === keyBefore && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontBefore,
@@ -201,7 +303,7 @@ drawing.deadline = .distantPast; drawing.tick(); precondition(!drawing.active,"T
 precondition(drawing.receive(data(steps)))
 window.setFrameOrigin(CGPoint(x:window.frame.minX+30,y:window.frame.minY)); pump(0.2); drawing.tick(); precondition(!drawing.active,"Window movement did not clear")
 var bad = target; bad["windowFrame"] = [0,0,-1,1]
-let invalid = try! JSONSerialization.data(withJSONObject:["steps":steps,"target":bad,"state":"fixture"])
+let invalid = try! JSONSerialization.data(withJSONObject:["steps":steps,"teaching":false,"target":bad,"state":"fixture"])
 precondition(!drawing.receive(invalid),"Native accepted invalid frame")
 precondition(!drawing.receive(data(steps)),"Stale screenshot geometry was shown")
 window.setFrameOrigin(CGPoint(x:window.frame.minX-30,y:window.frame.minY)); pump(0.1)

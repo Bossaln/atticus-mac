@@ -80,15 +80,17 @@ When Atticus acts but can't see the result, it says so ("…but I couldn't confi
 
 ## Dictate anywhere
 
-Record a shortcut in Settings → General → Dictate anywhere. There is none until you set one; Fn and modifier-only chords like fn+Control work too. Hold it in any text field, speak, then let go. **Verbatim** types Apple's on-device transcript with no AI. **Clean up** makes one quick AI pass that fixes grammar, and rewrites highlighted text in place. Esc cancels. If the field changes or Atticus can't confirm the words landed, it copies them to your clipboard and tells you instead of typing twice.
+Record a shortcut in Settings → General → Dictate anywhere. There is none until you set one; Fn and modifier-only chords like fn+Control work too. Hold it in any text field, speak, then let go. **Verbatim** types Apple's on-device transcript with no AI. **Clean up** makes one quick AI pass that keeps your words and drops the slips: "um" and "you know" go, "scratch that" removes the thought before it, "four, actually five" leaves five, a spoken list becomes a list, and "new line" or "question mark" become formatting. It types what you dictate and never answers or acts on it. It starts while you talk, so the text lands soon after you let go; if the AI's version adds or drops too much, Atticus types your words with only the obvious fillers removed. Highlight text first and Clean up tidies that text in place. Esc cancels. If the field changes or Atticus can't confirm the words landed, it copies them to your clipboard and tells you instead of typing twice.
 
 ## Point at your screen
 
-Click **Draw on screen** in the ask box, then click, circle or scribble over what you mean and ask "what is this?". Atticus gets a crop of that spot with your question. The mark stays until you send; Esc clears it. While a mark is waiting, instant commands and early thinking wait too.
+This is how you show Atticus something; [Draw on screen](#draw-on-screen) is how Atticus shows you. Click the pointer button, **Point at your screen**, next to the mic in the ask box. The cursor becomes a crosshair and the box says "Click, circle or scribble on anything, then ask". Mark the spot (a new stroke replaces the last), then type your question, or click **Done** to use your apps again with the mark still showing. A small picture of what you marked waits in the box; its × removes it, and **Cancel** or Esc clears everything. Atticus gets a crop of that spot with your question, and the mark stays until you send. While a mark is waiting, instant commands and early thinking wait too.
 
 ## Draw on screen
 
-Ask how to do something and Atticus can show you: it draws boxes, circles, arrows and labels over your screen, with a pointer that moves to each spot. It speaks one step at a time and moves on when you click the highlighted spot, change that value, or say "next". The drawings let clicks through and never take focus. Esc clears them. Turn it off in Settings → Screen & Windows → Draw on screen to show you.
+Ask how to do something and Atticus can show you: it draws boxes, circles, arrows and labels over your screen, with a pointer that moves to each spot. It goes one step at a time and moves on when you click the highlighted spot, change that value, or say "next".
+
+Ask it to explain something and draw it ("explain the Pythagorean theorem and draw it on my screen") and the drawing builds up like a whiteboard: each step adds to the last, and a card in the opposite corner keeps every caption so far. It moves through the steps by itself, and the finished drawing stays after the answer until you close the card, press Esc or ask again. Steps are spoken only when Read answers aloud is on. The drawings let clicks through and never take focus. Esc clears them. Turn it off in Settings → Screen & Windows → Draw on screen to show you.
 
 ## Model choice
 

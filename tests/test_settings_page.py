@@ -95,6 +95,15 @@ class SettingsPageTests(unittest.TestCase):
         self.assertIn({'do': 'recordDictate'}, out['posts'])
         self.assertIn({'do': 'clearDictate'}, out['posts'])
 
+    def test_cleanup_is_disabled_with_a_reason_for_pi_and_devin(self):
+        out = self.page("""const state=client=>{st.load({prefs:{client,hotkeyLabel:'⌃⌥Space',dictateHotkeyLabel:'⌃⌥D',dictateMode:'cleanup'}});
+            const clean=document.querySelector('[data-k=dictateMode] [data-v=cleanup]');
+            return [clean.disabled,$('dictatemodehint').textContent];};
+            return [state('pi'),state('devin'),state('claude')];""")
+        self.assertEqual(out['result'], [[True, 'Clean up needs Claude. Use Verbatim instead.'],
+                                         [True, 'Clean up needs Claude. Use Verbatim instead.'],
+                                         [False, 'Clean up drops fillers and slips but keeps your words.']])
+
     def test_dictation_clash_warns_in_its_row_then_settles(self):
         out = self.page("""st.load({prefs:{hotkeyLabel:'⌃⌥Space',dictateHotkeyLabel:'⌃⌥D'},dictateHotkeyTaken:true});
             const taken=[$('dictatehint').textContent,$('dictatehint').className,$('dictatechange').classList.contains('bad')];

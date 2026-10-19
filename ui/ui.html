@@ -276,6 +276,21 @@
   #point:active, #mic:active { transform: scale(.94); }
   #point svg, #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   #point.active, #point.marked { background: rgba(10,132,255,.55); }
+  /* Point at your screen: one row over the typing box. on: the hint + Cancel/Done; marked: the crop's chip; coach: the one-time intro */
+  #pointbar { display: none; align-items: center; gap: 8px; min-height: 28px; margin-top: 12px; font: 12px -apple-system, system-ui, sans-serif; color: var(--fg2); }
+  #pointbar[data-s] { display: flex; animation: in .3s var(--spring) both; }
+  #pointbar .hint { flex: 1; min-width: 0; line-height: 1.35; } #pointbar .hint b { color: #f5f5f7; font-weight: 600; }
+  #pointbar .hint svg, #pointbar .chip i svg { width: 13px; height: 13px; margin: 0 1px -2px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #pointbar .keys { margin: 0 0 0 auto; }
+  #pointbar .chip { display: none; align-items: center; gap: 7px; height: 28px; padding: 0 3px 0 3px; border-radius: 9px; color: #f5f5f7;
+    background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); }
+  #pointbar .chip img, #pointbar .chip i { flex: none; width: 34px; height: 22px; border-radius: 6px; object-fit: cover; display: grid; place-items: center; background: rgba(255,255,255,.1); }
+  #pointbar .chip img[hidden], #pointbar .chip img:not([hidden]) + i { display: none; }
+  #pointbar .rm { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: none; color: var(--fg2); cursor: pointer; }
+  #pointbar .rm:hover { color: #fff; background: rgba(255,255,255,.1); } #pointbar .rm svg { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+  #pointbar.has .chip { display: inline-flex; } #pointbar.has .hint { display: none; }
+  #pointbar:not([data-s=on]) .cancel, #pointbar:not([data-s=on]) .done, #pointbar:not([data-s=coach]) .gotit { display: none; }
+  #pointbar[data-s=coach] + #comp #point { box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 0 0 2px rgba(10,132,255,.8); }
 
   /* resize: drag the bottom-right corner */
   #grip { position: absolute; right: 4px; bottom: 4px; width: 12px; height: 12px; opacity: 0; transition: opacity .25s; cursor: nwse-resize; }
@@ -339,9 +354,11 @@
 <div id="card">
   <div id="head"><canvas id="orb"></canvas><div id="status"></div><button id="agents-pill" hidden><i></i><span></span></button><div id="mode" title="Safe mode is off. Click to turn it on.">Full access</div><div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div></div>
   <div id="thread"></div>
+  <div id="pointbar" role="group" aria-label="Point at your screen"><span class="chip"><img alt="What you marked" hidden><i></i><span>Marked</span><button class="rm" title="Remove mark" aria-label="Remove mark"><svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2L2 8"/></svg></button></span>
+    <span class="hint" aria-live="polite"></span><span class="keys"><button class="cancel">Cancel<kbd>esc</kbd></button><button class="go done">Done</button><button class="go gotit">Got it</button></span></div>
   <div id="comp" inert><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <div id="models" role="menu" aria-label="Model"></div><button id="model" title="Model" aria-label="Model" hidden></button>
-    <button id="point" title="Draw on screen" aria-label="Draw on screen" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 17c4-9 9 4 16-10M5 20h14"/></svg></button>
+    <button id="point" title="Point at your screen" aria-label="Point at your screen" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 8l11 4.5-4.6 1.9L13.5 19z"/><path d="M5.1 11.9A5.5 5.5 0 0 1 12.9 4.1"/></svg></button>
     <button id="mic" title="Talk instead" aria-label="Talk instead"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
 </div>
 <div class="e" id="eL"></div><div class="e" id="eR"></div><div class="e" id="eT"></div><div class="e" id="eB"></div>
@@ -404,6 +421,7 @@
       compFrame = requestAnimationFrame(resize);
     }
     if (on && focus) $('ask').focus(); else if (!on) $('ask').blur();
+    if (on) coachShow(); else if (bar.dataset.s === 'coach') { delete bar.dataset.s; fit(); }
   };
   // Clicking in or typing (not the cursor landing there from the shortcut): typing wins, so the mic stops and what was heard goes
   const drop = () => {
@@ -444,7 +462,22 @@
     pickTimer = setTimeout(() => pickRow(false), reduced.matches ? 0 : 170);
   };
   $('models').onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); pickRow(false); $('model').focus(); } };
-  $('point').onclick = () => post({ point: 1 });
+  // Point at your screen. The app owns the mark; the page shows its state. coachPending: the one-time intro until Got it or first use
+  const POINTER = $('point').innerHTML, bar = $('pointbar');
+  bar.querySelector('.chip i').innerHTML = POINTER;
+  let coachPending = false;
+  const coachDone = () => {
+    if (coachPending) { coachPending = false; post({ pointCoached: 1 }); }
+    if (bar.dataset.s === 'coach') { delete bar.dataset.s; fit(); }
+  };
+  const coachShow = () => {
+    if (!coachPending || bar.dataset.s) return;
+    bar.dataset.s = 'coach'; bar.querySelector('.hint').innerHTML = '<b>Point at your screen</b> to show Atticus what you mean: click ' + POINTER + ' below.'; fit();
+  };
+  $('point').onclick = () => { coachDone(); if (working) return status('Finish or stop the current answer first'); post({ point: 1 }); };
+  bar.querySelector('.done').onclick = () => post({ pointDone: 1 });
+  bar.querySelector('.cancel').onclick = bar.querySelector('.rm').onclick = () => post({ pointClear: 1 });
+  bar.querySelector('.gotit').onclick = coachDone;
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
     if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
@@ -688,13 +721,22 @@
       bar.querySelector('.go').disabled = true; fit();
     },
     mini(m) { miniUpdate(m); },
-    point(value) {
-      const active = !!value?.active, marked = !!value?.marked, button = $('point');
+    point(value) {   // {active, marked, thumb}: pointing now, a mark is waiting, a picture of it; false: none
+      const active = !!value?.active, marked = !!value?.marked, button = $('point'), img = bar.querySelector('img'), was = $('status').textContent;
       button.classList.toggle('active', active); button.classList.toggle('marked', marked);
-      button.setAttribute('aria-pressed', active || marked);
-      if (active) status('Draw on screen');
+      button.setAttribute('aria-pressed', active);
+      if (typeof value?.thumb === 'string') { img.hidden = !value.thumb; img.src = value.thumb; }
+      if (!marked) { img.hidden = true; img.removeAttribute('src'); }
+      if (active || marked) coachDone();
+      if (active || marked) bar.dataset.s = active ? 'on' : 'marked'; else delete bar.dataset.s;
+      bar.classList.toggle('has', marked);
+      bar.querySelector('.hint').textContent = active && !marked ? 'Click, circle or scribble on anything, then ask' : '';
+      if (active) { status('Pointing…'); comp(true, true); }   // the cursor waits in the box: draw, then type
       else if (marked) status('Marked');
+      else if (was === 'Pointing…' || was === 'Marked') status('');
+      fit();
     },
+    pointCoach() { coachPending = true; if ($('comp').classList.contains('open')) coachShow(); },
     finished() { moveClear(); clockStop(); miniFinish(false); },
     dictate(on) { document.body.classList.toggle('dictate', !!on); fit(false); },
     visible(on) { visible = on; if (!on) { clockStop(); miniClear(); } fit(false); },
@@ -812,7 +854,7 @@
     compose(on) { comp(on, on); },
     draft(t) { $('ask').value = t; comp(true, true); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .move-now');
+      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .move-now, #pointbar button');
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
@@ -843,9 +885,10 @@
       const value = (['retry', 'try again'].includes(t) || t==='yes'&&!d.querySelector('[data-answer="y"]')) ? 'r' : ['try sonnet', 'sonnet', 'yes'].includes(t) ? 'y' : ['not now', 'no', 'cancel'].includes(t) ? 'n' : '';
       const button=d.querySelector(`[data-answer="${value}"]`);
       if(button){$('ask').value='';button.click();}
-      else { $('ask').value = text; status('Say “Retry”, “Try Sonnet” or “Not now”', true); }   // heard, but not an answer: say so, keep the card
+      else { $('ask').value = text; status(d.querySelector('[data-answer="y"]') ? 'Say “Retry”, “Try Sonnet” or “Not now”' : 'Say “Retry” or “Not now”', true); }   // heard, but not an answer: name only choices the card offers
       return true;
     },
+    notice(s) { status(s, true); },
     ask([q, cmd, off, retry, details]) {   // off: a setting this card can turn off
       $('thread').querySelectorAll('.ok:not(.move-option)').forEach(e => e.remove()); unpin();
       const d = document.createElement('div'); d.className = 'ok';

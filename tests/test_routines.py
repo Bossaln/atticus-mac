@@ -27,10 +27,30 @@ class RoutineTests(unittest.TestCase):
         row = atticus.routine_add('time', '08:00', 'Summarize my calendar', now=self.monday(7, 0), days='weekdays')
         self.assertEqual(atticus.routines(), [row])
         with open(atticus.routine_job_path(row['id']), 'rb') as f: job = plistlib.load(f)
-        self.assertEqual([r['Weekday'] for r in job['StartCalendarInterval']], [2, 3, 4, 5, 6])
+        self.assertEqual([r['Weekday'] for r in job['StartCalendarInterval']], [1, 2, 3, 4, 5])
         self.assertFalse(atticus.routine_fire(row['id'], self.monday(7, 59)))
         self.assertTrue(atticus.routine_fire(row['id'], self.monday(8, 0)))
         self.assertEqual(atticus.routine_pop(), [row['id']])
+
+    def test_late_calendar_delivery_runs_once_within_grace(self):
+        row = atticus.routine_add('time', '08:00', 'Check once after wake', now=self.monday(7, 0), days='daily')
+        self.assertTrue(atticus.routine_fire(row['id'], self.monday(8, 5)))
+        self.assertFalse(atticus.routine_fire(row['id'], self.monday(8, 6)))
+        self.assertEqual(atticus.routine_pop(), [row['id']])
+        tomorrow = self.monday(24 + 8, 16)
+        self.assertFalse(atticus.routine_fire(row['id'], tomorrow))
+        created_late = atticus.routine_add('time', '08:00', 'Not before creation', now=self.monday(8, 2), days='daily')
+        self.assertFalse(atticus.routine_fire(created_late['id'], self.monday(8, 5)))
+
+    def test_startup_repairs_existing_weekday_job(self):
+        row = atticus.routine_add('time', '08:00', 'Repair weekdays', now=self.monday(7, 0), days='weekdays')
+        path = atticus.routine_job_path(row['id'])
+        with open(path, 'rb') as f: job = plistlib.load(f)
+        for interval, day in zip(job['StartCalendarInterval'], range(2, 7)): interval['Weekday'] = day
+        with open(path, 'wb') as f: plistlib.dump(job, f)
+        self.assertEqual(atticus.routine_pop(), [])
+        with open(path, 'rb') as f: repaired = plistlib.load(f)
+        self.assertEqual([r['Weekday'] for r in repaired['StartCalendarInterval']], [1, 2, 3, 4, 5])
 
     def test_interval_is_cheapest_removed_and_never_runs_while_paused(self):
         row = atticus.routine_add('interval', 3600, 'Check the fixture', now=self.monday(8, 0))
@@ -58,16 +78,24 @@ class RoutineTests(unittest.TestCase):
 
     def test_due_routine_starts_an_ordinary_cheapest_agent(self):
         routine = atticus.routine_add('interval', 3600, 'Fake agent work', now=self.monday(8, 0))
+        events = []
         launched = []
         def launch(row):
             launched.append(row.copy())
             return subprocess.Popen([sys.executable, '-u', '-c', 'import sys,time\nfor line in sys.stdin: time.sleep(.01)'],
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                                     start_new_session=True, cwd=row['directory'])
-        manager = atticus.Agents(emit=lambda _: None, launch=launch); self.addCleanup(manager.close)
+        manager = atticus.Agents(emit=events.append, launch=launch); self.addCleanup(manager.close)
         manager.command({'action': 'routine', 'id': routine['id']})
         scheduled = next(row for row in manager.rows.values() if row.get('routine') == routine['id'])
-        self.assertEqual(scheduled['status'], 'running')
+        offer = next(event for event in events if event.get('event') == 'offer')
+        self.assertTrue(offer['start'])
+        self.assertEqual(scheduled['status'], 'offered')
+        self.assertEqual([e for e in atticus.read_rows(str(Path(scheduled['directory']) / 'log.jsonl')) if e.get('event') == 'followup'], [])
+        text = offer['agent']['brief'] + '\nKnown context (data):\n' + offer['agent']['context']
+        manager.command({'action': 'start', 'id': scheduled['id'], 'text': text})
+        sent = [e for e in atticus.read_rows(str(Path(scheduled['directory']) / 'log.jsonl')) if e.get('event') == 'followup']
+        self.assertEqual([e['text'] for e in sent], [text])
         self.assertEqual(launched[0]['_model'], 'haiku')
 
 
