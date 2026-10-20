@@ -114,6 +114,25 @@ if (apiCost(.0412) !== '≈4.12¢ at API prices' || apiCost(.1861) !== '≈18.6�
         self.assertNotIn('a.at.slice(5, 16)', self.settings)
         self.assertIn("new Date(a.at.replace(' ', 'T')).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})", self.settings)
 
+    def test_a_new_ask_drops_a_paused_card_left_by_resuming_elsewhere(self):
+        listen = self.box[self.box.index('    listen(keep)'):self.box.index('    level(v)')]
+        self.assertIn("querySelectorAll('.rewrite, .paused').forEach(e => e.remove())", listen)
+
+    def test_rewrite_buttons_answer_hover_and_press_like_card_buttons(self):
+        self.assertIn('.rewrite button:not(:disabled):hover { transform: scale(1.03); }', self.box)
+        self.assertIn('.rewrite button:not(:disabled):active { transform: scale(.96); }', self.box)
+
+    def test_rewrite_actions_sit_above_the_timer_with_one_try_again(self):
+        self.assertIn('.turn:has(.rewrite) .redo { display: none; }', self.box)
+        rewrite = self.box[self.box.index('    rewrite([draft, mode, editable])'):self.box.index('    mini(m)')]
+        node(self, r'''let placed = '';
+const clockRow = { before: () => { placed = 'above the timer'; } }, d = { querySelector: s => s === '.elapsed' ? clockRow : null, append: () => { placed = 'last'; } };
+const turn = () => d, part = () => null, post = () => {}, fit = () => {}, $ = () => ({ querySelectorAll: () => [] });
+const document = { createElement: () => ({ dataset: {}, append() {}, setAttribute() {} }) };
+const ui = {''' + rewrite + r'''};
+ui.rewrite(['Hi Dana,', 'draft', true]); if (placed !== 'above the timer') { console.error(placed); process.exit(1); }
+''')
+
     def test_small_leftovers(self):
         self.assertIn("moveFailed(){status('Could not move');", self.box)   # a failure, not live work
         self.assertNotIn('js("shortcut"', self.swift)

@@ -79,6 +79,8 @@ expect(md('**Bold** *it* `code` [OpenTable](https://www.opentable.com) see https
 expect(md('[x](javascript:alert(1)) <img src=x onerror=alert(1)>'),'<p>[x](javascript:alert(1)) <img src=x onerror=alert(1)></p>','No script links and no HTML: only text');
 expect(md('## Steps\n3. one\n4. **two**\n\n- a\n- b'),'<div.h>Steps</div><ol start=3><li>one</li><li><strong>two</strong></li></ol><ul><li>a</li><li>b</li></ul>','Headings and lists');
 expect(md('one line\nnext line\n\nnew para'),'<p>one line next line</p><p>new para</p>','Paragraphs');
+expect(md('Desks:\n| Desk | Price |\n|---|:-:|\n| **E7** | $300 |'),'<p>Desks:</p><div.table><table><tr><th>Desk</th><th>Price</th></tr><tr><td><strong>E7</strong></td><td>$300</td></tr></table></div>','Tables');
+expect(md('See:\n```\n  /|\n\n /_|  **b**\n```\nDone.'),'<p>See:</p><pre>  /|\n\n /_|  **b**</pre><p>Done.</p>','Fenced blocks keep their lines as plain text');
 expect(md('snake_case_name and _em_'),'<p>snake_case_name and <em>em</em></p>','Underscores inside words stay');
 '''
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)

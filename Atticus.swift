@@ -2182,7 +2182,9 @@ final class App: NSObject, WKScriptMessageHandler {
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
     func close(clear: Bool) {
+        let pending = clear || replacement == nil ? nil : (replacement, selection)
         shush(); hush(); drawing.clear()   // gone means quiet: no mic, no voice, no answer, no drawing
+        if let pending { replacement = pending.0; selection = pending.1 }   // a hidden Insert/Replace keeps its validated target
         if clear { try? FileManager.default.removeItem(atPath: recent); lastDone = .distantPast }
         gen += 1
         let g = gen
@@ -2409,7 +2411,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if !dictate && !replying { unwarm(); warm = spawn() }
         onboarding.tried()
         hovering = false
-        if replying { js("draft", "") } else { js("listen"); if !dictate, let s = selection { js("selected", s.text) } }
+        if replying && !drawingReply { js("draft", "") } else { js("listen"); if !dictate, let s = selection { js("selected", s.text) } }   // talking about a drawing still shows the listening orb
         show()
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
@@ -2464,7 +2466,7 @@ final class App: NSObject, WKScriptMessageHandler {
         text = now; if !now.trimmingCharacters(in: .whitespaces).isEmpty { fresh = false }
         if dictating { js("words", text); return }
         if offerText != nil {
-            js("draft", now)
+            js(drawingReply ? "words" : "draft", now)
             if clickTalk { quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q; DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q) }
             return   // card replies never enter live commands or early AI thinking
         }
@@ -2726,7 +2728,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func typed(_ t: String, keep: Bool = false) {   // the typing box (keep: it stays open for the next one)
+    func typed(_ t: String, keep: Bool = false, heard: Bool = false) {   // the typing box (keep: it stays open for the next one; heard: spoken about a drawing, its turn already shows)
         if drawing.active {   // a follow-up keeps the drawing; only a new drawing replaces it
             if transcriptKey(t) == "next" { drawing.next(); return }
             drawing.hold()
@@ -2738,7 +2740,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if selectionPending {
             let id = selectionID
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                if self?.selectionID == id { self?.typed(t, keep: keep) }
+                if self?.selectionID == id { self?.typed(t, keep: keep, heard: heard) }
             }
             return
         }
@@ -2746,7 +2748,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if !Prefs.bool("selection") { selection = nil }
         targetScreen = currentRequestScreen(panel)
         text = t; replacement = nil
-        fresh = false; js("listen", keep); if let s = selection { js("selected", s.text) }; show(); js("words", t); run(t)
+        fresh = false; if !heard { js("listen", keep); if let s = selection { js("selected", s.text) } }; show(); js("words", t); run(t)
     }
 
     func finish() {
@@ -2756,7 +2758,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if drawingReply {
                 drawingReply = false
                 if transcriptKey(response) == "next" { drawing.next(); busy = proc?.isRunning == true; return }
-                hush(); typed(response); return
+                hush(); typed(response, heard: true); return
             }
             js("respond", response); return
         }
@@ -3711,9 +3713,11 @@ func pointAt(_ line: String) {
     l.path = CGPath(ellipseIn: CGRect(x: 8, y: 8, width: size - 16, height: size - 16), transform: nil)
     l.fillColor = NSColor.systemBlue.withAlphaComponent(0.18).cgColor; l.strokeColor = NSColor.systemBlue.cgColor; l.lineWidth = 3
     l.frame = v.bounds; v.layer?.addSublayer(l)
-    let pulse = CABasicAnimation(keyPath: "transform.scale"); pulse.fromValue = 0.7; pulse.toValue = 1.1
-    pulse.duration = 0.6; pulse.autoreverses = true; pulse.repeatCount = 6
-    l.anchorPoint = CGPoint(x: 0.5, y: 0.5); l.position = CGPoint(x: size / 2, y: size / 2); l.bounds = v.bounds; l.add(pulse, forKey: "pulse")
+    if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        let pulse = CABasicAnimation(keyPath: "transform.scale"); pulse.fromValue = 0.7; pulse.toValue = 1.1
+        pulse.duration = 0.6; pulse.autoreverses = true; pulse.repeatCount = 6
+        l.anchorPoint = CGPoint(x: 0.5, y: 0.5); l.position = CGPoint(x: size / 2, y: size / 2); l.bounds = v.bounds; l.add(pulse, forKey: "pulse")
+    }
     w.contentView = v; w.orderFrontRegardless(); ring = w
     DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if ring === w { w.orderOut(nil); ring = nil } }
 }

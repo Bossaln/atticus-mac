@@ -50,6 +50,13 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(atticus.models(), [])
         self.assertEqual(atticus.models(), [])   # no address
 
+    def test_malformed_custom_server_is_reported_without_crashing(self):
+        prefs = {'apiBase': 'http://[', 'apiModel': 'fixture'}
+        with patch.object(atticus, 'pref', side_effect=lambda k, d: prefs.get(k, d)), \
+             patch.object(atticus.shutil, 'which', return_value='/fake/claude'):
+            self.assertEqual(atticus.models(), [])
+            self.assertEqual(atticus.plan(), {'ok': False, 'need': '', 'text': 'Enter a valid custom server address in Settings.', 'client': 'server'})
+
     def test_local_server_discovery_uses_v1_models(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer
         class Fake(BaseHTTPRequestHandler):
@@ -256,7 +263,22 @@ print(json.dumps({{"type": "result", "result": answer, "total_cost_usd": 0}}))
                 self.assertEqual(brain.call_count,2)
                 self.assertIsNone(log.call_args.args[3]);self.assertEqual(log.call_args.args[4],['moved'])
                 self.assertEqual(log.call_args.args[1],'Moved the task to a background agent.')
+                self.assertEqual(log.call_args.kwargs['attempt_usd'],[.001])
                 learn.assert_not_called()
+
+    def test_partial_request_handoff_keeps_one_original_log_row(self):
+        brain=unittest.mock.Mock(return_value=('',None,[]));brain.handoff={'accepted':True};brain.ran=[];brain.ok=True
+        request=json.dumps({'front':'Fixture','task':'Original request','done':['Opened fixture.'],'remaining':'Finish it'})
+        with patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,allow_focus=lambda _:None,
+                            front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],selection_context=lambda:'',
+                            relevant_rules=lambda _:'',recent=lambda:[],workflows=lambda *a:'',screen_for=lambda *a:None,
+                            wait_commit=lambda:True,run=brain,start_ai=lambda *a:None), \
+             patch.object(atticus,'log_turn') as log,patch.object(atticus.threading,'Thread'),patch.object(atticus.os,'setpgrp'), \
+             patch.object(atticus.signal,'signal'),patch('sys.argv',['atticus.py','--wait']),patch('sys.stdin',io.StringIO(request+'\n')), \
+             patch.dict(os.environ,{'ATTICUS_UI':'1','ATTICUS_COMMIT':''}),patch('sys.stdout',io.StringIO()):
+            atticus.main()
+        self.assertEqual(log.call_args.args[0],'Original request')
+        self.assertEqual(log.call_args.kwargs['attempt_usd'],[])
 
     def test_summary_deadline_does_not_start_a_late_unused_capture(self):
         class NoThread:
@@ -316,6 +338,7 @@ print(json.dumps({{"type": "result", "result": answer, "total_cost_usd": 0}}))
     def test_on_screen_results_require_fresh_context_and_draw(self):
         self.assertIn("Where/how/on-screen asks: show, not tell (pointer/arrow on target): after --look", atticus.DRAWING)
         self.assertIn("use " + atticus.DRAW + " once on Request screen", atticus.DRAWING)
+        self.assertIn("after --look && --draw --help (one call)", atticus.DRAWING)   # draw() refuses before this ask's --look
 
     def test_installed_tool_help_is_attached_cached_and_system_tools_are_not(self):
         bin_ = Path(atticus.DIR) / 'bin'; bin_.mkdir()
@@ -783,8 +806,8 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
 
     def test_confirmed_instant_command_skips_context_work(self):
         with patch.multiple(atticus, **{name: unittest.mock.DEFAULT for name in
-                            ['start_ai', 'licensed', 'ping', 'fast', 'remember_turn', 'say', 'front', 'stop_claude']}) as mocks, \
-             patch.object(atticus.threading, 'Thread'), patch.object(atticus.os, 'setpgrp'), \
+                            ['start_ai', 'licensed', 'ping', 'fast', 'remember_turn', 'say', 'front', 'stop_claude', 'allow_focus']}) as mocks, \
+             patch.object(atticus.threading, 'Thread') as threads, patch.object(atticus.os, 'setpgrp'), \
              patch.object(atticus.signal, 'signal'), patch('sys.argv', ['atticus.py', '--wait']), \
              patch('sys.stdin', io.StringIO('Notes\topen Notes\n')), patch.dict(os.environ, {'ATTICUS_COMMIT': ''}):
             # Even without a CLI, --wait must read the request instead of treating its flag as a question.
@@ -795,6 +818,17 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
             mocks['fast'].assert_called_once_with('open Notes')
             mocks['front'].assert_not_called()
             mocks['say'].assert_called_once_with('✓', 'Opened Notes.')
+            relay = next(call for call in threads.call_args_list if call.kwargs.get('target') is atticus.relay)
+            self.assertIsNone(relay.kwargs['args'][0])
+
+    def test_request_reuses_an_active_relay_for_ai_attempts(self):
+        process = unittest.mock.Mock(returncode=0, ask=str(self.root), relay_thread=None)
+        process.stdin = io.StringIO()
+        process.stdout = [json.dumps({'type': 'result', 'result': 'Done.', 'total_cost_usd': 0})]
+        with patch.dict(os.environ, {'ATTICUS_RELAY_ACTIVE': str(os.getpid())}), \
+             patch.object(atticus.threading, 'Thread') as thread, patch.object(atticus.threading, 'Timer'):
+            self.assertEqual(atticus.run('Fixture', process)[0], 'Done.')
+        thread.assert_not_called()
 
     def test_stream_routes_observed_work_and_unverified_giveup_without_word_matching(self):
         tool = lambda n: {'type':'assistant','message':{'content':[{'type':'tool_use','id':str(n),'name':'Bash','input':{'command':f'change-fixture {n}'}}]}}
@@ -904,6 +938,19 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
              patch.object(atticus.json, 'dump', side_effect=failed_dump), self.assertRaises(OSError):
             atticus.relay(process)
         self.assertEqual(prefs.read_text(), original)
+
+    def test_standalone_set_persists_and_relay_repairs_corrupt_preferences(self):
+        prefs = self.root / 'settings.json'
+        with patch.object(atticus,'PREFS',str(prefs)),patch.dict(os.environ,{},clear=False),patch('sys.stdout',new_callable=io.StringIO):
+            os.environ.pop('ATTICUS_ASK',None)
+            atticus.set_switch('read answers aloud','off')
+        self.assertFalse(json.loads(prefs.read_text())['speak'])
+        prefs.write_text('{broken')
+        (self.root/'q').write_text(json.dumps({'set':'tips','value':False}))
+        process=unittest.mock.Mock();process.ask=str(self.root);process.poll.side_effect=[None,0]
+        with patch.object(atticus,'PREFS',str(prefs)),patch.object(atticus.time,'sleep'),patch.dict(os.environ,{'ATTICUS_UI':'0'}):
+            atticus.relay(process)
+        self.assertEqual(json.loads(prefs.read_text()),{'tips':False})
 
     def test_truncated_history_preserves_valid_turns(self):
         with tempfile.TemporaryDirectory() as root:
@@ -1177,6 +1224,15 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertEqual(len(self.notes), 1)
         self.assertIn('done', self.notes[0])
 
+    def test_unwatch_tolerates_a_watcher_removing_its_own_marker(self):
+        with tempfile.TemporaryDirectory() as root:
+            marker = Path(root) / '123'
+            marker.write_text('fixture')
+            with patch.object(atticus, 'WATCHING', root), patch.object(atticus.os, 'kill', side_effect=lambda *_: marker.unlink()), \
+                 patch.object(sys, 'argv', ['atticus.py', '--unwatch']), patch('sys.stdout', new_callable=io.StringIO) as output:
+                atticus.main()
+        self.assertEqual(output.getvalue().strip(), 'stopped 1 watch(es)')
+
     def test_phrase_gone_fires_and_present_waits(self):
         with self.fake_app('All set. Ready for the next task'):
             atticus.watch('', '', 'Orca', '', 'gone', 'esc to  interrupt')
@@ -1289,12 +1345,14 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertEqual(atticus.replacement_reply('[replace] New draft', True), ('replace', 'New draft'))
         self.assertEqual(atticus.replacement_reply('An explanation.', True), ('', 'An explanation.'))
         self.assertFalse(atticus.replacement_reply('[replace] Draft', False)[0])
+        self.assertEqual(atticus.replacement_reply('[replace] Night Shift is off.', False), ('', 'Night Shift is off.'))
         self.assertEqual(atticus.replacement_reply('[replace] ', True)[0], 'delete')
         self.assertEqual(atticus.replacement_reply('[draft] Hi Dana,\n\nThanks!', False), ('draft', 'Hi Dana,\n\nThanks!'))
         self.assertEqual(atticus.replacement_reply('[insert] ### Kinds\n- **Osmosis:** water moves', False), ('insert', 'Kinds\n- Osmosis: water moves'))
         self.assertFalse(atticus.replacement_reply('[draft]', True)[0])
         self.assertEqual(atticus.replacement_reply('[insert] Thanks!', False), ('insert', 'Thanks!'))
         self.assertIn('[insert] then only the text (an earlier draft word for word)', atticus.SYSTEM)
+        self.assertIn('Tagged replies paste as plain text: no Markdown/LaTeX.', atticus.SYSTEM)   # "Markdown OK" is for the box only
         self.assertIn('something already running', atticus.SYSTEM)
         self.assertIn('type into its input; never start a new one', atticus.SYSTEM)
 

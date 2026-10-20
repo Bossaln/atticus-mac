@@ -123,10 +123,12 @@ class AgentTests(unittest.TestCase):
         self.assertIsNone(atticus.parse_handoff('[agent-profile {"action":"invent","name":"Scout"}]'))
 
     def test_full_installed_prompt_including_handoff_stays_under_budget(self):
-        self.prefs.update(draw=True,pointer=True,askMe=True,learnMe=True,tips=True,learn=True)
-        prompt=atticus.system_prompt(atticus.ASK_FIRST)
         installed='/Users/saarthranka/Applications/Atticus.app/Contents/Resources/atticus.py'
-        self.assertLessEqual(len(prompt.replace(atticus.ME,installed)),10050)   # same 1.3.2 cap as test_screen_draw
+        for draw in (False,True):   # Drawings off swaps DRAWING for POINTER: both must fit
+            self.prefs.update(draw=draw,pointer=True,askMe=True,learnMe=True,tips=True,learn=True)
+            prompt=atticus.system_prompt(atticus.ASK_FIRST)
+            self.assertLessEqual(len(prompt.replace(atticus.ME,installed)),10050)   # same 1.3.2 cap as test_screen_draw
+        self.assertIn('(--look if none)',atticus.POINTER)
         self.assertLess(prompt.index(atticus.AGENT_HANDOFF),250);self.assertEqual(prompt.count(atticus.AGENT_HANDOFF),1)
 
     def test_sole_live_agent_is_steered_without_a_new_agent_question(self):
@@ -363,6 +365,7 @@ class AgentTests(unittest.TestCase):
                     self.assertEqual(isinstance(atticus.run.handoff,dict),confirmed)
 
     def test_normal_flags_remain_strict_and_agent_persists(self):
+        self.prefs.update(pointer=True,tips=True,learn=True)
         with patch.object(atticus.shutil,'which',return_value='/fixture/claude'),patch.object(atticus.subprocess,'Popen') as popen,patch.object(atticus.atexit,'register'):
             atticus.start_claude()
             args=popen.call_args.args[0];self.assertIn('--strict-mcp-config',args);self.assertIn('--no-session-persistence',args)
@@ -371,6 +374,8 @@ class AgentTests(unittest.TestCase):
             args=popen.call_args.args[0];options=popen.call_args.kwargs
         system=args[args.index('--system-prompt')+1]
         self.assertIn(atticus.AGENT_SYSTEM,system);self.assertNotIn(atticus.AGENT_HANDOFF,system)
+        for tag in ('[tip ','[workflow ','[point '):   # an agent must end on [agent-result]; these tags are parsed only from main replies
+            self.assertIn(tag,atticus.system_prompt(atticus.ASK_FIRST));self.assertNotIn(tag,system)
         self.assertIn('Never invent URLs/parameters',system)
         self.assertNotIn('--strict-mcp-config',args);self.assertNotIn('--no-session-persistence',args)
         self.assertEqual(args[args.index('--resume')+1],'saved-session');self.assertEqual(options['cwd'],row['directory'])
@@ -418,6 +423,15 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(row['status'],'offered');self.assertNotIn(row['id'],self.manager.outstanding)
         self.manager.command({'action':'cancel','id':row['id']});p.wait(timeout=2)
         self.assertEqual(row['status'],'stopped');self.assertNotIn(row['id'],self.manager.processes)
+
+    def test_offer_launch_failure_is_emitted_and_saved(self):
+        events=[]
+        manager=atticus.Agents(emit=lambda event:events.append(json.loads(json.dumps(event))),launch=lambda row:None)
+        self.addCleanup(manager.close)
+        row=manager.prepare({'title':'Fixture','brief':'Task','context':'','connectors':[]})
+        saved=json.loads(Path(row['directory'],'state.json').read_text())
+        self.assertEqual((row['status'],saved['status'],events[-1]['agent']['status']),('failed','failed','failed'))
+        self.assertEqual(row['step'],'Claude is not installed')
 
     def test_unanswered_offer_expires_without_removing_the_start_choice(self):
         row=self.prepare();p=self.manager.processes[row['id']];row['_warmAt']=time.monotonic()-601

@@ -134,6 +134,10 @@
   .a > .h:not(:first-child) { margin-top: 24px; } .a > .h + :not(.w) { margin-top: 6px; }   /* a section heading sits with the text it heads */
   .a :is(ul, ol) { padding-left: 22px; } .a li { padding-left: 6px; } .a li + li { margin-top: 6px; } .a li::marker { color: var(--fg2); }
   .a .h { font-size: 12px; font-weight: 700; line-height: 1.4; letter-spacing: .06em; text-transform: uppercase; color: #fff; } .a strong { font-weight: 600; color: #fff; }
+  .a pre { margin: 0; padding: 10px 12px; border-radius: 10px; overflow-x: auto; font: 12.5px/1.5 ui-monospace, Menlo, monospace; background: rgba(255,255,255,.07); }
+  .a .table { overflow-x: auto; } .a table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.45; }
+  .a :is(th, td) { padding: 6px 12px 6px 0; text-align: left; vertical-align: top; overflow-wrap: break-word; border-bottom: .5px solid rgba(255,255,255,.1); }
+  .a th { font-size: 11.5px; font-weight: 600; color: var(--fg2); } .a tr:last-child td { border-bottom: 0; }
   .a code { padding: 1px 5px; border-radius: 5px; font: 13px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.1); }
   .a a, .agent-card a { color: #64d2ff; text-decoration: none; cursor: pointer; } .a a:hover, .agent-card a:hover { text-decoration: underline; }
   .a math { font-family: "STIX Two Math", math; font-size: 1.12em; } .a :is(math, .tex) { animation: word .5s var(--ease) both; }
@@ -178,7 +182,7 @@
   .ok button, .pk .bar button, .rewrite button { flex: 1; height: 28px; border: 0; border-radius: 14px; font: 500 12.5px -apple-system, system-ui, sans-serif; color: #fff;
     cursor: pointer; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); transition: transform .3s var(--spring), background .2s; }
   .ok button.go, .pk .bar button.go, .rewrite button.go { background: var(--accent); box-shadow: none; }
-  .ok button:hover, .pk .bar button:hover { transform: scale(1.03); } .ok button:active, .pk .bar button:active { transform: scale(.96); }
+  .ok button:hover, .pk .bar button:hover, .rewrite button:not(:disabled):hover { transform: scale(1.03); } .ok button:active, .pk .bar button:active, .rewrite button:not(:disabled):active { transform: scale(.96); }
 
   /* "which one?": the AI isn't sure, so it shows its choices. Click one to see it big; click outside it for all of them again */
   .pk { margin-top: 14px; padding: 13px 14px 14px; border-radius: 14px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
@@ -216,7 +220,7 @@
 
   .a.draft { white-space: pre-wrap; }
   .rewrite { display: flex; gap: 8px; margin-top: 16px; }
-  .rewrite button:disabled { opacity: .45; cursor: default; }
+  .rewrite button:disabled { opacity: .45; cursor: default; } .turn:has(.rewrite) .redo { display: none; }   /* the bar has its own Try again */
   .rewrite-note { color: var(--fg2); font-size: 12px; margin-top: 10px; }
   .rewrite button.del { background: #c92b24; }
   .sel { font-size: 11.5px; color: var(--fg2); margin-bottom: 10px; padding-left: 8px; border-left: 2px solid rgba(10,132,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -640,15 +644,26 @@
   };
   const markdown = text => {
     const out = document.createDocumentFragment(), lines = text.replace(/\r/g, '').split('\n'), item = /^\s*([-*•]|\d+[.)])\s+(.*)/;
+    const row = /^\s*\|.*\|\s*$/, cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()), isTable = i => row.test(lines[i]) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '');
     for (let i = 0, m; i < lines.length;) {
       if (!lines[i].trim()) { i++; continue; }
+      if (/^\s*```/.test(lines[i])) {   // a fenced block keeps its lines (code, a small text drawing)
+        const code = []; while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i]);
+        i++; out.append(el('pre', '', code.join('\n'))); continue;
+      }
+      if (isTable(i)) {   // a table, read as agents.html reads it
+        const wrap = el('div', 'table'), table = wrap.appendChild(el('table')), head = table.appendChild(el('tr'));
+        cells(lines[i]).forEach(c => head.append(inline(el('th'), c))); i += 2;
+        while (i < lines.length && row.test(lines[i])) { const tr = table.appendChild(el('tr')); cells(lines[i++]).forEach(c => tr.append(inline(el('td'), c))); }
+        out.append(wrap); continue;
+      }
       if ((m = lines[i].match(/^\s*#{1,4}\s+(.*)/))) { out.append(inline(el('div', 'h'), m[1])); i++; continue; }
       if ((m = lines[i].match(item))) {
         const list = el(/\d/.test(m[1]) ? 'ol' : 'ul'); if (/\d/.test(m[1])) list.start = parseInt(m[1]);
         while (i < lines.length && (m = lines[i].match(item))) { list.append(inline(el('li'), m[2])); i++; }
         out.append(list); continue;
       }
-      const para = []; while (i < lines.length && lines[i].trim() && !(para.length && (item.test(lines[i]) || /^\s*#{1,4}\s/.test(lines[i])))) para.push(lines[i++].trim());
+      const para = []; while (i < lines.length && lines[i].trim() && !(para.length && (item.test(lines[i]) || /^\s*(#{1,4}\s|```)/.test(lines[i]) || isTable(i)))) para.push(lines[i++].trim());
       out.append(inline(el('p'), para.join(' ')));
     }
     return out;
@@ -829,14 +844,14 @@
         b.onclick = e => { e.stopPropagation(); post(action === 'copy' ? {copy: draft} : {[action]: true}); };
         bar.append(b);
       }
-      d.append(bar); fit();
+      const clockRow = d.querySelector('.elapsed'); clockRow ? clockRow.before(bar) : d.append(bar); fit();   // the actions sit with the draft, the timer stays last
     },
     replaced(ok) {
       const bar = turn()?.querySelector('.rewrite'); if (!bar) return;
       const note = document.createElement('div'); note.className = 'rewrite-note'; note.setAttribute('role', 'status');
       const draft = bar.dataset.mode === 'draft';
       note.textContent = ok ? ({delete: 'Deleted', draft: 'Inserted'}[bar.dataset.mode] || 'Replaced') : draft ? 'Your cursor moved. Click where it goes and ask again, or use Copy.' : 'Selection changed or this app cannot replace it. Select the text and ask again, or use Copy.';
-      turn().querySelector('.rewrite-note')?.remove(); turn().append(note);
+      turn().querySelector('.rewrite-note')?.remove(); bar.after(note);
       bar.querySelector('.go').disabled = true; fit();
     },
     mini(m) { miniUpdate(m); },
@@ -871,7 +886,7 @@
     reset() { agentLine = ''; miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
       agentLine = ''; miniClear(); clockStop();
-      $('thread').querySelectorAll('.rewrite').forEach(e => e.remove());
+      $('thread').querySelectorAll('.rewrite, .paused').forEach(e => e.remove());   // resumed from the menu bar or Settings: the paused card never heard
       hover = false;
       listening = !keep;
       working = false;

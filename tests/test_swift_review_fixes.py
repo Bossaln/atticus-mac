@@ -106,6 +106,43 @@ console.log(heard);
         self.assertNotIn("drawing.clear()", start)   # pointing keeps a guide up: its marks can be clicked and asked about
         self.assertIn("notice(s)", self.overlay)
 
+    def test_hidden_rewrite_keeps_its_target(self):
+        close = self.swift[self.swift.index("    func close(clear: Bool)"):self.swift.index("    func shortcut(", self.swift.index("    func close(clear: Bool)"))]
+        harness = r'''import Foundation
+final class NSAnimationContext {
+    var duration = 0.0
+    static func runAnimationGroup(_ changes: (NSAnimationContext) -> Void, completionHandler: () -> Void) {
+        changes(NSAnimationContext()); completionHandler()
+    }
+}
+final class Panel { var alphaValue = 1.0; func animator() -> Panel { self } }
+final class Drawing { func clear() {} }
+final class Harness {
+    var replacement: String? = "draft", selection: Int? = 7, lastDone = Date()
+    var recent = "/missing", gen = 0
+    let panel = Panel(), drawing = Drawing()
+    func shush() {}
+    func hush() { replacement = nil; selection = nil }
+    func gone() {}
+''' + close + r'''}
+let hidden = Harness(); hidden.close(clear: false)
+precondition(hidden.replacement == "draft" && hidden.selection == 7)
+let ended = Harness(); ended.close(clear: true)
+precondition(ended.replacement == nil && ended.selection == nil)
+print("hidden rewrite target kept")
+'''
+        self.assertIn("hidden rewrite target kept", run_swift(self, harness))
+
+    def test_pointer_respects_reduce_motion(self):
+        pointer = self.swift[self.swift.index("func pointAt("):self.swift.index("// Restart Atticus", self.swift.index("func pointAt("))]
+        self.assertIn("if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion", pointer)
+        self.assertLess(pointer.index("accessibilityDisplayShouldReduceMotion"), pointer.index("l.add(pulse"))
+
+    def test_talking_about_a_drawing_shows_the_listening_orb(self):
+        self.assertIn('if replying && !drawingReply { js("draft", "") } else { js("listen")', self.swift)
+        self.assertIn('js(drawingReply ? "words" : "draft", now)', self.swift)
+        self.assertIn('typed(response, heard: true)', self.swift)
+
     def test_settings_describe_all_shortcuts_and_remove_dead_pointer_toggle(self):
         self.assertGreaterEqual(self.settings.count("a modifier on its own"), 2)
         self.assertNotIn('data-k="pointer"', self.settings)

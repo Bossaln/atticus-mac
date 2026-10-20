@@ -39,8 +39,15 @@ class DrawingTests(unittest.TestCase):
         for bad in ({'kind':'text'},{'kind':'text','text':''},{'kind':'text','text':'x'*301},{'kind':'text','text':'a','size':'xl'},
                     {'kind':'text','text':'a','rect':[1,2,3,4]},{'kind':'label','at':[1,1],'text':'a','size':'l'}):
             with self.subTest(bad=bad), self.assertRaises(ValueError): atticus.drawing({'steps':[{'say':'s','shapes':[bad]}]})
-        self.assertIn('text text (one large line',atticus.DRAW_HELP)
+        self.assertIn('text "text" (one large line',atticus.DRAW_HELP)
         self.assertIn('Drawings stay through later asks',atticus.DRAW_HELP)
+
+    def test_help_names_the_order_and_keys_the_validator_takes(self):
+        help_ = atticus.DRAW_HELP
+        self.assertLess(help_.index(atticus.LOOK),help_.index(atticus.DRAW + " '<JSON>'"))   # draw() refuses without this ask's --look
+        for said in ('"size":"s"|"m"|"l"','"screen":N on the step (never in a shape)','(exactly 2; path for more)'): self.assertIn(said,help_)
+        for bad in ({'kind':'text','text':'a','s':'l'},{'kind':'label','at':[1,1],'text':'a','screen':2},{'kind':'line','points':[[0,0],[1,1],[2,2]]}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError): atticus.drawing({'steps':[{'say':'s','shapes':[bad]}]})
 
     def test_follow_up_sees_the_drawing_and_a_selected_mark(self):
         drawn = {'steps':[{'say':'The shared x.','shapes':[{'kind':'circle','rect':[600,170,60,60],'color':'red'}]}],'shown':1}
@@ -133,6 +140,29 @@ class DrawingTests(unittest.TestCase):
                 atticus.draw(data)
         emit.assert_not_called()
         target.assert_not_called()
+
+    def test_failed_look_clears_old_drawing_snapshot(self):
+        snapshot=self.root/'draw-screens.json';snapshot.write_text('{"screens":{"1":{"frame":[0,0,10,10],"pixels":[10,10]}}}')
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(self.root)},clear=False),patch.object(atticus,'screens',return_value=[]):
+            self.assertEqual(atticus.look(cleanup=False),[])
+        self.assertFalse(snapshot.exists())
+
+    def test_ax_draw_refreshes_the_map_in_the_look_target(self):
+        target={'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
+        (self.root/'draw-screens.json').write_text(json.dumps({
+            'screens':{'1':{'frame':[0,0,800,600],'pixels':[1600,1200]}},'target':target}))
+        data={'steps':[{'target':'Send','wait':True,'shapes':[{'kind':'rect'}]}]}
+        def shown(lines): Path(json.loads(lines[0][2:])['receipt']).write_text('shown')
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(self.root)},clear=False),patch.object(atticus,'wait_commit',return_value=True), \
+             patch.object(atticus,'hands_map',return_value=target) as mapped,patch.object(atticus,'emit',side_effect=shown) as emit:
+            self.assertIn('Guide shown',atticus.draw(data))
+            mapped.assert_called_once_with(target=target)
+            self.assertEqual(json.loads(emit.call_args.args[0][0][2:])['target'],target)
+            mapped.reset_mock()
+            (self.root/'draw-screens.json').write_text(json.dumps({
+                'screens':{'1':{'frame':[0,0,800,600],'pixels':[1600,1200]}}}))
+            with self.assertRaisesRegex(ValueError,'--look again'): atticus.draw(data)
+            mapped.assert_not_called()
 
     def test_verified_guide_replaces_a_long_final_answer(self):
         long_answer = 'A long duplicate explanation that belongs in the guide.'
