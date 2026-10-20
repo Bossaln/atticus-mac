@@ -6,62 +6,76 @@
   html, body { margin: 0; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
     font: 13px -apple-system, system-ui, sans-serif; color: #f5f5f7; -webkit-font-smoothing: antialiased; }
   html { background: transparent; }   /* native glass tint sits below the live window layer */
-  #card { padding: 12px 14px 14px; animation: pop .42s var(--spring) both; box-sizing: border-box;
+  #card { padding: 14px 20px 18px; animation: pop .42s var(--spring) both; box-sizing: border-box;
     display: flex; flex-direction: column; max-height: var(--screen-height, 10000px); }
   #card.again { animation: none; }
   #card.held { box-sizing: border-box; display: flex; flex-direction: column; }   /* dragged to a height: keep it */
-  #card.held #comp { margin-top: auto; } #card.held #thread { margin-bottom: 12px; }
+  #card.held #comp { margin-top: auto; } #card.held #thread { margin-bottom: 14px; }
 
   #head { display: flex; align-items: center; gap: 7px; height: 44px; flex: none; }
   canvas { width: 44px; height: 44px; flex: none; margin-left: -4px; transition: transform .35s var(--ease); }
   #status { flex: 1 0 64px; min-width: 64px; font-size: 12.5px; line-height: 22px; color: var(--fg2); white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
-  .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; color: var(--fg2); font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
+  .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 16px; color: var(--fg2); font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
   .elapsed .redo { margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
   .elapsed .redo:hover { color: #f5f5f7; }
   .elapsed b { color: var(--fg2); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .elapsed .move-now { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
-  .elapsed .move-now:hover { color: #f5f5f7; } .elapsed .move-now:disabled { cursor: default; color: var(--fg2); }
-  .elapsed .move-now kbd { height: 16px; font-size: 10px; }
   #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, var(--fg2) 0%, #fff 45%, var(--fg2) 90%); background-size: 200% 100%;
     -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
 
-  #thread { max-height: 360px; min-height: 0; overflow-y: auto; scroll-behavior: smooth; padding-top: 2px;
+  #thread { max-height: 420px; min-height: 0; overflow-y: auto; scroll-behavior: smooth; padding-top: 2px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 100%); }
   #thread::-webkit-scrollbar { width: 0; }
   #thread:empty { display: none; }
-  .turn { padding-top: 10px; animation: in .4s var(--ease) both; transition: opacity .4s var(--ease); }
-  .turn + .turn { margin-top: 10px; border-top: .5px solid rgba(255,255,255,.08); }
+  .turn { padding-top: 12px; animation: in .4s var(--ease) both; transition: opacity .4s var(--ease); }
+  .turn + .turn { margin-top: 18px; padding-top: 18px; border-top: .5px solid rgba(255,255,255,.08); }
   .turn.old .a { color: var(--fg2); }
 
-  .q { margin-left: auto; width: fit-content; max-width: 86%; padding: 7px 11px; border-radius: 14px 14px 4px 14px;
+  .q { margin-left: auto; width: fit-content; max-width: 80%; padding: 9px 14px; border-radius: 16px 16px 5px 16px;
     background: rgba(255,255,255,.09); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12);
-    font-size: 13px; line-height: 1.38; color: #e5e5ea; overflow-wrap: anywhere; cursor: pointer;
+    font-size: 13.5px; line-height: 1.45; color: #e5e5ea; overflow-wrap: anywhere; cursor: pointer;
     transition: font-size .3s var(--ease), color .3s; }
   .q.live { font-size: 15px; color: #fff; }
   .q.live::after { content: ""; display: inline-block; width: 1.5px; height: 1em; margin-left: 2px; vertical-align: -2px;
     background: #fff; animation: blink 1s steps(1) infinite; }
+  .shot { display: block; margin: 0 0 4px auto; padding: 0; border: 0; border-radius: 10px; overflow: hidden; background: none; cursor: zoom-in;
+    box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12); }   /* the marked crop, sent with this ask */
+  .shot img { display: block; max-width: 120px; max-height: 72px; transition: max-width .3s var(--ease), max-height .3s var(--ease); }
+  .shot.big { max-width: 86%; cursor: zoom-out; } .shot.big img { max-width: 100%; max-height: 220px; }
   .q.empty:not(.hear) { display: none; }
   .q.empty.hear { color: var(--fg2); } .q.empty.hear::before { content: "Listening…"; }   /* voice: the bubble waits for words */
-  /* dictation: the orb (mic level while listening, working after release) beside the transcript, one note under it */
-  body.dictate #card { flex-direction: row; align-items: center; gap: 4px; padding: 6px 10px 6px 6px; }
-  body.dictate #head { height: auto; } body.dictate #head > :not(#orb), body.dictate #comp { display: none; }
-  body.dictate #orb { width: 30px; height: 30px; margin: 0; }
+  /* dictation: a small fixed pill. The orb (mic level while listening, working after release), then one line that keeps the
+     newest words in view and fades the older ones out on the left; one note under it */
+  body.dictate #card { flex-direction: row; align-items: center; gap: 6px; padding: 4px 14px 4px 4px; }
+  body.dictate #head { height: auto; } body.dictate #head > :not(#orb), body.dictate #comp, body.dictate .e, body.dictate #grip { display: none; }
+  body.dictate #orb { width: 28px; height: 28px; margin: 0; }
   body.dictate #thread { flex: 1; min-width: 0; padding: 0; -webkit-mask-image: none; }
   body.dictate .turn { padding: 0; }
   body.dictate .turn.old { display: none; }
-  body.dictate .q { position: relative; overflow: hidden; width: auto; max-width: 100%; margin: 0; font-size: 15px; color: #fff; transition: opacity .3s var(--ease); }
+  body.dictate .q { position: relative; display: flex; justify-content: flex-end; overflow: hidden; white-space: nowrap; width: fit-content; max-width: 100%; box-sizing: border-box;
+    margin: 0; padding: 4px 2px; border-radius: 6px; background: none; box-shadow: none; font-size: 14px; line-height: 20px; color: #fff; transition: opacity .3s var(--ease); }
+  body.dictate .q.long { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px); }
+  body.dictate.fold :is(.q, .dn) { opacity: 0; }
+  #lock { display: none; flex: none; width: 10px; height: 13px; color: var(--fg2); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+  #lock rect { fill: currentColor; stroke: none; }
+  body.dictate.locked #lock { display: block; animation: in .25s var(--ease) both; }
+  /* locked (double tap): the whole pill wears an orange ring; the panel's 18px corners clip it to the pill */
+  body.dictate::after { content: ""; position: fixed; inset: 0; border-radius: 18px; pointer-events: none; opacity: 0; transition: opacity .3s var(--ease);
+    box-shadow: inset 0 0 0 1.5px rgba(255,159,10,.9), inset 0 0 12px rgba(255,159,10,.35); }
+  body.dictate.locked::after { opacity: 1; }
   body.dictate :is(.steps, .a, .sel, .elapsed) { display: none; }
   .q.finishing::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; will-change: transform;
     background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%); animation: appear .2s var(--ease) both, sweep 1.2s linear infinite; }
   .dn { display: none; }
   body.dictate .dn { display: flex; align-items: center; gap: 6px; margin: 5px 0 0 4px; font-size: 11.5px; line-height: 16px; color: var(--fg2); animation: in .25s var(--ease) both; }
   body.dictate .dn:empty { display: none; }
-  .dn.ok { color: #f5f5f7; }
+  .dn button { border:0; border-radius:6px; padding:3px 8px; font:inherit; color:var(--fg2); background:none; text-decoration:underline; cursor:pointer; flex:none; }
+  .dn button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .dn.ok { color: #f5f5f7; padding: 0; border-radius: 0; background: none; box-shadow: none; cursor: default; animation: in .25s var(--ease) both; }   /* not the approval card that shares .ok */
   .dn.ok::before { content: ""; flex: none; width: 8px; height: 4px; border-left: 1.5px solid #30d158; border-bottom: 1.5px solid #30d158; transform: translateY(-1px) rotate(-45deg); }
 
-  .steps { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .steps { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
   .steps:empty { display: none; }
   .steps[data-more]::before { content: "+" attr(data-more) " earlier"; font-size: 11px; color: var(--fg2); padding-left: 12px; }
   .step { font-size: 12px; color: var(--fg2); display: flex; gap: 7px; align-items: center; white-space: nowrap;
@@ -73,7 +87,7 @@
   .step.live::before { background: #fff; animation: pulse 1s ease-in-out infinite; }
   .step.done::before { background: #30d158; }
   .turn.preview .mini.on { position: relative; z-index: 1; }   /* not sticky: its picture is under this see-through page, so nothing may scroll beneath it; the bounded steps keep it still */
-  .turn.preview .steps { height: 76px; min-height: 76px; margin-top: -14px; justify-content: flex-end; overflow: hidden;
+  .turn.preview .steps { height: 76px; min-height: 76px; margin-top: -14px; gap: 4px; justify-content: flex-end; overflow: hidden;
     -webkit-mask-image: linear-gradient(to bottom, transparent 14px, #000 34px); }
   .turn.preview .steps[data-more]::before { content: none; }
   .turn.preview .step { flex: none; animation: none; }
@@ -113,8 +127,19 @@
   @keyframes mini-scroll { from { opacity: 0; transform: translate(0,0); } 30% { opacity: 1; } to { opacity: 0; transform: translate(var(--dx),var(--dy)); } }
   @keyframes mini-caret { 0%, 100% { opacity: 0; } 30%, 65% { opacity: .9; } }
 
-  .a { margin-top: 9px; font-size: 14px; line-height: 1.48; overflow-wrap: anywhere; cursor: copy; }
+  .a { margin-top: 16px; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; cursor: copy; }
   .a:empty { display: none; }
+  /* light Markdown and TeX math in answers (built as DOM nodes, never HTML from the model) */
+  .a :where(p, ul, ol, .h) { margin: 0; } .a > :not(.w) + :not(.w) { margin-top: 14px; }
+  .a > .h:not(:first-child) { margin-top: 24px; } .a > .h + :not(.w) { margin-top: 6px; }   /* a section heading sits with the text it heads */
+  .a :is(ul, ol) { padding-left: 22px; } .a li { padding-left: 6px; } .a li + li { margin-top: 6px; } .a li::marker { color: var(--fg2); }
+  .a .h { font-size: 12px; font-weight: 700; line-height: 1.4; letter-spacing: .06em; text-transform: uppercase; color: #fff; } .a strong { font-weight: 600; color: #fff; }
+  .a code { padding: 1px 5px; border-radius: 5px; font: 13px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.1); }
+  .a a, .agent-card a { color: #64d2ff; text-decoration: none; cursor: pointer; } .a a:hover, .agent-card a:hover { text-decoration: underline; }
+  .a math { font-family: "STIX Two Math", math; font-size: 1.12em; } .a :is(math, .tex) { animation: word .5s var(--ease) both; }
+  .a math[display=block] { margin: 12px 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden; }
+  .a math::-webkit-scrollbar { height: 0; }
+  .tex { font: 13px ui-monospace, Menlo, monospace; color: #e5e5ea; } .tex.block { display: block; margin: 6px 0; text-align: center; }
   .a.agent-ack { display:flex; align-items:flex-start; gap:7px; }
   .agent-ack canvas { width:24px; height:24px; margin:0; }
   .agent-ack span { min-width:0; flex:1; }
@@ -138,7 +163,7 @@
   #x.hot svg { transform: rotate(90deg); }
 
   /* safe mode: Atticus asks before it deletes, sends or buys */
-  .ok { margin-top: 10px; padding: 11px 12px 12px; border-radius: 14px; background: rgba(255,255,255,.07); cursor: pointer;
+  .ok { margin-top: 14px; padding: 13px 14px 14px; border-radius: 14px; background: rgba(255,255,255,.07); cursor: pointer;
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); animation: grow .32s var(--spring) both; overflow: hidden; max-height: 320px;
     transition: max-height .34s var(--ease), opacity .25s, margin .34s var(--ease), padding .34s var(--ease), background .2s; }
   .ok:hover { background: rgba(255,255,255,.09); }
@@ -146,7 +171,6 @@
   .ok b { display: block; font-size: 13.5px; font-weight: 600; }
   .ok code { display: block; margin-top: 4px; font: 11px/15px ui-monospace, Menlo, monospace; color: var(--fg2); max-height: 15px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: max-height .34s var(--ease), color .2s; }
-  .ok:hover code { color: var(--fg2); }
   .ok code.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
   .ok code.full { max-height: 165px; overflow-y: auto; color: #d1d1d6; }
   .ok code::-webkit-scrollbar { width: 0; }
@@ -157,7 +181,7 @@
   .ok button:hover, .pk .bar button:hover { transform: scale(1.03); } .ok button:active, .pk .bar button:active { transform: scale(.96); }
 
   /* "which one?": the AI isn't sure, so it shows its choices. Click one to see it big; click outside it for all of them again */
-  .pk { margin-top: 10px; padding: 11px 12px 12px; border-radius: 14px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
+  .pk { margin-top: 14px; padding: 13px 14px 14px; border-radius: 14px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
     animation: grow .32s var(--spring) both; overflow: hidden; max-height: 900px; cursor: default;
     transition: max-height .34s var(--ease), opacity .25s, margin .34s var(--ease), padding .34s var(--ease); }
   .pk.gone { max-height: 0; opacity: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; }
@@ -191,35 +215,35 @@
   .pk:not(.open) .bar :is(.back, .go), .pk.open .bar .none { display: none; }
 
   .a.draft { white-space: pre-wrap; }
-  .rewrite { display: flex; gap: 7px; margin-top: 11px; }
+  .rewrite { display: flex; gap: 8px; margin-top: 16px; }
   .rewrite button:disabled { opacity: .45; cursor: default; }
-  .rewrite-note { color: var(--fg2); font-size: 12px; margin-top: 8px; }
+  .rewrite-note { color: var(--fg2); font-size: 12px; margin-top: 10px; }
   .rewrite button.del { background: #c92b24; }
-  .sel { font-size: 11.5px; color: var(--fg2); margin-bottom: 6px; padding-left: 8px; border-left: 2px solid rgba(10,132,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sel { font-size: 11.5px; color: var(--fg2); margin-bottom: 10px; padding-left: 8px; border-left: 2px solid rgba(10,132,255,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* safe mode off: a small tag says so; clicking it turns safe mode back on */
   #mode { flex: none; display: none; align-items: center; gap: 5px; height: 22px; padding: 0 9px;
-    box-sizing: border-box; border-radius: 11px; font-size: 11px; font-weight: 500; line-height: 1; color: #ff9f0a; cursor: pointer;
+    box-sizing: border-box; border-radius: 11px; font-size: 11px; font-weight: 500; line-height: 1; color: #ffb340; cursor: pointer;
     background: rgba(255,159,10,.13); box-shadow: inset 0 0 0 .5px rgba(255,159,10,.32); transition: transform .3s var(--spring), background .2s; }
   #mode::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #ff9f0a; }
-  #mode.on { display: flex; animation: in .35s var(--ease) both; } #mode:hover { transform: scale(1.05); background: rgba(255,159,10,.2); }
+  #mode.on { display: flex; animation: in .35s var(--ease) both; } #mode:hover { transform: scale(1.05); background: rgba(255,159,10,.16); }
 
-  /* tip: once in a while, one quiet line under the answer (Settings → Tips) */
-  .tip { display: flex; align-items: baseline; gap: 7px; width: fit-content; max-width: 100%; margin-top: 10px; padding: 6px 12px 6px 10px; box-sizing: border-box;
+  /* tip: once in a while, one quiet line under the answer */
+  .tip { display: flex; align-items: baseline; gap: 7px; width: fit-content; max-width: 100%; margin-top: 14px; padding: 7px 12px 7px 10px; box-sizing: border-box;
     border-radius: 12px; font-size: 12px; line-height: 1.4; color: #e5e5ea; background: rgba(10,132,255,.16); box-shadow: inset 0 0 0 .5px rgba(10,132,255,.45);
     animation: pop .5s var(--spring) .4s both; }
   .tip::before { content: attr(data-k); flex: none; font-weight: 600; color: #64d2ff; }
-  .tip.learned { background: rgba(48,209,88,.14); box-shadow: inset 0 0 0 .5px rgba(48,209,88,.45); } .tip.learned::before { color: #30d158; }
-  .tip .off, .ok .off, .ok .details { flex: none; margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
-  .tip .off:hover, .ok .off:hover, .ok .details:hover { color: #f5f5f7; }
+  .tip.learned { background: rgba(48,209,88,.14); box-shadow: inset 0 0 0 .5px rgba(48,209,88,.45); } .tip.learned::before { color: #30db5b; }
+  .tip .off, .ok .details { flex: none; margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
+  .tip .off:hover, .ok .details:hover { color: #f5f5f7; }
   .ok.offer { cursor: default; } .ok.offer:hover { background: rgba(255,255,255,.07); }   /* a question, not a command: nothing to unfold */
   .ok.offer p { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg2); }
-  .ok.offer .off, .ok.offer .details { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
+  .ok.offer .details { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
   .tip.kofi { cursor: pointer; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); } .tip.kofi::before { color: #f5f5f7; }   /* quiet: no accent, it's an ask not a hint */
   .tip.gone { opacity: 0; transform: translateY(-4px); transition: opacity .4s, transform .4s; }
 
   /* memory receipt: one quiet row under an answer that remembered or forgot something. Click: it opens in place; click an item: Settings → Memory there */
-  .mem { margin-top: 8px; animation: in .35s var(--ease) .15s both; }
+  .mem { margin-top: 12px; animation: in .35s var(--ease) .15s both; }
   .mem-h { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0; border: 0; cursor: pointer;
     font: 500 12px -apple-system, system-ui, sans-serif; color: var(--fg2); background: none; transition: color .2s; }
   .mem-h:hover, .mem.open .mem-h { color: #f5f5f7; }
@@ -247,11 +271,9 @@
   .mem-i em { flex: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); opacity: 0; transition: opacity .2s; }
   .mem-i:hover em, .mem-i:focus-visible em { opacity: 1; }
 
-  .turn:has(.ok:not(.move-option):not(.gone),.pk:not(.gone)) .move-option { display:none; }
-  .move-option .prefs { display:flex; justify-content:center; gap:16px; margin-top:9px; } .ok.offer .prefs .off { margin:0; }
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
   #comp { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin-top .24s var(--ease), opacity .18s; }
-  #comp.open { height: 36px; margin-top: 12px; opacity: 1; }
+  #comp.open { height: 36px; margin-top: 14px; opacity: 1; }
   #model, #models button { flex: none; height: 34px; max-width: 132px; padding: 0 12px; border: 0; border-radius: 17px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font: 500 12px -apple-system, system-ui, sans-serif; color: var(--fg2); background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
     transition: color .2s, background .25s, opacity .22s var(--ease), transform .38s var(--ease); }
@@ -263,7 +285,7 @@
   #comp.pick #models { pointer-events: auto; }
   #comp.pick #models button { opacity: 1; transform: none; transition-duration: .2s, .25s, .22s, .38s; transition-delay: 0s, 0s, calc(var(--i) * 30ms), calc(var(--i) * 30ms); }
   #ask { transform-origin: left center; } #comp.pick #ask { opacity: 0; transform: scale(.97); pointer-events: none; }
-  #comp.pick #model, #comp.pick #mic { opacity: 0; transform: scale(.8); pointer-events: none; }
+  #comp.pick #model, #comp.pick #point, #comp.pick #mic { opacity: 0; transform: scale(.8); pointer-events: none; }
   #ask { flex: 1; min-width: 0; height: 34px; box-sizing: border-box; padding: 0 13px; border: 0; outline: 0; border-radius: 17px;
     font: 13.5px -apple-system, system-ui, sans-serif; color: #fff; caret-color: #0a84ff; -webkit-user-select: text; cursor: text;
     background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); transition: background .25s, box-shadow .25s, opacity .22s var(--ease), transform .38s var(--ease); }
@@ -276,7 +298,7 @@
   #point:active, #mic:active { transform: scale(.94); }
   #point svg, #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   #point.active, #point.marked { background: rgba(10,132,255,.55); }
-  /* Point at your screen: one row over the typing box. on: the hint + Cancel/Done; marked: the crop's chip; coach: the one-time intro */
+  /* Point at your screen: one row over the typing box. on: the hint; marked: the crop's chip; coach: the one-time intro */
   #pointbar { display: none; align-items: center; gap: 8px; min-height: 28px; margin-top: 12px; font: 12px -apple-system, system-ui, sans-serif; color: var(--fg2); }
   #pointbar[data-s] { display: flex; animation: in .3s var(--spring) both; }
   #pointbar .hint { flex: 1; min-width: 0; line-height: 1.35; } #pointbar .hint b { color: #f5f5f7; font-weight: 600; }
@@ -289,7 +311,7 @@
   #pointbar .rm { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: none; color: var(--fg2); cursor: pointer; }
   #pointbar .rm:hover { color: #fff; background: rgba(255,255,255,.1); } #pointbar .rm svg { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
   #pointbar.has .chip { display: inline-flex; } #pointbar.has .hint { display: none; }
-  #pointbar:not([data-s=on]) .cancel, #pointbar:not([data-s=on]) .done, #pointbar:not([data-s=coach]) .gotit { display: none; }
+  #pointbar:not([data-s=coach]) .gotit { display: none; }
   #pointbar[data-s=coach] + #comp #point { box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 0 0 2px rgba(10,132,255,.8); }
 
   /* resize: drag the bottom-right corner */
@@ -321,7 +343,7 @@
   #agents-pill i { width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 6px rgba(10,132,255,.8); animation:pulse 1.8s ease-in-out infinite; }
   #agents-pill.attention i { background:#ff9f0a; box-shadow:0 0 6px rgba(255,159,10,.8); }
   /* keycap actions (Raycast-style): label + the key that does it; one blue main action */
-  .keys, .ok .keys { display:flex; justify-content:flex-end; align-items:center; gap:4px; margin-top:12px; }
+  .keys, .ok .keys { display:flex; justify-content:flex-end; align-items:center; gap:6px; margin-top:14px; }
   .ok .keys button, .keys button { flex:none; height:28px; padding:0 6px 0 11px; border-radius:9px; display:inline-flex; align-items:center; gap:7px;
     background:transparent; box-shadow:none; color:#d1d1d6; font:500 12.5px -apple-system, system-ui, sans-serif; }
   .ok .keys button:hover, .keys button:hover { background:rgba(255,255,255,.08); color:#fff; transform:none; }
@@ -336,7 +358,7 @@
   .agent-card.done .eyebrow i { background:#30d158; box-shadow:0 0 8px rgba(48,209,88,.5); animation:none; }
   .agent-card .made { display:grid; grid-template-columns:minmax(0,1fr); gap:6px; margin-top:10px; }
   .agent-card .made button { flex:none; display:flex; align-items:center; gap:10px; box-sizing:border-box; min-width:0; width:100%; height:auto; padding:7px 9px 7px 7px; border-radius:10px; text-align:left;
-    background:rgba(255,255,255,.06); font-weight:400; } .agent-card .made button:hover { transform:none; background:rgba(255,255,255,.1); }
+    background:rgba(255,255,255,.06); font-weight:400; } .agent-card .made button:hover { transform:none; background:rgba(255,255,255,.1); } .agent-card .made button:hover small { color:#e5e5ea; }
   .agent-card .made i { width:28px; height:28px; border-radius:8px; flex:none; display:grid; place-items:center; background:rgba(255,255,255,.1); }
   .agent-card .made button:first-child i { background:#0a84ff; box-shadow:0 3px 10px rgba(10,132,255,.35); }
   .agent-card .made svg { width:14px; height:14px; fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
@@ -354,8 +376,9 @@
 <div id="card">
   <div id="head"><canvas id="orb"></canvas><div id="status"></div><button id="agents-pill" hidden><i></i><span></span></button><div id="mode" title="Safe mode is off. Click to turn it on.">Full access</div><div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div></div>
   <div id="thread"></div>
+  <svg id="lock" viewBox="0 0 10 13" role="img" aria-label="Locked. Press the shortcut to finish."><path d="M2.5 6V4a2.5 2.5 0 0 1 5 0v2"/><rect x="0" y="5.5" width="10" height="7.5" rx="2"/></svg>
   <div id="pointbar" role="group" aria-label="Point at your screen"><span class="chip"><img alt="What you marked" hidden><i></i><span>Marked</span><button class="rm" title="Remove mark" aria-label="Remove mark"><svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2L2 8"/></svg></button></span>
-    <span class="hint" aria-live="polite"></span><span class="keys"><button class="cancel">Cancel<kbd>esc</kbd></button><button class="go done">Done</button><button class="go gotit">Got it</button></span></div>
+    <span class="hint" aria-live="polite"></span><span class="keys"><button class="go gotit">Got it</button></span></div>
   <div id="comp" inert><input id="ask" placeholder="Ask Atticus…" autocomplete="off" spellcheck="false" aria-label="Ask Atticus">
     <div id="models" role="menu" aria-label="Model"></div><button id="model" title="Model" aria-label="Model" hidden></button>
     <button id="point" title="Point at your screen" aria-label="Point at your screen" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 8l11 4.5-4.6 1.9L13.5 19z"/><path d="M5.1 11.9A5.5 5.5 0 0 1 12.9 4.1"/></svg></button>
@@ -399,7 +422,7 @@
   // only the user's own wheel/trackpad decides (our scrolls and growing steps must not): up = stay put, back to the bottom = follow again
   $('thread').addEventListener('wheel', e => { if (e.deltaY < 0) atBottom = false; else setTimeout(() => { const t = $('thread'); atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 90; }, 0); }, { passive: true });
   let defaultEnabled=false,defaultComposing=false;
-  function defaultButton(){if(!visible||defaultComposing||$('ask').value.trim()||document.hasFocus()&&document.querySelector('button:focus,select:focus,input:focus:not(#ask),textarea:focus,[contenteditable=true]:focus')||$('thread').querySelector('.pk:not(.gone),.ok:not(.agent-card):not(.move-option):not(.gone)'))return null;return $('thread').querySelector('.agent-card .go:not(:disabled),.move-option .go:not(:disabled)');}
+  function defaultButton(){if(!visible||defaultComposing||$('ask').value.trim()||document.hasFocus()&&document.querySelector('button:focus,select:focus,input:focus:not(#ask),textarea:focus,[contenteditable=true]:focus')||$('thread').querySelector('.pk:not(.gone),.ok:not(.agent-card):not(.gone)'))return null;return $('thread').querySelector('.agent-card .go:not(:disabled)');}
   const fit = (follow = true) => {
     webkit.messageHandlers.h.postMessage($('card').offsetHeight);
     if (follow && atBottom) $('thread').scrollTop = $('thread').scrollHeight;
@@ -472,12 +495,12 @@
   };
   const coachShow = () => {
     if (!coachPending || bar.dataset.s) return;
-    bar.dataset.s = 'coach'; bar.querySelector('.hint').innerHTML = '<b>Point at your screen</b> to show Atticus what you mean: click ' + POINTER + ' below.'; fit();
+    bar.dataset.s = 'coach'; bar.querySelector('.hint').innerHTML = '<b>Point at your screen:</b> click ' + POINTER + ' below, then circle, click or scribble on anything and type or say your question.'; fit();
   };
   $('point').onclick = () => { coachDone(); if (working) return status('Finish or stop the current answer first'); post({ point: 1 }); };
-  bar.querySelector('.done').onclick = () => post({ pointDone: 1 });
-  bar.querySelector('.cancel').onclick = bar.querySelector('.rm').onclick = () => post({ pointClear: 1 });
+  bar.querySelector('.rm').onclick = () => post({ pointClear: 1 });
   bar.querySelector('.gotit').onclick = coachDone;
+  const markShot = () => { const img = bar.querySelector('img'); return bar.classList.contains('has') && !img.hidden && img.src; };   // the crop the next ask carries into its bubble
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
     if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
@@ -515,14 +538,131 @@
     const a = part('a'); a ? a.after(d) : turn().append(d); fit();
   };
   const settle = () => turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('done'); });
-  const reveal = (el, text) => {   // the answer fades in word by word, under a second in total
-    el.textContent = '';
-    const parts = text.split(/(\s+)/), gap = Math.min(16, 900 / parts.length);
-    parts.forEach((w, i) => {
-      if (/^\s+$/.test(w) || !w) return el.append(w);
-      const s = document.createElement('span'); s.className = 'w'; s.style.animationDelay = `${i * gap}ms`; s.textContent = w;
-      el.append(s);
+  // TeX → MathML, drawn by WebKit's own math layout: the subset short answers use. Anything else throws and shows the source.
+  const MML = 'http://www.w3.org/1998/Math/MathML';
+  const MI = {alpha:'α',beta:'β',gamma:'γ',delta:'δ',epsilon:'ϵ',varepsilon:'ε',zeta:'ζ',eta:'η',theta:'θ',vartheta:'ϑ',iota:'ι',kappa:'κ',lambda:'λ',mu:'μ',nu:'ν',xi:'ξ',pi:'π',rho:'ρ',sigma:'σ',tau:'τ',upsilon:'υ',phi:'ϕ',varphi:'φ',chi:'χ',psi:'ψ',omega:'ω',
+    Gamma:'Γ',Delta:'Δ',Theta:'Θ',Lambda:'Λ',Xi:'Ξ',Pi:'Π',Sigma:'Σ',Phi:'Φ',Psi:'Ψ',Omega:'Ω',infty:'∞',partial:'∂',nabla:'∇',emptyset:'∅',varnothing:'∅',ell:'ℓ',hbar:'ℏ',R:'ℝ',N:'ℕ',Z:'ℤ',Q:'ℚ',C:'ℂ'};
+  const MO = {cdot:'⋅',times:'×',div:'÷',pm:'±',mp:'∓',le:'≤',leq:'≤',ge:'≥',geq:'≥',ne:'≠',neq:'≠',approx:'≈',equiv:'≡',sim:'∼',cong:'≅',propto:'∝',to:'→',rightarrow:'→',leftarrow:'←',Rightarrow:'⇒',implies:'⇒',
+    Leftrightarrow:'⇔',iff:'⇔',mapsto:'↦',in:'∈',notin:'∉',subset:'⊂',subseteq:'⊆',cup:'∪',cap:'∩',setminus:'∖',forall:'∀',exists:'∃',angle:'∠',circ:'∘',degree:'°',cdots:'⋯',ldots:'…',dots:'…',perp:'⊥',parallel:'∥',
+    neg:'¬',land:'∧',lor:'∨',mid:'∣',prime:'′',therefore:'∴',langle:'⟨',rangle:'⟩',lfloor:'⌊',rfloor:'⌋',lceil:'⌈',rceil:'⌉',int:'∫',iint:'∬',oint:'∮','{':'{','}':'}','|':'‖','%':'%','$':'$','#':'#','&':'&','_':'_'};
+  const BIG = {sum:'∑',prod:'∏',lim:'lim',max:'max',min:'min',sup:'sup',inf:'inf',bigcup:'⋃',bigcap:'⋂'};   // limits go under and over in display math
+  const SPACE = {',':'.17em',':':'.22em',';':'.28em','!':'-.17em',' ':'.25em',quad:'1em',qquad:'2em'};
+  const ACCENT = {overline:'‾',bar:'‾',vec:'→',overrightarrow:'→',hat:'^',widehat:'^',tilde:'~',widetilde:'~',dot:'˙',ddot:'¨'};
+  const FN = /^(sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|lg|exp|det|gcd|deg|arg|dim|ker)$/;
+  const ENV = {pmatrix:['(',')'],bmatrix:['[',']'],Bmatrix:['{','}'],vmatrix:['|','|'],matrix:['',''],cases:['{',''],aligned:['',''],align:['',''],'align*':['',''],gathered:['',''],array:['','']};
+  const tex = (src, block) => {
+    if (src.length > 3000) throw Error('long');
+    const found = [...src.matchAll(/\\[a-zA-Z]+\*?|\\.|\d+(?:\.\d+)?|\S/g)], t = found.map(m => m[0]), at = found.map(m => m.index);
+    let i = 0;
+    const fail = () => { throw Error('tex'); };
+    const node = (tag, kids = [], attrs = {}) => { const n = document.createElementNS(MML, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); n.append(...kids); return n; };
+    const leaf = (tag, s, attrs) => node(tag, [s], attrs);
+    const row = kids => kids.length === 1 ? kids[0] : node('mrow', kids);
+    const fence = d => leaf('mo', d, {fence: 'true', stretchy: 'true'});
+    const delim = () => { const d = t[i++] ?? fail(); return d === '.' ? '' : d[0] === '\\' ? MO[d.slice(1)] ?? fail() : d; };
+    const raw = () => {   // \text{…}: the source as written, spaces kept
+      if (t[i] !== '{') fail();
+      let depth = 0, j = i;
+      do { depth += t[j] === '{' ? 1 : t[j] === '}' ? -1 : 0; j++; } while (depth && j < t.length);
+      if (depth) fail();
+      const s = src.slice(at[i] + 1, at[j - 1]); i = j; return s.replace(/\\(.)/g, '$1');
+    };
+    const expr = stop => { const kids = []; while (i < t.length && !stop.includes(t[i])) kids.push(scripts()); return row(kids); };
+    const group = () => { if (t[i] !== '{') return atom(true); i++; const g = expr(['}']); if (t[i++] !== '}') fail(); return g; };
+    const atom = arg => {
+      const s = t[i++];
+      if (s === undefined || s === '}' || s === '&') fail();
+      if (s === '{') { i--; return group(); }
+      if (/^\d/.test(s)) { if (arg && s.length > 1) { t[--i] = s.slice(1); at[i]++; return leaf('mn', s[0]); } return leaf('mn', s); }   // \frac12: one digit each
+      if (s[0] !== '\\') return /^[a-zA-Z]$/.test(s) ? leaf('mi', s) : leaf('mo', {'-': '−', '*': '∗', "'": '′'}[s] || s, /^[()[\]|]$/.test(s) ? {stretchy: 'false'} : undefined);   // only \left…\right grows
+      const c = s.slice(1);
+      if (/^[dtc]?frac$/.test(c)) return node('mfrac', [group(), group()]);
+      if (c === 'binom') return row([leaf('mo', '('), node('mfrac', [group(), group()], {linethickness: '0'}), leaf('mo', ')')]);
+      if (c === 'sqrt') { if (t[i] !== '[') return node('msqrt', [group()]); i++; const n = expr([']']); i++; return node('mroot', [group(), n]); }
+      if (/^(text|textrm|textit|mbox)$/.test(c)) return leaf('mtext', raw());
+      if (c === 'textbf') return leaf('mtext', raw(), {mathvariant: 'bold'});
+      if (c === 'mathrm' || c === 'operatorname') return leaf('mi', raw(), {mathvariant: 'normal'});
+      if (c === 'mathbb') { const s = raw(); return leaf('mi', MI[s] ?? fail()); }
+      if (c === 'mathbf' || c === 'boldsymbol') { const g = group(); g.setAttribute('mathvariant', 'bold'); return g; }
+      if (ACCENT[c]) return node('mover', [group(), leaf('mo', ACCENT[c], {stretchy: String(!/^(dot|ddot|hat|tilde|vec)$/.test(c))})], {accent: 'true'});
+      if (c === 'underline') return node('munder', [group(), leaf('mo', '_', {stretchy: 'true'})], {accentunder: 'true'});
+      if (c === 'boxed') return node('mrow', [group()], {style: 'border: 1px solid; padding: 3px 5px'});
+      if (c === 'left') { const open = delim(), body = expr(['\\right']); if (t[i++] !== '\\right') fail(); return row([fence(open), body, fence(delim())]); }
+      if (c === 'begin') {
+        const env = raw(), [open, close] = ENV[env] ?? fail(), rows = [[]];
+        if (env === 'array') raw();   // its column spec
+        for (;;) {
+          rows.at(-1).push(expr(['&', '\\\\', '\\end']));
+          const sep = t[i++];
+          if (sep === '\\\\') rows.push([]); else if (sep === '\\end') { raw(); break; } else if (sep !== '&') fail();
+        }
+        const align = /^align|aligned/.test(env) ? {columnalign: 'right left', columnspacing: '0'} : env === 'cases' ? {columnalign: 'left left'} : {};
+        const table = node('mtable', rows.filter(r => r.some(c => c.childNodes.length || c.textContent)).map(r => node('mtr', r.map(c => node('mtd', [c])))), align);
+        return row([open && fence(open), table, close && fence(close)].filter(Boolean));
+      }
+      if (c in SPACE) return node('mspace', [], {width: SPACE[c]});
+      if (/^(displaystyle|textstyle|limits|nolimits|\\)$/.test(c)) return node('mrow');
+      if (FN.test(c)) { const n = leaf('mi', c); n.fn = true; return n; }
+      if (BIG[c]) { const n = leaf('mo', BIG[c], {movablelimits: 'true'}); n.big = true; return n; }
+      if (MI[c]) return leaf('mi', MI[c]);
+      if (MO[c]) return leaf('mo', MO[c], /^([{}|]|[lr](angle|vert|floor|ceil))$/.test(c) ? {stretchy: 'false'} : undefined);
+      return fail();
+    };
+    const scripts = () => {
+      const base = atom(); let sub = null, sup = null;
+      for (;;) { if (t[i] === '_' && !sub) { i++; sub = group(); } else if (t[i] === '^' && !sup) { i++; sup = group(); } else break; }
+      const r = sub && sup ? node(base.big ? 'munderover' : 'msubsup', [base, sub, sup]) : sub || sup ? node(base.big ? (sub ? 'munder' : 'mover') : (sub ? 'msub' : 'msup'), [base, sub || sup]) : base;
+      return base.fn && t[i] && t[i] !== '(' ? row([r, node('mspace', [], {width: '0.1667em'})]) : r;   // \sin x: TeX's thin space after a function name
+    };
+    const body = expr([]);
+    if (i < t.length) fail();
+    return node('math', [body], block ? {display: 'block'} : {displaystyle: 'true'});   // inline fractions full size, as in a textbook
+  };
+  const math = (src, block) => { try { return tex(src.trim(), block); } catch { return el('span', block ? 'tex block' : 'tex', src.trim()); } };   // unreadable TeX: show what the model wrote
+  // Safe Markdown → DOM, as in agents.html (no HTML from the model): headings, lists, bold, italics, code, links, $…$ and $$…$$ math
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const INLINE = /((?<!\\)\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$(?=\S)(?:\\.|[^$\\\n])+?(?<=\S)\$(?!\d)|\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:|mailto:)[^\s)]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]|\*[^*\s][^*]*\*|(?<![\w\\])_[^_\s][^_]*_(?!\w))/g;
+  const inline = (parent, text) => {
+    const plain = s => parent.append(s.replace(/\\\$/g, '$'));
+    let at = 0;
+    for (const m of text.matchAll(INLINE)) {
+      plain(text.slice(at, m.index)); const s = m[0]; at = m.index + s.length;
+      if (s.startsWith('$$') || s.startsWith('\\[')) parent.append(math(s.slice(2, -2), true));
+      else if (s[0] === '$') parent.append(math(s.slice(1, -1)));
+      else if (s.startsWith('\\(')) parent.append(math(s.slice(2, -2)));
+      else if (s.startsWith('**')) inline(parent.appendChild(el('strong')), s.slice(2, -2));
+      else if (s[0] === '`') parent.append(el('code', '', s.slice(1, -1)));
+      else if (s[0] === '[') { const k = s.indexOf(']('), a = el('a', '', s.slice(1, k)); a.href = a.title = s.slice(k + 2, -1); parent.append(a); }
+      else if (s.startsWith('http')) { const a = el('a', '', s); a.href = s; parent.append(a); }
+      else inline(parent.appendChild(el('em')), s.slice(1, -1));
+    }
+    plain(text.slice(at)); return parent;
+  };
+  const markdown = text => {
+    const out = document.createDocumentFragment(), lines = text.replace(/\r/g, '').split('\n'), item = /^\s*([-*•]|\d+[.)])\s+(.*)/;
+    for (let i = 0, m; i < lines.length;) {
+      if (!lines[i].trim()) { i++; continue; }
+      if ((m = lines[i].match(/^\s*#{1,4}\s+(.*)/))) { out.append(inline(el('div', 'h'), m[1])); i++; continue; }
+      if ((m = lines[i].match(item))) {
+        const list = el(/\d/.test(m[1]) ? 'ol' : 'ul'); if (/\d/.test(m[1])) list.start = parseInt(m[1]);
+        while (i < lines.length && (m = lines[i].match(item))) { list.append(inline(el('li'), m[2])); i++; }
+        out.append(list); continue;
+      }
+      const para = []; while (i < lines.length && lines[i].trim() && !(para.length && (item.test(lines[i]) || /^\s*#{1,4}\s/.test(lines[i])))) para.push(lines[i++].trim());
+      out.append(inline(el('p'), para.join(' ')));
+    }
+    return out;
+  };
+  const reveal = (a, text) => {   // the answer fades in word by word (a formula as one), under a second in total; a draft stays exactly as it will paste
+    a.replaceChildren(a.classList.contains('draft') ? text : markdown(text));
+    const units = [], walk = n => [...n.childNodes].forEach(c => {
+      if (c.nodeType === 3) c.replaceWith(...c.data.split(/(\s+)/).filter(Boolean).map(w => { if (/^\s/.test(w)) return w; const s = document.createElement('span'); s.className = 'w'; s.textContent = w; units.push(s); return s; }));
+      else if (c.namespaceURI === MML || c.classList.contains('tex')) units.push(c);
+      else walk(c);
     });
+    walk(a);
+    const gap = Math.min(32, 900 / Math.max(1, units.length));
+    units.forEach((u, i) => u.style.animationDelay = `${i * gap}ms`);
   };
 
   let mini = null, miniTarget = null, miniEnd = 0, miniRemove = 0;
@@ -611,13 +751,9 @@
     turn().append(clock); clockStart = performance.now(); clockTick();
   };
 
-  let movable=false;   // atticus.py watches the move file: Move to agent ⌃⌥↩ stays in the running box, whatever Long asks says
-  const moveClear=()=>{movable=false;$('thread').querySelectorAll('.move-option,.move-now').forEach(e=>e.remove());};
-  const moveNow=()=>{
-    if(!movable||!working||clock?.closest('.turn')!==turn()||clock.querySelector('.move-now'))return;
-    const b=keyButton('Move to agent','⌃⌥↩');b.className='move-now';b.setAttribute('aria-keyshortcuts','Control+Alt+Enter');
-    b.onclick=e=>{const r=b.getBoundingClientRect();e.stopPropagation();b.disabled=true;b.firstChild.textContent='Moving…';post({agentMove:true,cardRect:[r.x,r.y,r.width,r.height]});};clock.append(b);fit();
-  };
+  let agentLine='';   // the agent this box just started: its live step stays in the status line until the next ask
+  const agentStatus=r=>{if(r.id!==agentLine||working||listening)return;const s=r.status==='failed'?'Couldn’t finish':r.step||'Working…',live=r.status==='running';
+    if($('status').textContent!==s||$('status').classList.contains('live')!==live)status(s,live);if(['done','failed','stopped'].includes(r.status))agentLine='';};
   // What an agent made, as it says: Google types by mimeType, files by extension, the rest by host.
   const AGENT_KINDS=[[/spreadsheet|\.(csv|xlsx?|numbers)$/i,'Spreadsheet','<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M2 10h12M6 2v12"/>'],[/presentation|\.(pptx?|key)$/i,'Presentation','<rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M8 11.5v2.5M5.5 14h5"/>'],
     [/document|\.(docx?|md|txt|pages|rtf)$/i,'Document','<path d="M4 1.5h5l3 3v10H4z"/><path d="M6 8h4M6 10.5h4"/>'],[/calendar|event/i,'Event','<rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/>'],
@@ -627,49 +763,32 @@
     let host='';try{host=new URL(m.url).hostname.replace(/^www\./,'');}catch{}const file=m.url.startsWith('/');
     return {url:m.url,title:m.title||(file?m.url.split('/').pop():host)||m.url,sub:k[1]+' · '+(file?'In its folder':host),svg:k[2]};});
   const keyButton=(text,key,go)=>{const b=document.createElement('button');if(go)b.className='go';const label=document.createElement('span');label.textContent=text;const cap=document.createElement('kbd');cap.textContent=key;cap.setAttribute('aria-hidden','true');b.append(label,cap);b.setAttribute('aria-keyshortcuts',key==='↩'?'Enter':'Escape');return b;};
-  const agentCard=(row,done=false)=>{
-    moveClear();
+  const apiCost=u=>'≈'+(u<1?(u*100).toFixed(u<.1?2:1)+'¢':'$'+u.toFixed(2))+' at API prices';   // as Settings → Usage shows it
+  const agentCard=row=>{   // an agent finished: what it made, Later / Open
     $('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());
-    const d=document.createElement('div');d.className='ok offer agent-card'+(done?' done':'');d.dataset.agent=row.id;
+    const d=document.createElement('div');d.className='ok offer agent-card done';d.dataset.agent=row.id;
     d.innerHTML='<div class="eyebrow"><i></i><span></span></div><b></b><p></p><div class="made"></div><div class="agent-actions keys"></div>';
-    d.querySelector('.eyebrow span').textContent=done?(row.missingConnector?'Agent needs a connector':'Agent done'):'Background agent';
+    d.querySelector('.eyebrow span').textContent=row.missingConnector?'Agent needs a connector':'Agent done';
     d.querySelector('b').textContent=row.title;
-    d.querySelector('p').textContent=done?(row.summary||row.result||'Done'):row.brief;
-    const actions=d.querySelector('.agent-actions'),add=(text,data,go=false)=>{const b=keyButton(text,go?'↩':'esc',go);if(!go)b.dataset.esc='';b.onclick=()=>{if(data.agentStart){const r=d.getBoundingClientRect(),o=d.querySelector('.eyebrow i').getBoundingClientRect();d.querySelectorAll('button').forEach(b=>b.disabled=true);post({...data,cardRect:[r.x,r.y,r.width,r.height],orbRect:[o.x-10,o.y-10,o.width+20,o.height+20]});}else{post(data);d.remove();}fit();};actions.append(b);return b;};
+    inline(d.querySelector('p'),row.summary||row.result||'Done');
+    const actions=d.querySelector('.agent-actions'),add=(text,data,go=false)=>{const b=keyButton(text,go?'↩':'esc',go);if(!go)b.dataset.esc='';b.onclick=()=>{post(data);d.remove();fit();};actions.append(b);return b;};
     const made=d.querySelector('.made');
-    if(done)for(const m of agentMade(row)){const b=document.createElement('button');b.title=m.url;b.innerHTML='<i><svg viewBox="0 0 16 16">'+m.svg+'</svg></i><span><b></b><small></small></span>';b.querySelector('b').textContent=m.title;b.querySelector('small').textContent=m.sub;
+    for(const m of agentMade(row)){const b=document.createElement('button');b.title=m.url;b.innerHTML='<i><svg viewBox="0 0 16 16">'+m.svg+'</svg></i><span><b></b><small></small></span>';b.querySelector('b').textContent=m.title;b.querySelector('small').textContent=m.sub;
       b.onclick=()=>{post({agentOpen:row.id,target:m.url});d.remove();fit();};made.append(b);}
     if(!made.children.length)made.remove();
-    if(done){add('Later',{agentLater:row.id});if(row.missingConnector)add('Connect in Claude',{agentConnect:row.id},true);else add('Open',{agentOpen:row.id},true);
-      const cost=document.createElement('div');cost.className='usage';cost.textContent='Plan usage · $'+Number(row.cost||0).toFixed(4);d.append(cost);
-    }else{add('Not now',{agentCancel:row.id});add('Start',{agentStart:row.id},true);}
+    add('Later',{agentLater:row.id});if(row.missingConnector)add('Connect in Claude',{agentConnect:row.id},true);else add('Open',{agentOpen:row.id},true);
+    if(row.cost>0){const cost=document.createElement('div');cost.className='usage';cost.textContent=apiCost(row.cost);d.append(cost);}
     turn()?.querySelector('.elapsed')?.remove();   // the work moves to the agent; this box's timer has nothing to say
-    (turn()||$('thread')).append(d);working=false;clockStop();setState('breathing');status(done?'Done':'Ready to start');fit();
+    (turn()||$('thread')).append(d);working=false;clockStop();setState('breathing');status('Done');fit();
   };
   $('agents-pill').onclick=()=>post({agents:true});
+  document.addEventListener('click', e => { const a = e.target.closest?.('a[href]'); if (a) { e.preventDefault(); e.stopPropagation(); post({ link: a.href }); } }, true);   // links open in the browser, never in the box
   document.addEventListener('keydown',e=>{const b=defaultButton();if(b&&e.key==='Enter'&&!e.isComposing&&!e.target.closest('button,input,textarea,select,a,[contenteditable=true]')){e.preventDefault();e.stopPropagation();b.click();}},true);
   window.ui = {
     agentDefaultAction(){defaultButton()?.click();},
-    moveReady(){movable=true;moveNow();},
-    moveEnd(){moveClear();fit();},
-    moveOffer(){
-      movable=true;moveNow();
-      if(!working||$('thread').querySelector('.move-option'))return;
-      const d=document.createElement('div');d.className='ok offer move-option';
-      d.innerHTML='<b>Move this to an agent?</b><p>Keeps working in the background. You can keep typing.</p><div class="keys"></div><div class="prefs"><button class="off" data-v="auto">Always move</button><button class="off" data-v="never">Don’t ask again</button></div>';
-      const keep=document.createElement('button'),move=keyButton('Move','↩',true);keep.textContent='Keep here';d.querySelector('.keys').append(keep,move);
-      [keep,move].forEach((b,i)=>b.onclick=()=>{const r=d.getBoundingClientRect();post(i?{agentMove:true,cardRect:[r.x,r.y,r.width,r.height]}:{agentMoveNo:true});if(i){b.disabled=true;b.firstChild.textContent='Moving…';}else d.remove();fit();});
-      d.querySelectorAll('.prefs button').forEach(b=>b.onclick=()=>{   // the Long asks setting, right here; one line says where it lives
-        const auto=b.dataset.v==='auto',r=d.getBoundingClientRect();post(auto?{longAsks:'auto',agentMove:true,cardRect:[r.x,r.y,r.width,r.height]}:{longAsks:'never',agentMoveNo:true});
-        const note=document.createElement('div');note.className='tip';note.dataset.k='Saved';note.setAttribute('role','status');
-        note.textContent=(auto?'Long asks move by themselves.':'Won’t ask again.')+' Change it in Settings → Intelligence.';d.replaceWith(note);
-        setTimeout(()=>{note.classList.add('gone');setTimeout(()=>{note.remove();fit();},400);},9000);fit();
-      });
-      turn()?.append(d);fit();
-    },
-    movePending(){moveClear();turn()?.querySelectorAll('.pk,.ok:not(.agent-card)').forEach(e=>e.remove());status('Moving to an agent…',true);fit();},   // a waiting pick or Allow goes with the ask
+    movePending(){turn()?.querySelectorAll('.pk,.ok:not(.agent-card)').forEach(e=>e.remove());status('Moving to an agent…',true);fit();},   // a waiting pick or Allow goes with the ask
     moveSource(){const r=$('orb').getBoundingClientRect();return [r.x,r.y,r.width,r.height];},
-    moveFailed(){const b=$('thread').querySelector('.move-option .go');if(b){b.disabled=false;b.firstChild.textContent='Move';}const n=$('thread').querySelector('.move-now');if(n){n.disabled=false;n.firstChild.textContent='Move to agent';}status('Could not move',true);fit();},
+    moveFailed(){status('Could not move');fit();},
     paused(on=true){
       $('thread').querySelector('.paused')?.remove();
       if(!on){status('Atticus resumed');fit();return}
@@ -682,11 +801,11 @@
       const [setup,retry]=d.querySelectorAll('button');setup.onclick=()=>post({setup:true});retry.onclick=()=>{retry.disabled=true;status('Starting…',true);post({workerRetry:true})};
       (turn()||$('thread')).append(d);fit();
     },
-    agentOffer(row){agentCard(row);},
-    agentDone(row){agentCard(row,true);},
+    agentDone(row){agentCard(row);},
+    agentStep(row){agentStatus(row);},
     agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());status('Ready');clockStop();fit();},
-    agentStarted(){moveClear();$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;setState('breathing');status('Agent started');clockStop();fit();},   // the box stays; the card folds while its orb swims to the shelf
-    agentSteered(row){moveClear();working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');status('');clockStop();
+    agentStarted(row){$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;setState('breathing');agentLine=row?.id||'';row?agentStatus(row):status('Agent started');clockStop();fit();},   // the box stays; the card folds while its orb swims to the shelf
+    agentSteered(row){working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');status('');clockStop();
       const a=part('a');if(a){a.className='a agent-ack';a.replaceChildren();const text=document.createElement('span');text.textContent=typeof row==='string'?row:'Told the '+row.title+' agent: '+(row.steer?.text||row.steer?.ack||'Got it');a.dataset.answer=text.textContent;
         if(row.id){const c=document.createElement('canvas'),p=E.r('breathing',32);c.width=c.height=64;c.dataset.agent=row.id;c.style.filter='hue-rotate('+(parseInt(row.id.slice(0,4),16)%90-45)+'deg)';const ctx=c.getContext('2d');ctx.scale(2,2);E.p(ctx,E.M[p.mode](32,0,p.opts),true,null);a.append(c);}a.append(text);}fit();},
     agentCount(value){const count=typeof value==='number'?value:value.count,pill=$('agents-pill'),label=count+' agent'+(count===1?'':'s');pill.hidden=!count;pill.classList.toggle('attention',!!value.attention);
@@ -721,7 +840,7 @@
       bar.querySelector('.go').disabled = true; fit();
     },
     mini(m) { miniUpdate(m); },
-    point(value) {   // {active, marked, thumb}: pointing now, a mark is waiting, a picture of it; false: none
+    point(value) {   // {active, marked, picked, thumb}: pointing now, a mark is waiting, it is one of Atticus's marks, a picture of it; false: none
       const active = !!value?.active, marked = !!value?.marked, button = $('point'), img = bar.querySelector('img'), was = $('status').textContent;
       button.classList.toggle('active', active); button.classList.toggle('marked', marked);
       button.setAttribute('aria-pressed', active);
@@ -732,13 +851,15 @@
       bar.classList.toggle('has', marked);
       bar.querySelector('.hint').textContent = active && !marked ? 'Click, circle or scribble on anything, then ask' : '';
       if (active) { status('Pointing…'); comp(true, true); }   // the cursor waits in the box: draw, then type
-      else if (marked) status('Marked');
+      else if (marked) { status('Marked'); if (value?.picked) comp(true, true); }   // clicked a drawn mark: ask about it next
       else if (was === 'Pointing…' || was === 'Marked') status('');
       fit();
     },
     pointCoach() { coachPending = true; if ($('comp').classList.contains('open')) coachShow(); },
-    finished() { moveClear(); clockStop(); miniFinish(false); },
-    dictate(on) { document.body.classList.toggle('dictate', !!on); fit(false); },
+    finished() { clockStop(); miniFinish(false); },
+    dictate(on) { document.body.classList.toggle('dictate', !!on); document.body.classList.remove('locked', 'fold'); fit(false); },
+    fold() { document.body.classList.add('fold'); },   // the words landed: the line fades while the pill shrinks into its orb
+    locked(on) { document.body.classList.toggle('locked', !!on); },   // a double tap: hands-free until the next press
     visible(on) { visible = on; if (!on) { clockStop(); miniClear(); } fit(false); },
     limit(h) {
       const value = h + 'px';
@@ -747,9 +868,9 @@
       if ($('card').classList.contains('held')) $('card').style.minHeight = Math.min(h, parseFloat($('card').style.minHeight) || 0) + 'px';
       fit(false);
     },
-    reset() { moveClear(); miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
+    reset() { agentLine = ''; miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
-      moveClear(); miniClear(); clockStop();
+      agentLine = ''; miniClear(); clockStop();
       $('thread').querySelectorAll('.rewrite').forEach(e => e.remove());
       hover = false;
       listening = !keep;
@@ -761,28 +882,51 @@
       const d = document.createElement('div'); d.className = 'turn';
       d.innerHTML = '<div class="q live empty" title="Click to edit and ask again"></div><div class="steps"></div><div class="a" title="Click to copy this answer"></div>';
       if (!keep) d.firstChild.classList.add('hear');
+      const shot = !document.body.classList.contains('dictate') && markShot();
+      if (shot) {
+        const b = document.createElement('button'); b.className = 'shot'; b.title = 'What you marked'; b.setAttribute('aria-expanded', false);
+        b.innerHTML = '<img alt="What you marked">'; b.firstChild.src = shot;
+        b.onclick = e => { e.stopPropagation(); b.setAttribute('aria-expanded', b.classList.toggle('big')); follow(360); };
+        d.prepend(b);
+      }
       $('thread').append(d); atBottom = true;   // a new ask: back to following the newest
       setState('listening'); boost = 1; status('Listening…', true); fit();
     },
-    shortcut() {},   // just "Listening…": the user found "Release keys to send" too wordy
     level(v) { boost = 0.5 + Math.min(1, v) * 2.5; $('orb').style.transform = `scale(${1 + Math.min(1, v) * .1})`; },
-    words(w) { const q = part('q'); if (q) { q.classList.toggle('empty', !w.trim()); q.textContent = w; fit(); } },
+    words(w) {
+      const q = part('q'); if (!q) return;
+      q.classList.toggle('empty', !w.trim()); q.textContent = w;
+      const r = document.createRange(); r.selectNodeContents(q); q.classList.toggle('long', r.getBoundingClientRect().width > q.clientWidth);   // the pill's line overflows: fade its start
+      fit();
+    },
     think() {
       clockBegin();
       listening = false;
       working = true;
       boost = 1; $('orb').style.transform = ''; setState('solving');
-      part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); moveNow(); fit();
+      part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); fit();
     },
     finishing(label) {   // dictation released: the caret stops now; without a label (Verbatim) the shimmer waits 150 ms so a fast insert never flashes it
-      listening = false; boost = 1; $('orb').style.transform = '';
+      listening = false; boost = 1; $('orb').style.transform = ''; document.body.classList.remove('locked');
       const q = part('q'); q?.classList.remove('live'); clearTimeout(finishTimer);
       const on = () => { if (!q || q !== part('q')) return; q.classList.add('finishing'); setState('solving'); note(label); };
       if (label) on(); else finishTimer = setTimeout(on, 150);
     },
-    dictated({ text, ok }) {   // inserted / copied (ok: a checkmark) or one plain failure line
+    dictated({ text, ok, words }) {   // landed: no text, the pill just folds away; otherwise one short line (ok: a checkmark); words: unsaved, so they can be copied
       clearTimeout(finishTimer); listening = false; boost = 1; $('orb').style.transform = '';
       part('q')?.classList.remove('live', 'hear', 'finishing'); setState('breathing'); note(text, ok);
+      if (words) {
+        const button = document.createElement('button'); button.className = 'btn'; button.textContent = 'Copy';
+        button.onclick = () => { post({ copy: words }); button.textContent = 'Copied'; };
+        part('dn')?.append(' ', button); fit();
+      }
+    },
+    learned(word) {
+      part('q')?.remove();
+      note(`Learned '${word}'`, true);
+      const button = document.createElement('button'); button.className = 'btn'; button.textContent = 'Undo';
+      button.onclick = () => { button.disabled = true; post({ learnedUndo: true }); };
+      part('dn')?.append(' ', button); fit();
     },
     line(l) {
       const tag = l[0], s = l.slice(2);
@@ -827,14 +971,14 @@
     },
     msg(s) {
       if (document.body.classList.contains('dictate')) return window.ui.dictated({ text: s });   // its status line and answer are hidden
-      moveClear(); miniFinish(false); clockStop();
+      miniFinish(false); clockStop();
       listening = false; working = false; settle(); part('q')?.classList.remove('live'); setState('breathing'); status('');
       if (part('q')?.classList.contains('empty')) { turn().remove(); status(s); }
       else { const a = part('a'); if (a) { a.className = 'a cancel'; a.textContent = s; } }
       fit();
     },
     stopped(s) {   // Esc or the hotkey cut it off
-      moveClear(); miniClear(); clockStop();
+      miniClear(); clockStop();
       listening = false;
       working = false;
       $('thread').querySelectorAll('.ok, .pk, .rewrite').forEach(e => e.remove());
@@ -854,13 +998,13 @@
     compose(on) { comp(on, on); },
     draft(t) { $('ask').value = t; comp(true, true); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('.ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .move-now, #pointbar button');
+      const el = document.elementFromPoint(x, y), b = el?.closest('a[href], .ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .shot, #pointbar button, .redo, #agents-pill, .dn button');
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
       if (el?.closest('#mode')) { status('Safe mode on · Settings turns it off'); return post({ safe: true }); }
       if ($('comp').classList.contains('pick')) pickRow(false);   // a click anywhere else closes the model row
-      if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); return fit(); }   // its own "Turn off": no more tips
+      if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); status('Tips off · The menu bar turns them back on'); return fit(); }   // its own "Turn off": no more tips
       if (el?.closest('.tip.kofi')) post({ kofi: true });   // the support line opens Ko-fi, then goes like any tip
       if (el?.closest('.tip')) { el.closest('.tip').remove(); return fit(); }   // click a tip: it goes
       const on = el?.closest('.a:not(.stopped):not(.cancel)'), q = el?.closest('.q:not(.empty)');
@@ -882,23 +1026,20 @@
       const d = $('thread').querySelector('.ok.retry:not(.gone)');
       if (!d) return false;
       const t = text.toLowerCase().replace(/[.!?,]+/g, ' ').replace(/^\s*(?:um+|uh+|okay|ok|yeah|so)\s+/, '').replace(/\s+please\s*$/, '').replace(/\s+/g, ' ').trim();   // "Retry, please." = retry
-      const value = (['retry', 'try again'].includes(t) || t==='yes'&&!d.querySelector('[data-answer="y"]')) ? 'r' : ['try sonnet', 'sonnet', 'yes'].includes(t) ? 'y' : ['not now', 'no', 'cancel'].includes(t) ? 'n' : '';
+      const value = ['retry', 'try again', 'yes'].includes(t) ? 'r' : ['not now', 'no', 'cancel'].includes(t) ? 'n' : '';
       const button=d.querySelector(`[data-answer="${value}"]`);
       if(button){$('ask').value='';button.click();}
-      else { $('ask').value = text; status(d.querySelector('[data-answer="y"]') ? 'Say “Retry”, “Try Sonnet” or “Not now”' : 'Say “Retry” or “Not now”', true); }   // heard, but not an answer: name only choices the card offers
+      else { $('ask').value = text; status('Say “Retry” or “Not now”', true); }   // heard, but not an answer
       return true;
     },
     notice(s) { status(s, true); },
-    ask([q, cmd, off, retry, details]) {   // off: a setting this card can turn off
-      $('thread').querySelectorAll('.ok:not(.move-option)').forEach(e => e.remove()); unpin();
+    ask([q, cmd, retry, details]) {   // retry: a failure card (Not now / Retry) instead of an approval
+      $('thread').querySelectorAll('.ok').forEach(e => e.remove()); unpin();
       const d = document.createElement('div'); d.className = 'ok';
-      if (off || retry) {
-        d.className = 'ok offer' + (retry ? ' retry' : '');
-        d.innerHTML = '<b></b><p></p><div><button data-answer="n">Not now</button>' +
-          (retry ? '<button data-answer="r"' + (off ? '' : ' class="go"') + '>Retry</button>' : '') +
-          (off ? '<button data-answer="y" class="go">' + (retry ? 'Try Sonnet' : 'Yes') + '</button>' : '') + '</div>' +
-          (details ? '<button class="details">Copy Details</button>' : '') +
-          (off ? '<button class="off">Don’t ask again</button>' : '');
+      if (retry) {
+        d.className = 'ok offer retry';
+        d.innerHTML = '<b></b><p></p><div><button data-answer="n">Not now</button><button data-answer="r" class="go">Retry</button></div>' +
+          (details ? '<button class="details">Copy Details</button>' : '');
         d.querySelector('p').textContent = cmd;
       } else {
         d.innerHTML = '<b></b><code></code><div><button>Don’t Allow</button><button class="go">Allow</button></div>';
@@ -911,8 +1052,6 @@
       }
       d.querySelector('b').textContent = q;
       d.onanimationend = () => d.style.animation = 'none';   // so the shrink below can transition
-      const offBtn = d.querySelector('.off');
-      if (offBtn) offBtn.onclick = e => { e.stopPropagation(); post({ off }); d.querySelectorAll(':scope > div > button')[0].click(); };   // off, and no to this one
       const detailsBtn = d.querySelector('.details');
       if (detailsBtn) detailsBtn.onclick = e => { e.stopPropagation(); post({ copy: details }); };
       d.querySelectorAll(':scope > div > button').forEach((b, i) => b.onclick = e => {

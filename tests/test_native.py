@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def harness(root):
     source = (ROOT / 'Atticus.swift').read_text()
     methods = source[source.index('    func cancelFast()'):source.index('    func stop()', source.index('    func cancelFast()'))]
-    key = source[source.index('func transcriptKey('):source.index('// atticus.py with')]
+    key = source[source.index('func transcriptKey('):source.index('final class SpeechInputs')]
     worker = root / 'worker.py'
     worker.write_text('''import os, sys, time
 from pathlib import Path
@@ -44,6 +44,7 @@ var delay = "0.1", flood = "0", bench = false
 let root = CommandLine.arguments[1], repo = CommandLine.arguments[2], python = CommandLine.arguments[3]
 struct Prefs { static var live = true; static func bool(_ k: String) -> Bool { k != "live" || live } }
 final class Engine { var isRunning = true }
+final class DrawingStub { var hasInput = false }
 func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     let p = Process(); p.executableURL = URL(fileURLWithPath: python)
     p.arguments = [root + "/worker.py", repo] + args
@@ -58,6 +59,7 @@ final class Harness {
     var consumed = 0, fastBusy = false, liveRevised = false, consumedText = "", targetScreen = "Fixture display", mine = "Notes", text = "open Spotify"
     var fastProc: Process?, proc: Process?, did: [String] = []
     var busy = false, ahead = ""
+    let drawing = DrawingStub()
     let engine = Engine()
     func words() -> [Substring] { text.split(separator: " ") }
     func js(_ name: String, _ text: String) {}
@@ -72,6 +74,11 @@ func waitAction() {
     let end = Date().addingTimeInterval(3)
     while !FileManager.default.fileExists(atPath: marker) && Date() < end { pump(0.005) }
     precondition(FileManager.default.fileExists(atPath: marker), "worker never acted")
+}
+func waitIdle(_ h: Harness) {
+    let end = Date().addingTimeInterval(3)
+    while h.fastBusy && Date() < end { pump(0.005) }
+    precondition(!h.fastBusy, "worker never drained")
 }
 if CommandLine.arguments.contains("--benchmark") {
     bench = true
@@ -103,27 +110,54 @@ if CommandLine.arguments.contains("--benchmark") {
 } else {
     clear(); delay = "0.4"
     let h = Harness(); h.tryFast(); precondition(h.fastBusy)
-    h.cancelFast(); h.text = "new request"; delay = "0.05"; h.tryFast(); pump(0.6)
+    h.cancelFast(); h.text = "new request"; delay = "0.05"; h.tryFast(); waitIdle(h)
     precondition(h.did == ["new request"] && !h.fastBusy, "cancelled result contaminated new request")
     clear(); let cancelled = Harness(); cancelled.tryFast(); cancelled.cancelFast(); pump(0.2)
     precondition(!FileManager.default.fileExists(atPath: marker), "action survived cancellation")
-    let revised = Harness(); revised.tryFast(); revised.text = "open Notes"; pump(0.2)
+    let revised = Harness(); revised.tryFast(); revised.text = "open Notes"; waitIdle(revised)
     precondition(revised.liveRevised, "revised transcript was consumed")
     let finalizing = Harness(); finalizing.busy = true; finalizing.ahead = "old words"; finalizing.engine.isRunning = false
     finalizing.dropAhead(); precondition(finalizing.busy && finalizing.ahead.isEmpty, "final transcript correction abandoned request")
     let disabled = Harness(); Prefs.live = false; disabled.tryFast(); precondition(disabled.fastProc == nil)
-    Prefs.live = true; flood = "1000000"; let large = Harness(); large.tryFast(); pump(0.4)
+    Prefs.live = true; flood = "1000000"; let large = Harness(); large.tryFast(); waitIdle(large)
     precondition(!large.fastBusy, "full stdout blocked worker")
     print("native live-worker regressions ok")
 }
 ''')
     binary = root / 'native'
-    subprocess.run(['swiftc', '-O', str(swift), '-o', str(binary)], check=True, capture_output=True, text=True)
+    compiled = subprocess.run(['swiftc', '-O', str(swift), '-o', str(binary)], capture_output=True, text=True)
+    if compiled.returncode:
+        raise AssertionError(compiled.stderr)
     return [str(binary), str(root), str(ROOT), sys.executable]
 
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift worker regression')
 class NativeTests(unittest.TestCase):
+    def test_memory_receipts_fall_through_when_drawing_parser_rejects_them(self):
+        source = (ROOT/'Atticus.swift').read_text()
+        branch = source.split('                    if line.hasPrefix("✎ ") {', 1)[1].split('                    if line.hasPrefix("@ ")', 1)[0]
+        out = run_swift(self, '''import Foundation
+final class Prefs { static func bool(_ key: String) -> Bool { true } }
+final class Drawing {
+    func receive(_ data: Data) -> Bool { String(decoding: data, as: UTF8.self).contains("steps") }
+}
+final class Harness {
+    let drawing = Drawing()
+    func shush() { print("guide") }
+    func js(_ call: String, _ value: String) { print(value) }
+    func feed(_ lines: [String]) {
+        var guided = false
+        for line in lines {
+            if line.hasPrefix("✎ ") {
+''' + branch + '''
+        }
+        print(guided)
+    }
+}
+Harness().feed(["✎ {\\"remembered\\":[\\"Use concise answers\\"]}", "✎ {\\"steps\\":[]}"])
+''')
+        self.assertEqual(out.splitlines(), ['✎ {"remembered":["Use concise answers"]}', 'guide', 'true'])
+
     def test_page_calls_skip_values_json_cannot_hold(self):
         source = (ROOT / 'Atticus.swift').read_text()
         bridge = source[source.index('// Call a page function'):source.index('// Load ui/')]
@@ -212,7 +246,7 @@ precondition(MiniScreen.restored == nil && h.userApp == temporary, "front mode p
             result = subprocess.run([str(binary)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_focus_guard_covers_background_agents_and_fast_work(self):
+    def test_focus_guard_covers_main_asks_and_fast_work(self):
         source = (ROOT / 'Atticus.swift').read_text()
         policy = source[source.index('    static func focusGuardActive'):source.index('    let recent', source.index('    static func focusGuardActive'))]
         swift = '''import Foundation
@@ -220,14 +254,12 @@ final class Harness {
 ''' + policy + '''
 }
 let now = Date()
-precondition(!Harness.focusGuardActive(busy:false, recording:false, agents:false, now:now, until:.distantPast, focusFree:false))
-precondition(Harness.focusGuardActive(busy:true, recording:false, agents:false, now:now, until:.distantPast, focusFree:false))
-precondition(Harness.focusGuardActive(busy:false, recording:true, agents:false, now:now, until:.distantPast, focusFree:false))
-precondition(Harness.focusGuardActive(busy:false, recording:false, agents:false, now:now, until:.distantFuture, focusFree:false))
-precondition(!Harness.focusGuardActive(busy:true, recording:false, agents:false, now:now, until:.distantPast, focusFree:true))
-precondition(Harness.focusGuardActive(busy:false, recording:false, agents:true, now:now, until:.distantPast, focusFree:true))
-precondition(!Harness.focusGuardActive(busy:false, recording:false, agents:true, now:now, until:.distantPast, focusFree:true, workInFront:true))
-precondition(!Harness.focusGuardActive(busy:true, recording:false, agents:true, now:now, until:.distantPast, focusFree:false, workInFront:true))   // In front: every app may come forward
+precondition(!Harness.focusGuardActive(busy:false, recording:false, now:now, until:.distantPast, focusFree:false))
+precondition(Harness.focusGuardActive(busy:true, recording:false, now:now, until:.distantPast, focusFree:false))
+precondition(Harness.focusGuardActive(busy:false, recording:true, now:now, until:.distantPast, focusFree:false))
+precondition(Harness.focusGuardActive(busy:false, recording:false, now:now, until:.distantFuture, focusFree:false))
+precondition(!Harness.focusGuardActive(busy:true, recording:false, now:now, until:.distantPast, focusFree:true))
+precondition(!Harness.focusGuardActive(busy:true, recording:false, now:now, until:.distantPast, focusFree:false, workInFront:true))   // In front: every app may come forward
 precondition(!Harness.isUserApp(now:now, allowUntil:now.addingTimeInterval(3), userSwitch:.distantPast))   // hands raised Chrome
 precondition(Harness.isUserApp(now:now, allowUntil:now.addingTimeInterval(3), userSwitch:now))   // the user clicked during the raise
 precondition(Harness.isUserApp(now:now, allowUntil:.distantPast, userSwitch:.distantPast))
@@ -270,13 +302,21 @@ print("caret safety ok")
         self.assertIn('var data = try JSONSerialization.data(withJSONObject:request)', run)
         self.assertLess(run.index('try "go".write(toFile: commit'), run.index('var data = try JSONSerialization.data(withJSONObject:request)'))
 
+    def test_hidden_followups_keep_failed_and_successful_turns_for_five_minutes(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(', source.index('    func start(dictate: Bool)'))]
+        self.assertIn('Date().timeIntervalSince(lastDone) > 300', start)
+        spawn = source.index('    func spawn()')
+        completion = source[source.index('p.terminationHandler =', spawn):source.index('\n        do { try p.run()', spawn)]
+        self.assertLess(completion.index('self.lastDone = Date()'), completion.index('if !self.answer.isEmpty'))
+
     def test_final_words_after_live_action_preserve_raw_remainder(self):
         source = (ROOT / 'Atticus.swift').read_text()
         finish = source[source.index('    func finish()', source.index('    func typed(')):source.index('    // atticus.py --wait, started')]
         swift = '''import Foundation
 final class Engine { var isRunning = false }
 final class Panel { func makeKey() {}; func makeFirstResponder(_ v: Int) {} }
-final class DrawingStub { var active = false, advances = 0; func advance() { advances += 1 } }
+final class DrawingStub { var active = false, advances = 0; func next() { advances += 1 } }
 final class Harness {
     var drawingReply = false; let drawing = DrawingStub()
     func typed(_ text: String) { request = text }
@@ -460,6 +500,7 @@ print("calendar/update safety ok")
     def test_shortcut_states_and_recording_limit(self):
         source = (ROOT / 'Atticus.swift').read_text()
         self.assertIn('"input": "voice", "talkMode": "hold"',source)
+        self.assertIn('if !dictating && held > 60', source)
         start=source[source.index('    func start()',source.index('final class App')):source.index('        quietAudio.begin',source.index('    func start()',source.index('final class App')))]
         self.assertIn('if !replying && Prefs.str("input") == "type" && !clickTalk',start)
         self.assertIn('AVCaptureDevice.authorizationStatus(for: .audio) == .authorized',start)
@@ -468,7 +509,7 @@ print("calendar/update safety ok")
         methods += source[source.index('    func stopOfferInput()'):source.index('    func dismiss()')]
         methods += source[source.index('    func escape()'):source.index('    func hush()')]
         at = source.index('    func stop()', source.index('final class App'))   # the App's stop, not the Mic class's
-        stop = source[at:source.index('        let input = feed', at)]
+        stop = source[at:source.index('        let inputs = speechInputs', at)]
         swift = """import Foundation
 struct Prefs { static var paused = false, toggle = false; static func bool(_ k: String) -> Bool { paused } }
 final class MeetingStub { var running = false, focuses = 0; func focus() { focuses += 1 } }
@@ -477,27 +518,30 @@ final class Node { var removed=false; func removeTap(onBus: Int) {removed=true} 
 final class Engine { var isRunning = false, stopped = false; func stop() {isRunning=false; stopped=true} }
 final class Input { var cancelled=false; func finish() {cancelled=true}; func cancel() {cancelled=true} }
 final class Analyzer { func cancelAndFinishNow() async {} }
+final class SpeechInputs { var finished=false; func finishAll() {finished=true} }
 final class QuietAudio { func end() {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
-final class DrawingStub { var active = false, hasInput = false; func clear() { hasInput = false } }
+final class DrawingStub { var active = false, hasInput = false; func clear() { hasInput = false }; func clearInput() { hasInput = false } }
 final class Harness {
     var drawingReply = false; let drawing = DrawingStub()
     let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
     var retryOffer=false,offerText:String?,askFile="fixture-answer",agentCard="",listenID=0,stops=0
-    var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?
+    var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?,speechInputs:SpeechInputs?=SpeechInputs()
+    var nextFeed:Input?,nextReading:Input?,nextAnalyzer:Analyzer?,nextSpeechInputID:Int?,nextSpeechSegment=0
     var shortcutDown = false, toggleTalk = false, clickTalk = false, busy = false, speaking = false
-    var dictateShortcutDown = false, dictating = false
+    var dictateShortcutDown = false, dictating = false, dictatePressed = Date.distantPast, dictateTap: DispatchWorkItem?
     var events: [String] = [], text = "hello", began = Date(), wasUp = false, fresh = false, web = 0
     func start() { events.append("start"); engine.isRunning = true; toggleTalk = Prefs.toggle }
-    func startDictation() { events.append("dictate"); engine.isRunning = true; dictating = true }
+    func startDictation() { events.append("dictate"); engine.isRunning = true; dictating = true; toggleTalk = false }
+    func dictationDeliveryFailed(_ value: String) { events.append("copied"); busy = false }
     func cancel() { events.append("cancel"); hush(); shush() }
     func dismiss() { events.append("dismiss"); hush() }
     func shush() -> Bool { let was = speaking; speaking = false; if was { events.append("quiet") }; return was }
-    func hush() { events.append("hush"); engine.isRunning = false; busy = false; toggleTalk = false }
+    func hush() { events.append("hush"); engine.isRunning = false; busy = false; toggleTalk = false; listenID += 1 }
     func close(clear: Bool) { events.append("close"); hush() }
     func review(_ text: String) { events.append("review"); hush() }
     func cue(_ text: String) {}
-    func js(_ f: String, _ text: Any? = nil) { if f == "agentEscape" { events.append(f) } }
+    func js(_ f: String, _ text: Any? = nil) { if f == "agentEscape" || f == "locked" { events.append(f) } }
     func hide(after: Double) {}
     var pausedNotice = Date.distantPast; func show() {}
 """ + methods + stop + '        events.append("send"); engine.isRunning = false; busy = true; toggleTalk = false\n    }\n' + """}
@@ -526,10 +570,27 @@ reply.stopOfferInput()
 precondition(reply.engine.stopped, "reply mic stayed open")
 let failedStart=Harness();failedStart.retryOffer=true;failedStart.busy=true;failedStart.stopOfferInput();precondition(failedStart.engine.stopped && failedStart.busy && failedStart.askFile=="fixture-answer", "failed engine start left its tap or lost its worker")
 precondition(!reply.engine.isRunning && reply.text=="Original task" && reply.offerText==nil && reply.busy && reply.retryOffer && reply.askFile=="fixture-answer", "stopping reply input lost the waiting task")
-precondition(reply.feed!.cancelled && reply.reading!.cancelled, "reply input stayed alive")
+precondition(reply.speechInputs!.finished && reply.reading!.cancelled, "reply input stayed alive")
 reply.shortcut(true);precondition(reply.events==["start"], "retry shortcut cancelled its worker")
 reply.offerText="Original task";reply.text="partial retry";reply.recordingLimit()
 precondition(reply.busy && reply.askFile=="fixture-answer" && reply.text=="Original task" && !reply.events.contains("send"), "reply recording limit sent or cancelled the request")
+Prefs.toggle = true   // the main shortcut's toggle setting must not change dictation
+let pump = { (s: Double) in RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+let locked = Harness(); locked.dictateShortcut(true); locked.dictateShortcut(true)
+precondition(locked.events == ["dictate"], "dictation repeated on held key")
+locked.dictateShortcut(false); precondition(locked.engine.isRunning && locked.events == ["dictate"], "a quick tap sent at once instead of waiting for a second tap")
+locked.dictateShortcut(true); precondition(locked.toggleTalk && locked.engine.isRunning && locked.events == ["dictate", "locked"], "double tap did not lock")
+locked.dictateShortcut(false); pump(0.4); precondition(locked.engine.isRunning, "releasing the second tap ended locked dictation")
+locked.dictateShortcut(true); precondition(locked.events == ["dictate", "locked", "send"], "a press did not finish locked dictation")
+let tapped = Harness(); tapped.dictateShortcut(true); tapped.dictateShortcut(false); pump(0.4)
+precondition(tapped.events == ["dictate", "send"] && !tapped.engine.isRunning, "a single quick tap kept listening")
+let dictatedHold = Harness(); dictatedHold.dictateShortcut(true); dictatedHold.dictatePressed = .distantPast; dictatedHold.dictateShortcut(false)
+precondition(dictatedHold.events == ["dictate", "send"], "dictation hold release did not send at once")
+let tapEscape = Harness(); tapEscape.dictateShortcut(true); tapEscape.dictateShortcut(false); tapEscape.escape(); pump(0.4)
+precondition(!tapEscape.events.contains("send") && !tapEscape.engine.isRunning, "Esc during the double-tap wait still inserted")
+let lockedEscape = Harness(); lockedEscape.dictateShortcut(true); lockedEscape.dictateShortcut(false); lockedEscape.dictateShortcut(true); lockedEscape.escape()
+precondition(!lockedEscape.events.contains("send") && !lockedEscape.engine.isRunning, "Esc did not cancel locked dictation")
+Prefs.toggle = false
 print("shortcut regressions ok")
 """
         with tempfile.TemporaryDirectory() as path:

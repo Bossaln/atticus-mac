@@ -52,22 +52,23 @@ print("special shortcuts stay distinct")
         self.assertIn('"hotkeyTaken": !hotkeyRegistered', push)
         self.assertIn('"dictateHotkeyTaken": !Prefs.str("dictateHotkeyLabel").isEmpty && !dictateHotkeyRegistered', push)
 
-    def test_teaching_caption_scrolls_to_the_latest_instruction(self):
-        caption = self.swift[self.swift.index("final class DrawingCaptionView"):self.swift.index("final class ScreenDrawing")]
-        self.assertIn("NSScrollView", caption)
-        self.assertIn("scrollToEndOfDocument", caption)
-        harness = "import Cocoa\n" + caption + r'''
-let words = String(repeating: "A readable instruction needs enough words to wrap. ", count: 16)
-let view = DrawingCaptionView(frame: CGRect(x: 0, y: 0, width: 480, height: 300), step: 12, total: 12,
-                              captions: Array(repeating: words, count: 12))
+    def test_long_step_callout_starts_at_its_first_words(self):
+        callout = self.swift[self.swift.index("final class DrawingCalloutView"):self.swift.index("final class ScreenDrawing")]
+        self.assertIn("NSScrollView", callout)
+        self.assertNotIn("scrollToEndOfDocument", callout)   # one step per callout: read it from the top
+        harness = "import Cocoa\n" + callout + r'''
+let words = String(repeating: "A readable instruction needs enough words to wrap. ", count: 20)
+let size = DrawingCalloutView.size(words, total: 12)
+let view = DrawingCalloutView(frame: CGRect(x: 0, y: 0, width: size.width + 24, height: size.height + 24),
+                              card: CGRect(x: 12, y: 12, width: size.width, height: size.height), side: nil, tip: 0, text: words, step: 12, total: 12)
 RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 let scroll = view.subviews.compactMap { $0 as? NSScrollView }.first!
 let body = scroll.documentView as! NSTextView
 precondition(body.frame.height > scroll.contentSize.height)
-precondition(scroll.documentVisibleRect.maxY >= body.frame.maxY - 1)
-print("latest caption remains reachable")
+precondition(scroll.documentVisibleRect.minY <= 1)
+print("long step stays reachable")
 '''
-        self.assertIn("latest caption remains reachable", run_swift(self, harness))
+        self.assertIn("long step stays reachable", run_swift(self, harness))
 
     def test_agent_rename_cancel_feedback_and_delete_confirmation(self):
         rename = self.agents[self.agents.index("const saved="):self.agents.index(" const head=", self.agents.index("const saved="))]
@@ -79,8 +80,7 @@ print("latest caption remains reachable")
 
     def test_retry_voice_hint_only_names_visible_answers(self):
         respond = self.overlay[self.overlay.index("    respond(text)"):self.overlay.index("    ask([")]
-        self.assertNotIn("status('Say “Retry”, “Try Sonnet” or “Not now”'", respond)
-        self.assertIn('d.querySelector(\'[data-answer="y"]\')', respond)
+        self.assertNotIn("Sonnet", respond)
         if not shutil.which("node"):
             self.skipTest("Node runs the retry-card behavior check")
         script = r'''
@@ -103,7 +103,7 @@ console.log(heard);
         start = self.swift[self.swift.index("    func startPointing()"):self.swift.index("    func finishPointing()")]
         self.assertIn('js("notice","Couldn’t capture that mark.")', finish)
         self.assertNotIn('js("msg","Couldn’t capture that mark.")', finish)
-        self.assertIn("if drawing.active { drawing.clear() }", start)
+        self.assertNotIn("drawing.clear()", start)   # pointing keeps a guide up: its marks can be clicked and asked about
         self.assertIn("notice(s)", self.overlay)
 
     def test_settings_describe_all_shortcuts_and_remove_dead_pointer_toggle(self):

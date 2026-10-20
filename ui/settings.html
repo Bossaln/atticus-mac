@@ -3,27 +3,28 @@
 <!-- Atticus settings. Atticus.swift calls st.load({prefs, state}) and gets {do:'set', k, v} and other actions back. -->
 <style>
   :root {
-    --fg: #1d1d1f; --fg2: #6e6e73; --fg3: #8e8e93; --card: rgba(255,255,255,.66); --line: rgba(0,0,0,.08);
+    --fg: #1d1d1f; --fg2: #6e6e73; --fg3: #6e6e73; --card: #fff; --bg: #f5f5f7; --ctl: #fff; --well: rgba(0,0,0,.045); --line: rgba(0,0,0,.08);
     --side: rgba(255,255,255,.28); --sel: rgba(0,0,0,.06); --accent: #0a84ff; --green: #34c759; --track: rgba(120,120,128,.24);
+    --ok-text: #1f7a35; --warn: #c93400; --danger: #d70015;   /* text on white: the light system colours, ≥4.5:1 */
     --on: #fff; --pop: rgba(255,255,255,.96); --ease: cubic-bezier(.4,0,.2,1); --out: cubic-bezier(.16,1,.3,1); color-scheme: light dark;
+    --hover: color-mix(in srgb, var(--fg) 4%, var(--card)); --lift: .96;   /* --hover is opaque: floating row actions mask text with it */
   }
   @media (prefers-color-scheme: dark) { :root {
-    --fg: #f5f5f7; --fg2: #a1a1a6; --card: rgba(255,255,255,.055); --line: rgba(255,255,255,.08);
-    --side: rgba(0,0,0,.12); --sel: rgba(255,255,255,.08); --track: rgba(120,120,128,.36); --on: #636366; --pop: rgba(44,44,46,.96);
+    --fg: #f5f5f7; --fg2: #a1a1a6; --fg3: #98989d; --ok-text: #34c759; --warn: #ff9f0a; --danger: #ff453a; --card: #2a2a2c; --bg: #1e1e20; --ctl: rgba(255,255,255,.1); --well: rgba(255,255,255,.07); --line: rgba(255,255,255,.08);
+    --side: rgba(0,0,0,.12); --sel: rgba(255,255,255,.08); --track: rgba(120,120,128,.36); --on: #636366; --pop: rgba(44,44,46,.96); --lift: 1.2;
   } }
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
     font: 13px -apple-system, system-ui, sans-serif; color: var(--fg); -webkit-font-smoothing: antialiased; }
   body { display: flex; }
 
-  [hidden] { display: none !important; }
-  #meetingq,#askq { width:100%;box-sizing:border-box;background:var(--card);color:var(--fg);border:0;border-radius:9px;padding:10px 12px;font:13px system-ui;box-shadow:inset 0 0 0 .5px var(--line);outline:none;-webkit-user-select:text; }
-  #meetingq:focus,#askq:focus { box-shadow:inset 0 0 0 1px var(--accent); }
+  #meetingq,#askq,#dictationsearch { width:100%;height:32px;box-sizing:border-box;background:var(--ctl);color:var(--fg);border:0;border-radius:8px;padding:0 12px;font:13px system-ui;box-shadow:inset 0 0 0 .5px var(--line),0 1px 1px rgba(0,0,0,.04);outline:none;-webkit-user-select:text; }
+  #meetingq:focus,#askq:focus,#dictationsearch:focus { box-shadow:inset 0 0 0 .5px var(--line),0 0 0 3px rgba(10,132,255,.35); }
   #meetingcount { margin:12px 2px 8px;font-size:11px;color:var(--fg3); }
   #meetinglist { overflow:hidden; }
   .meetingrow { all:unset;display:block;box-sizing:border-box;width:100%;padding:13px 14px;cursor:pointer;transition:background .15s; }
   .meetingrow + .meetingrow { box-shadow:inset 0 .5px 0 var(--line); }
   .meetingrow:hover { background:var(--sel); }
-  .meetingrow:focus-visible,.meetingrow.selected { background:rgba(10,132,255,.12);outline:none;box-shadow:inset 2px 0 0 var(--accent); }
+  .meetingrow:focus-visible,#meetingq:focus ~ #meetinglist .meetingrow.selected { background:rgba(10,132,255,.12);outline:none;box-shadow:inset 2px 0 0 var(--accent); }   /* the row Return opens, only while you browse */
   .meetingrow b { display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
   .meetingrow small { display:block;margin:4px 0;font-size:11px;color:var(--fg3);font-variant-numeric:tabular-nums; }
   .meetingrow span { display:block;font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -48,11 +49,12 @@
 
   /* sidebar */
   nav { width: 208px; flex: none; padding: 46px 10px 14px; box-sizing: border-box; background: var(--side);
-    box-shadow: inset -.5px 0 0 var(--line); display: flex; flex-direction: column; gap: 2px; }
+    box-shadow: inset -.5px 0 0 var(--line); display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  nav > * { flex-shrink: 0; }   /* a short window scrolls the sidebar instead of squashing it */
   .me { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
   .me img { width: 38px; height: 38px; }
   .me b { display: block; font: 600 14px system-ui; } .me span { color: var(--fg3); font-size: 11px; }
-  nav button { all: unset; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px;
+  nav button { all: unset; flex-shrink: 0; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px;
     font-size: 13px; color: var(--fg); transition: background .15s; }
   nav button:hover { background: var(--sel); }
   nav button.on { background: var(--accent); color: #fff; }
@@ -60,25 +62,33 @@
   .ni { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; flex: none; }
   .ni svg { width: 14px; height: 14px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
   nav .spacer { flex: 1; }
-  #agentsnav { margin-bottom: 10px; } #agentsnav .count { margin-left: auto; } #agentsnav.on .count { color: rgba(255,255,255,.8); }
+  #dictationnav { margin-bottom: 10px; } #agentsnav .count { margin-left: auto; } #agentsnav.on .count { color: rgba(255,255,255,.8); }
   nav .ver { color: var(--fg3); font-size: 11px; padding: 0 8px; }
 
   /* content */
-  main { flex: 1; overflow-y: auto; padding: 40px 34px 34px; box-sizing: border-box; }
-  section { display: none; max-width: 520px; margin: 0 auto; }
+  main { flex: 1; overflow-y: auto; padding: 40px 34px 40px; box-sizing: border-box; background: var(--bg); box-shadow: inset .5px 0 0 var(--line); }
+  section { display: none; max-width: 600px; margin: 0 auto; }
   section.on { display: block; animation: rise .35s var(--out); }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
   h1 { font: 700 24px/1.15 system-ui; letter-spacing: -.02em; margin: 0 0 4px; }
-  p.lede { color: var(--fg2); margin: 0 0 20px; line-height: 1.45; }
-  h3 { font: 600 11px system-ui; text-transform: uppercase; letter-spacing: .04em; color: var(--fg3); margin: 22px 4px 7px; }
+  h1:has(> .ni) { display: flex; align-items: center; gap: 11px; margin-bottom: 8px; }   /* the page's sidebar icon, larger, beside its title */
+  h1 .ni { width: 32px; height: 32px; border-radius: 8px; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.08); } h1 .ni svg { width: 19px; height: 19px; }
+  p.lede { color: var(--fg2); margin: 0 0 22px; line-height: 1.45; }
+  h3 { font: 600 13px system-ui; letter-spacing: -.005em; color: var(--fg); margin: 30px 2px 9px; }
 
-  .group { background: var(--card); border-radius: 11px; box-shadow: inset 0 0 0 .5px var(--line), 0 1px 2px rgba(0,0,0,.03); }
+  .group { background: var(--card); border-radius: 11px; box-shadow: inset 0 0 0 .5px var(--line), 0 1px 2px rgba(0,0,0,.04); }
+  div.group { overflow: hidden; }   /* a hovered first or last row keeps the card's round corners */
+  .group:has(> .empty:only-child) { background: none; box-shadow: none; }   /* an empty list is a quiet line, not a box */
+  .group > .empty:only-child { padding: 2px 2px 0; font-size: 12px; }
   .row { display: flex; align-items: center; gap: 14px; min-height: 44px; padding: 8px 14px; box-sizing: border-box; }
   .row.now { background: rgba(10,132,255,.1); } .row.now .btn { pointer-events: none; opacity: .5; }
-  .row { transition: opacity .2s var(--ease); } .row.dim { opacity: .45; }
+  .row { transition: opacity .2s var(--ease), background-color .15s var(--ease); } .row.dim { opacity: .45; }
+  .row:has(> .x):hover { background: var(--hover); }   /* list items with actions */
   .row + .row { box-shadow: inset 0 .5px 0 var(--line); }
   .row .t { flex: 1; min-width: 0; } .row .t b { display: block; font-weight: 500; }
   .row .t span { display: block; color: var(--fg3); font-size: 11.5px; margin-top: 2px; line-height: 1.35; }
+  .info { display: inline-grid; place-items: center; width: 11px; height: 11px; margin-left: 2px; vertical-align: -1px; border-radius: 50%;
+    box-shadow: inset 0 0 0 1px currentColor; font: 600 8px/1 -apple-system, system-ui; font-style: normal; cursor: help; }   /* the rare detail, on hover */
 
   /* switch */
   .sw { position: relative; width: 38px; height: 22px; flex: none; }
@@ -97,7 +107,7 @@
   .seg button:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
   .shortcut + .group { margin-top: 12px; }
 
-  select { font: 13px system-ui; color: var(--fg); background: var(--card); border: 0; border-radius: 6px; padding: 3px 6px;
+  select { font: 13px system-ui; color: var(--fg); background: var(--ctl); border: 0; border-radius: 6px; padding: 3px 6px;
     box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
   input[type=range] { width: 150px; accent-color: var(--accent); }
   .val { width: 44px; text-align: right; color: var(--fg2); font-variant-numeric: tabular-nums; }
@@ -112,7 +122,7 @@
   .caps .hint { color: var(--fg2); font-size: 14px; animation: blink 1.4s ease-in-out infinite; }
   @keyframes blink { 50% { opacity: .45; } }
   .shortcut .acts { display: flex; gap: 8px; align-items: center; }
-  .shortcut small { color: var(--fg3); font-size: 11.5px; } .shortcut small.warn, .shortcut small.taken { color: #ff9f0a; }
+  .shortcut small { color: var(--fg3); font-size: 11.5px; } .shortcut small.warn, .shortcut small.taken { color: var(--warn); }
   .cap { min-width: 26px; height: 26px; padding: 0 7px; box-sizing: border-box; border-radius: 6px; display: grid; place-items: center;
     font: 500 12px system-ui; background: linear-gradient(#fdfdfd, #e8e8ed); color: #1d1d1f;
     box-shadow: 0 0 0 .5px rgba(0,0,0,.16), 0 1.5px 0 rgba(0,0,0,.16); }
@@ -122,28 +132,35 @@
   .keyfield { position: relative; flex: none; }
   .kf { all: unset; box-sizing: border-box; min-width: 140px; height: 28px; padding: 0 10px; border-radius: 7px; display: flex; gap: 4px;
     align-items: center; justify-content: center; font-size: 12.5px; font-weight: 500; color: var(--accent); cursor: pointer;
-    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); transition: box-shadow .2s; }
+    background: var(--ctl); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); transition: box-shadow .2s; }
   .kf.set { padding-right: 30px; } .kf .cap { min-width: 20px; height: 20px; padding: 0 5px; font-size: 11px; border-radius: 4px; }
   .kf.rec { color: var(--fg2); box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 3px rgba(10,132,255,.18); }
   .kf.rec > span { animation: blink 1.4s ease-in-out infinite; } .kf.bad { box-shadow: inset 0 0 0 1.5px #ff9f0a; }
   .kf:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
   .keyfield .x { position: absolute; right: 4px; top: 3px; }
-  .row .t span.warn, .row .t span.taken { color: #ff9f0a; }
+  .row .t span.warn, .row .t span.taken { color: var(--warn); }
 
   /* buttons */
   .btn { all: unset; height: 26px; padding: 0 12px; border-radius: 7px; font-size: 12.5px; font-weight: 500; flex: none;
-    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); transition: filter .15s, transform .1s; }
-  .btn:hover { filter: brightness(1.06); } .btn:active { transform: scale(.97); }
+    background: var(--ctl); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); transition: filter .15s, transform .1s; }
+  .btn:hover { filter: brightness(var(--lift)); } .btn:active { transform: scale(.97); }
   .btn.blue { background: var(--accent); color: #fff; box-shadow: none; }
-  .btn.red { color: #ff453a; }
+  .btn.red { color: var(--danger); }
   .btn:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
 
   /* usage */
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .stat { background: var(--card); border-radius: 11px; padding: 14px; box-shadow: inset 0 0 0 .5px var(--line); }
-  .stat small { color: var(--fg3); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
-  .stat b { display: block; font: 600 24px system-ui; letter-spacing: -.02em; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
-  .stat span { color: var(--fg2); font-size: 12px; }
+  .stat small, .dstats small { color: var(--fg3); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .stat b, .dstats b { display: block; font: 600 24px system-ui; letter-spacing: -.02em; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+  .stat span, .dstats span { color: var(--fg2); font-size: 12px; }
+  /* dictation: one card, four numbers split by hairlines */
+  .dstats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dstats > div { padding: 14px 16px 13px; min-width: 0; }
+  .dstats > div + div { box-shadow: inset .5px 0 0 var(--line); }
+  .dstats b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 800px) { .dstats { grid-template-columns: repeat(2, minmax(0, 1fr)); }   /* a narrow window: two by two */
+    .dstats > div:nth-child(3) { box-shadow: inset 0 .5px 0 var(--line); } .dstats > div:nth-child(4) { box-shadow: inset .5px .5px 0 var(--line); } }
 
   /* memory */
   .rule { display: flex; align-items: center; gap: 10px; }
@@ -153,10 +170,34 @@
   .flash { animation: flash 2.2s var(--ease) .35s backwards; }
   @keyframes flash { 0%, 35% { background: rgba(10,132,255,.2); box-shadow: inset 2px 0 0 var(--accent); } }
   .x { all: unset; width: 22px; height: 22px; border-radius: 11px; display: grid; place-items: center; color: var(--fg3); font-size: 15px; }
-  .x:hover { background: var(--sel); color: #ff453a; }
+  .x:hover { background: var(--sel); color: var(--danger); }
   .x:focus-visible, h3 .all:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
-  .add { display: flex; gap: 8px; padding: 10px 14px; box-shadow: inset 0 .5px 0 var(--line); }
-  .add input { flex: 1; font: 13px system-ui; color: var(--fg); background: transparent; border: 0; outline: 0; }
+  /* a list row's actions: quiet icons at the far right, shown on hover or keyboard focus */
+  .row > .x { width: 26px; height: 26px; border-radius: 7px; cursor: pointer; opacity: 0; transform: translateX(6px);
+    transition: opacity .18s var(--ease), transform .26s var(--out), background .15s, color .15s; }
+  .row:hover > .x, .row:focus-within > .x, .row > .x.save { opacity: 1; transform: none; }
+  .row > .x + .x { margin-left: -10px; }
+  .x svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .x.copy:hover, .x.save:hover { color: var(--accent); } .x.save { color: var(--accent); }
+  .add { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 14px; box-shadow: inset 0 .5px 0 var(--line); }
+  .add:first-child { box-shadow: none; }
+  .add input { flex: 1; min-width: 0; height: 28px; padding: 0 10px; border-radius: 7px; font: 13px system-ui; color: var(--fg); background: var(--well); border: 0; outline: 0; }
+  .add input::placeholder { color: var(--fg3); }
+  /* history: the text gets the whole row; time and app sit small above it; actions float over the right end */
+  .hist { position: relative; align-items: flex-start; padding: 10px 14px 11px; }
+  .hist .t small { display: block; color: var(--fg3); font-size: 11px; margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+  .hist .t > span { color: var(--fg); font-size: 13px; line-height: 1.45; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .hist details { margin-top: 6px; font-size: 11.5px; color: var(--fg3); } .hist details summary { cursor: pointer; }
+  .hist details span { display: block; margin-top: 3px; color: var(--fg2); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .hist > .x { position: absolute; top: 6px; right: 10px; background: var(--card); box-shadow: -10px 0 10px -2px var(--card); }
+  .hist > .x.copy { right: 36px; margin: 0; }
+  .hist:hover > .x { background: var(--hover); box-shadow: -10px 0 10px -2px var(--hover); }
+  .hist > .x:hover { background: linear-gradient(var(--sel), var(--sel)) var(--hover); }
+  #dictationwords > .row:first-child { box-shadow: inset 0 .5px 0 var(--line); }
+  #dictationwords .field { text-align: left; }
+  #dictationhistory { max-height: 440px; overflow-y: auto; }
+  #dictationsearch { margin-bottom: 8px; } #dictationhistory + .group { margin-top: 12px; }
+  h3 #dictationclear { color: var(--fg3); } h3 #dictationclear:hover { color: var(--danger); } h3 .all:disabled { visibility: hidden; }
   .field:focus, .add input:focus { box-shadow: 0 0 0 3px rgba(10,132,255,.35); border-radius: 4px; }
   .app:hover, .seg button:not(.on):hover { background: var(--sel); }
   .empty { padding: 14px; color: var(--fg3); }
@@ -164,7 +205,7 @@
   .field::placeholder, textarea::placeholder { color: var(--fg3); }
   textarea.field { text-align: left; resize: none; height: 56px; line-height: 1.4; padding: 0; font: 13px system-ui; }
   .count { color: var(--fg3); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
-  .profile-head { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 4px 7px; }
+  .profile-head { display:flex;align-items:center;justify-content:space-between;gap:12px;margin:30px 2px 9px; }
   .profile-head h3 { margin:0; }
   .profile-category { overflow:hidden; }
   .profile-category + .profile-category { box-shadow:inset 0 .5px 0 var(--line); }
@@ -180,7 +221,7 @@
   .source-pill { color:var(--fg2);background:var(--sel);border-radius:9px;padding:2px 7px;font-size:10.5px;white-space:nowrap; }
   .profile-add { margin-left:24px; }
   .profile-sources { display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 4px 0; }
-  #profileStatus { color:var(--fg3);font-size:11.5px;line-height:1.4;min-height:16px; } #profileStatus .btn { margin:6px 0 0;display:inline-flex;align-items:center; }
+  #profileStatus { color:var(--fg3);font-size:11.5px;line-height:1.4; } #profileStatus:not(:empty) { margin-top:6px; } #profileStatus .btn { margin:6px 0 0;display:inline-flex;align-items:center; }
 
   .status { display: flex; align-items: center; gap: 8px; }
   .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--green); flex: none; }
@@ -189,9 +230,9 @@
   [hidden] { display: none !important; }   /* .btn's all: unset would undo it */
 
   /* apps */
-  .appbar { display: flex; gap: 8px; margin-bottom: 4px; position: sticky; top: -40px; padding: 8px 0; z-index: 1; }
+  .appbar { display: flex; gap: 8px; margin-bottom: 4px; position: sticky; top: -40px; padding: 8px 0; z-index: 1; background: var(--bg); }
   .search { flex: 1; height: 28px; padding: 0 10px; border: 0; border-radius: 7px; font: 13px system-ui; color: var(--fg); outline: 0;
-    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
+    background: var(--ctl); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 1px rgba(0,0,0,.05); }
   .search:focus { box-shadow: inset 0 0 0 .5px var(--line), 0 0 0 3px rgba(10,132,255,.35); }
   .appbar .btn { height: 28px; } .appbar .seg { align-self: center; }
   .btn.stop { background: #ff453a; } .btn:disabled { opacity: .45; pointer-events: none; }
@@ -203,10 +244,10 @@
   .ck:checked { background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M5.5 10.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/20px; box-shadow: none; }
   .ck:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 2px; }
   .pill { font-size: 11.5px; font-weight: 500; padding: 3px 9px; border-radius: 10px; flex: none; }
-  .pill.ok { color: var(--green); background: rgba(52,199,89,.13); }
-  .pill.no { color: #ff9f0a; background: rgba(255,159,10,.14); cursor: pointer; }
+  .pill.ok { color: var(--ok-text); background: rgba(52,199,89,.13); }
+  .pill.no { color: var(--warn); background: rgba(255,159,10,.14); cursor: pointer; }
   .pill.wait { color: var(--fg2); background: var(--sel); animation: blink 1.2s ease-in-out infinite; }
-  p.note { color: var(--fg3); font-size: 11.5px; line-height: 1.45; margin: 14px 4px 0; }
+  p.note { color: var(--fg3); font-size: 11.5px; line-height: 1.45; margin: 9px 2px 0; }
   p.note a { color: var(--accent); cursor: pointer; }
 
   .about { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 10px 0 6px; }
@@ -215,32 +256,58 @@
   #feedbacktext { display:block;width:100%;box-sizing:border-box;resize:vertical;font:13px/1.5 system-ui;color:var(--fg);background:transparent;border:0;padding:14px;margin:14px 0 0;outline:none; }
   #feedbackbody { white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 system-ui;color:var(--fg2);padding:14px;margin:14px 0;-webkit-user-select:text; }
   .meeting-prep { margin:0 0 6px; } .meeting-prep .row { gap:8px; } .meeting-prep .t { margin-right:6px; }
-  .meeting-controls { margin:0 0 18px; }
-  .meeting-controls summary { color:var(--fg2);cursor:pointer;padding:10px 2px;font-weight:500; }
+  .meeting-controls { margin:0; }
+  .meeting-controls summary { color:var(--fg2);cursor:pointer;padding:10px 2px;font-weight:500;list-style:none;display:flex;align-items:center;gap:8px; }
+  .meeting-controls summary::-webkit-details-marker { display:none; }
+  .meeting-controls summary::before { content:"›";color:var(--fg3);font-size:17px;line-height:1;transition:transform .15s var(--ease); }
+  .meeting-controls[open] summary::before { transform:rotate(90deg); }
   .meeting-controls summary:focus-visible { outline:2px solid var(--accent);border-radius:5px; }
-  .row:has([data-k="meetingAuto"]) { flex-direction:column;align-items:flex-start;gap:8px; }
-  #styles .field { text-align:left; } #styles .sname { flex:none;width:96px;font-weight:500; }
+  #dictation .field { text-align:left; }
 </style></head><body>
 
 <nav>
   <div class="me"><img id="icon" alt=""><div><b>Atticus</b><span>Just ask.</span></div></div>
   <button id="agentsnav" aria-label="Open Agents"><i class="ni" style="background:#30b0c7"><svg viewBox="0 0 24 24"><rect x="4" y="8" width="13" height="12" rx="2.5"/><path d="M8 4.5h9.5A2.5 2.5 0 0 1 20 7v9"/></svg></i>Agents<span class="count" id="agentcount"></span></button>
+  <button data-s="dictation" id="dictationnav"><i class="ni" style="background:#ff375f"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M8 21h8"/></svg></i>Dictation</button>
   <button data-s="general" class="on"><i class="ni" style="background:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></i>General</button>
-  <button data-s="sound"><i class="ni" style="background:#ff375f"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></svg></i>Sound</button>
   <button data-s="brain"><i class="ni" style="background:#d97757"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></i>Intelligence</button>
-  <button data-s="screen"><i class="ni" style="background:#bf5af2"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg></i>Screen &amp; Windows</button>
   <button data-s="memory"><i class="ni" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></i>Memory</button>
   <button data-s="meetings"><i class="ni" style="background:#5e5ce6"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M8 17h7"/></svg></i>Meetings</button>
   <button data-s="usage"><i class="ni" style="background:#30d158"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg></i>Usage</button>
-  <button data-s="apps"><i class="ni" style="background:#ff453a"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg></i>Apps</button>
   <button data-s="account"><i class="ni" style="background:#0a84ff"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></i>Account &amp; Access</button>
-  <button data-s="about"><i class="ni" style="background:#5e5ce6"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg></i>About &amp; Updates</button>
+  <button data-s="about"><i class="ni" style="background:#bf5af2"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/></svg></i>About &amp; Updates</button>
   <div class="spacer"></div>
   <button data-s="feedback">Report feedback</button>
   <div class="ver" id="ver"></div>
 </nav>
 
 <main>
+  <section id="dictation">
+    <h1>Dictation</h1>
+    <p class="lede">Your voice, in any text field.</p>
+    <div class="group dstats" id="dictationstats" role="group" aria-label="Dictation stats">
+      <div><small>Today</small><b id="dstoday">0</b><span>words</span></div>
+      <div><small>All time</small><b id="dsall">0</b><span>words</span></div>
+      <div title="Typing at 40 words per minute, minus speaking time"><small>Time saved</small><b id="dssaved">0</b><span id="dssavedunit">minutes</span></div>
+      <div><small>Sessions</small><b id="dssessions">0</b><span>dictations</span></div>
+    </div>
+    <h3>Dictate anywhere</h3>
+    <div class="group">
+      <div class="row"><div class="t"><b id="dictatelabel">Dictation shortcut</b><span id="dictatehint"></span></div><div class="keyfield"><button class="kf" id="dictatechange" aria-labelledby="dictatelabel" aria-describedby="dictatehint"></button><button class="x" id="dictateclear" aria-label="Clear dictation shortcut">×</button></div></div>
+      <div class="row" id="globefix" hidden><div class="t"><b>Set Press 🌐 key to Do Nothing</b></div><button class="btn" data-do="globeKey">Open Keyboard Settings</button></div>
+      <div class="row"><div class="t"><b>Dictated text</b><span id="dictatemodehint">Clean up drops fillers, fixes misheard words.</span></div><div class="seg" data-k="dictateMode"><button data-v="verbatim">Verbatim</button><button data-v="cleanup">Clean up</button></div></div>
+    </div>
+    <h3>Dictionary</h3>
+    <div class="group">
+      <form id="dictationadd" class="add"><input id="dictationword" maxlength="80" placeholder="Add a word or phrase" aria-label="New dictionary word" required><button class="btn blue">Add Word</button></form>
+      <div id="dictationwords"></div>
+    </div>
+    <p class="note" id="dictationnote">Names, slang and product names.</p>
+    <h3>History<button class="all" id="dictationclear">Clear All…</button></h3>
+    <input id="dictationsearch" type="search" placeholder="Search dictations" aria-label="Search dictation history" autocomplete="off">
+    <div class="group" id="dictationhistory" role="list" aria-label="Dictation history"></div>
+    <div class="group"><div class="row"><div class="t"><b>Save dictation history</b><span>Only on this Mac. <i class="info" title="Last 500 dictations, up to 30 days. Turning off keeps what’s saved.">i</i></span></div><label class="sw"><input type="checkbox" data-k="dictateHistory" aria-label="Save dictation history"></label></div></div>
+  </section>
   <section id="general" class="on">
     <h1>General</h1>
     <p class="lede">Your shortcut. Your way to talk.</p>
@@ -251,52 +318,29 @@
       <div class="acts"><button class="btn blue" id="change">Change Shortcut</button><button class="btn" data-do="resetHotkey" id="reset">Use Default</button></div>
     </div>
     <div class="group">
-      <div class="row"><div class="t"><b>Shortcut opens</b><span>Hover the box to type anyway, or click the mic to talk.</span></div><div class="seg" data-k="input"><button data-v="voice">Voice</button><button data-v="type">Typing</button></div></div>
-      <div class="row"><div class="t"><b id="talklabel">Shortcut behavior</b><span id="talkhint">Release to send. During an answer, press to stop it. Esc cancels.</span></div><div class="seg" data-k="talkMode" role="group" aria-labelledby="talklabel"><button data-v="hold">Hold to talk</button><button data-v="toggle">Press to toggle</button></div></div>
+      <div class="row"><div class="t"><b>Shortcut opens</b></div><div class="seg" data-k="input"><button data-v="voice">Voice</button><button data-v="type">Typing</button></div></div>
+      <div class="row"><div class="t"><b id="talklabel">Shortcut behavior</b><span id="talkhint">Esc cancels.</span></div><div class="seg" data-k="talkMode" role="group" aria-labelledby="talklabel"><button data-v="hold">Hold to talk</button><button data-v="toggle">Press to toggle</button></div></div>
     </div>
-    <h3>Dictate anywhere</h3>
+    <h3>Voice</h3>
     <div class="group">
-      <div class="row"><div class="t"><b id="dictatelabel">Dictation shortcut</b><span id="dictatehint"></span></div><div class="keyfield"><button class="kf" id="dictatechange" aria-labelledby="dictatelabel" aria-describedby="dictatehint"></button><button class="x" id="dictateclear" aria-label="Clear dictation shortcut">×</button></div></div>
-      <div class="row"><div class="t"><b>Dictated text</b><span id="dictatemodehint">Clean up drops fillers and slips but keeps your words.</span></div><div class="seg" data-k="dictateMode"><button data-v="verbatim">Verbatim</button><button data-v="cleanup">Clean up</button></div></div>
-    </div>
-    <h3>Speech</h3>
-    <div class="group">
-      <div class="row"><div class="t"><b>Speech model</b><span>Free, English (US), and your voice stays on this Mac. Dictation is the model your keyboard’s mic uses.</span></div><div class="seg" data-k="speechModel"><button data-v="speech">Speech</button><button data-v="dictation">Dictation</button></div></div>
-      <div class="row"><div class="t"><b>Microphone</b><span>Automatic keeps Bluetooth headphones sounding clear when your Mac has its own mic.</span></div><select data-k="microphone"></select></div>
-      <div class="row"><div class="t"><b>Quiet other audio while I talk</b><span>Turns down your Mac while Atticus listens, then puts it back.</span></div><label class="sw"><input type="checkbox" data-k="quietAudio"></label></div>
-      <div class="row"><div class="t"><b>Audio level while I talk</b></div><input type="range" min="0" max="0.5" step="0.02" data-k="quietLevel"><span class="val" id="quietv"></span></div>
+      <div class="row"><div class="t"><b>Microphone</b></div><select data-k="microphone"></select></div>
+      <div class="row"><div class="t"><b>Speech model</b><span>Speech stays on this Mac. <i class="info" title="Speech: free, English (US), on this Mac. Dictation: the model your keyboard’s mic uses.">i</i></span></div><div class="seg" data-k="speechModel"><button data-v="speech">Speech</button><button data-v="dictation">Dictation</button></div></div>
+      <div class="row"><div class="t"><b>Sound volume</b></div><input type="range" min="0" max="0.6" step="0.02" data-k="volume"><span class="val" id="volv"></span></div>
     </div>
     <h3>Answers</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Read answers aloud</b><span>In your Mac’s system voice. Esc stops it.</span></div><label class="sw"><input type="checkbox" data-k="speak"></label></div>
-      <div class="row"><div class="t"><b>Copy answers automatically</b><span>Every answer lands on your clipboard, ready to paste.</span></div><label class="sw"><input type="checkbox" data-k="autoCopy"></label></div>
-      <div class="row"><div class="t"><b>Ask me when unsure</b><span>When more than one thing fits, pick from choices in the box instead of a guess.</span></div><label class="sw"><input type="checkbox" data-k="askMe"></label></div>
-      <div class="row"><div class="t"><b>Tips</b><span>Now and then, a short tip under an answer, like how to teach Atticus after a miss.</span></div><label class="sw"><input type="checkbox" data-k="tips"></label></div>
-    </div>
-    <h3>The answer box</h3>
-    <div class="group">
-      <div class="row"><div class="t"><b>Position</b></div><div class="seg" data-k="corner"><button data-v="top-left">Top left</button><button data-v="top-right">Top right</button></div></div>
-      <div class="row"><div class="t"><b>Keep answers on screen</b><span>How long an answer stays before the box fades. Drag its bottom-right corner to resize it.</span></div><div class="seg" data-k="linger"><button data-v="short">Short</button><button data-v="normal">Normal</button><button data-v="long">Long</button></div></div>
+      <div class="row"><div class="t"><b>Read answers aloud</b><span>Esc stops it.</span></div><label class="sw"><input type="checkbox" data-k="speak"></label></div>
+      <div class="row"><div class="t"><b>Draw on screen to show you</b><span>Esc clears. To mark a spot yourself, use Point at your screen.</span></div><label class="sw"><input type="checkbox" data-k="draw" aria-label="Draw on screen to show you"></label></div>
     </div>
     <h3>Atticus</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Open at login</b><span>Ready the moment your Mac is.</span></div><label class="sw"><input type="checkbox" data-k="login"></label></div>
-      <div class="row"><div class="t"><b>Pause Atticus</b><span>The shortcut does nothing until you turn this off.</span></div><label class="sw"><input type="checkbox" data-k="paused"></label></div>
-      <div class="row"><div class="t"><b>Show in menu bar</b><span>Hidden? Open Atticus from Spotlight to get back here.</span></div><label class="sw"><input type="checkbox" data-k="menuIcon"></label></div>
+      <div class="row"><div class="t"><b>Open at login</b></div><label class="sw"><input type="checkbox" data-k="login"></label></div>
+      <div class="row"><div class="t"><b>Pause Atticus</b></div><label class="sw"><input type="checkbox" data-k="paused"></label></div>
+      <div class="row"><div class="t"><b>Show in menu bar</b><span>Hidden? Open it from Spotlight.</span></div><label class="sw"><input type="checkbox" data-k="menuIcon"></label></div>
+      <div class="row"><div class="t"><b>Quit Atticus</b><span>Reopen it from Spotlight.</span></div><button class="btn red" data-do="quit">Quit</button></div>
     </div>
     <h3>Scheduled routines</h3>
     <div class="group" id="routines"></div>
-  </section>
-
-  <section id="sound">
-    <h1>Sound</h1>
-    <p class="lede">Small cues so you know Atticus heard you, without looking.</p>
-    <div class="group">
-      <div class="row"><div class="t"><b>When it starts listening</b></div><select data-k="soundStart"></select></div>
-      <div class="row"><div class="t"><b>When an answer is ready</b></div><select data-k="soundDone"></select></div>
-      <div class="row"><div class="t"><b>When you stop it</b><span>Esc, or the keys again.</span></div><select data-k="soundStop"></select></div>
-      <div class="row"><div class="t"><b>Volume</b></div><input type="range" min="0" max="0.6" step="0.02" data-k="volume"><span class="val" id="volv"></span></div>
-    </div>
   </section>
 
   <section id="brain">
@@ -306,91 +350,61 @@
     <div class="group">
       <div class="row"><div class="t"><b>AI client</b><span id="clientwhy"></span></div><div class="seg" data-k="client"><button data-v="claude">Claude</button><button data-v="devin">Devin</button><button data-v="pi">Pi</button></div></div>
       <div class="row"><div class="t"><b>Intelligence</b><span id="routingwhy"></span></div><div class="seg" data-k="routing"><button data-v="cheapest">Cheapest</button><button data-v="balanced">Balanced</button><button data-v="capable">Most capable</button></div></div>
-      <div class="row"><div class="t"><b>Work model</b><span>The model for real work. Opus is stronger and uses more of your plan.</span></div><div class="seg" data-k="model"><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
-    </div>
-    <h3>Speed</h3>
-    <div class="group">
-      <div class="row"><div class="t"><b>Instant commands</b><span>Opening apps, moving windows, searches and music run on this Mac, with no AI.</span></div><label class="sw"><input type="checkbox" data-k="instant"></label></div>
-      <div class="row"><div class="t"><b>Act while I’m talking</b><span>Instant commands run mid-sentence. Learned commands wait until you send.</span></div><label class="sw"><input type="checkbox" data-k="live"></label></div>
-      <div class="row"><div class="t"><b>Start while I’m talking</b><span>Starts thinking when you pause. It acts only after you send.</span></div><label class="sw"><input type="checkbox" data-k="ahead"></label></div>
-      <div class="row"><div class="t"><b>Pause before starting</b><span>How long a pause starts thinking. Shorter is faster.</span></div><input type="range" min="0.4" max="1.5" step="0.1" data-k="aheadDelay"><span class="val" id="delayv"></span></div>
-      <div class="row"><div class="t"><b>Learn commands</b><span>Saves steps that worked, so the same ask is faster next time. See them in Memory.</span></div><label class="sw"><input type="checkbox" data-k="learn"></label></div>
+      <div class="row"><div class="t"><b>Work model</b><span>Opus is stronger, uses more of your plan.</span></div><div class="seg" data-k="model"><button data-v="sonnet">Sonnet</button><button data-v="opus">Opus</button></div></div>
     </div>
     <h3 id="agentsheading">Background agents</h3>
     <div class="group" id="agentsettings">
-      <div class="row"><div class="t"><b>Long asks</b><span>Hand long work to a background agent. Move by itself also starts offered agents. ⌃⌥↩ moves one anytime.</span></div><div class="seg" data-k="longAsks"><button data-v="ask">Ask me</button><button data-v="auto">Move by itself</button><button data-v="never">Never ask</button></div></div>
-      <div class="row"><div class="t"><b>Use my Claude Code tools</b><span>Agents can use your MCP servers, skills and plugins. Atticus handles approvals.</span></div><label class="sw"><input type="checkbox" data-k="agentUserTools"></label></div>
+      <div class="row"><div class="t"><b>Use my Claude Code tools</b><span>MCP servers, skills and plugins.</span></div><label class="sw"><input type="checkbox" data-k="agentUserTools"></label></div>
     </div>
     <h3>Custom server</h3>
     <div class="group">
       <div class="row" id="localserver" hidden><div class="t"><b id="localname"></b><span>Already running on this Mac.</span></div><button class="btn blue" id="uselocal"></button></div>
-      <div class="row"><div class="t"><b>Address</b><span>Use Ollama, LM Studio, DeepSeek or any Claude-style API instead of your Claude plan. Leave empty for Claude.</span></div><input class="field" id="apiBase" placeholder="https://api.deepseek.com/anthropic" spellcheck="false" aria-label="Custom server address"></div>
+      <div class="row"><div class="t"><b>Address</b><span>Ollama, LM Studio or any Claude-style API.</span></div><input class="field" id="apiBase" placeholder="https://api.deepseek.com/anthropic" spellcheck="false" aria-label="Custom server address"></div>
       <div class="row"><div class="t"><b>Key</b></div><input class="field" id="apiKey" type="password" placeholder="Not needed for local servers" aria-label="Custom server key"></div>
-      <div class="row"><div class="t"><b>Model</b><span id="srvnote" role="status">Screen tasks need a model that can see images.</span></div><input class="field" id="apiModel" list="apimodels" placeholder="deepseek-flash" spellcheck="false" aria-label="Custom server model"><datalist id="apimodels"></datalist></div>
-      <div class="row" id="agentServerModel" hidden><div class="t"><b>Agent model</b><span>For background agents. Leave empty to use the model above.</span></div><input class="field" id="agentApiModel" list="apimodels" placeholder="Same as main model" spellcheck="false" aria-label="Custom server agent model"></div>
-    </div>
-  </section>
-
-  <section id="screen">
-    <h1>Screen &amp; Windows</h1>
-    <p class="lede">Choose whether Atticus works in front or stays behind. Click the mini screen to open the exact window.</p>
-    <h3>Your screen</h3>
-    <div class="group">
-      <div class="row"><div class="t"><b>Look at my screen</b><span>Automatic looks only when you mean it, like “this” or “my screen”. The picture goes with that one ask.</span></div><div class="seg" data-k="screen"><button data-v="auto">Automatic</button><button data-v="never">Never</button></div></div>
-      <div class="row"><div class="t"><b>Include selected text</b><span>Ask about or rewrite highlighted text in any app. You review before it’s replaced.</span></div><label class="sw"><input type="checkbox" data-k="selection"></label></div>
-      <div class="row"><div class="t"><b>Hide from screen sharing</b><span>On a call or recording, others see your screen but not Atticus.</span></div><label class="sw"><input type="checkbox" data-k="hideWhenSharing"></label></div>
-      <div class="row"><div class="t"><b>Draw on screen to show you</b><span>Atticus marks what matters and guides you one step at a time, or builds an explanation like a whiteboard. Esc clears the drawings. To show Atticus a spot yourself, use Point at your screen in the ask box.</span></div><label class="sw"><input type="checkbox" data-k="draw" aria-label="Draw on screen to show you"></label></div>
-    </div>
-    <h3>Apps &amp; windows</h3>
-    <div class="group">
-      <div class="row"><div class="t"><b>Work in apps and sites</b><span>In the background keeps you where you are unless you ask to focus it. In front shows each app or page as Atticus uses it.</span></div><div class="seg" data-k="workIn"><button data-v="back">In the background</button><button data-v="front">In front</button></div></div>
-      <div class="row"><div class="t"><b>Open apps on</b><span>The other screen keeps you where you are, but takes a second or two longer.</span></div><div class="seg" data-k="openOn"><button data-v="here">This screen</button><button data-v="other">Other screen</button></div></div>
-      <div class="row"><div class="t"><b>Mini screen</b><span>A small live view of the window Atticus is working in. Click it to open that window.</span></div><label class="sw"><input type="checkbox" data-k="miniScreen"></label></div>
-      <div class="row"><div class="t"><b>Drafts at my cursor</b><span>When your cursor is in a text box, a reply or email can go right there. Ask first shows an Insert button.</span></div><div class="seg" data-k="draftInsert"><button data-v="ask">Ask first</button><button data-v="auto">Insert right away</button></div></div>
+      <div class="row"><div class="t"><b>Model</b><span id="srvnote" role="status">Needs vision for screen tasks.</span></div><input class="field" id="apiModel" list="apimodels" placeholder="deepseek-flash" spellcheck="false" aria-label="Custom server model"><datalist id="apimodels"></datalist></div>
+      <div class="row" id="agentServerModel" hidden><div class="t"><b>Agent model</b><span>For background agents.</span></div><input class="field" id="agentApiModel" list="apimodels" placeholder="Same as main model" spellcheck="false" aria-label="Custom server agent model"></div>
     </div>
   </section>
 
   <section id="memory">
     <h1>Memory</h1>
     <div class="profile-head"><h3>About you</h3><button class="btn blue" id="profileImport">Import from your Mac</button></div>
-    <p class="lede" style="margin:0 4px 9px;font-size:11.5px">Name and answer style stay handy. Other details are shared only when the ask or form needs them.</p>
+    <p class="lede" style="margin:0 2px 9px;font-size:11.5px">Only your name and answer style go with every ask.</p>
     <div class="group" id="profileCategories"></div>
     <div class="profile-sources" id="profileSources"></div>
     <div id="profileStatus" role="status" aria-live="polite"></div>
     <h3>Learning</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Learn about me</b><span>Keeps lasting facts you say. Never learns from screen text, health, money or passwords.</span></div><label class="sw"><input type="checkbox" data-k="learnMe"></label></div>
+      <div class="row"><div class="t"><b>Learn about me</b><span>Keeps lasting facts you say. <i class="info" title="Never from screen text, health, money or passwords.">i</i></span></div><label class="sw"><input type="checkbox" data-k="learnMe"></label></div>
     </div>
     <h3>Rules</h3>
     <div class="group" id="rules" data-category="rules"></div>
-    <p class="lede" style="margin:8px 4px 0;font-size:11.5px">Say “remember…” or “from now on…”, or add one here. Only rules that match what you ask are sent, so more rules don’t cost more.</p>
+    <p class="lede" style="margin:9px 2px 0;font-size:11.5px">Say “remember…” or add one here.</p>
     <h3>Saved commands and procedures</h3>
     <div class="group" id="skills"></div>
   </section>
 
   <section id="usage">
     <h1>Usage</h1>
-    <p class="lede">What Atticus has cost, priced at Claude API list rates. On a Claude plan it comes out of your plan’s usage, not your wallet.</p>
+    <p class="lede">At API list prices. A Claude plan covers it.</p>
     <div class="stats" id="stats"></div>
     <h3>History</h3>
     <input type="search" id="askq" placeholder="Search asks and answers" aria-label="Search ask history" autocomplete="off">
     <div class="group" id="asklist" role="list" aria-label="Recent asks"></div>
-    <h3>Diagnostics</h3>
+    <h3>Conversation</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Raw ask log</b><span>Every request with its steps, timing and cost, as JSON lines.</span></div><button class="btn" data-do="openLog">Open Raw Log</button></div>
-      <div class="row"><div class="t"><b>Forget this conversation</b><span>Follow-ups like “open the second one” start fresh.</span></div><button class="btn red" data-do="clearRecent">Forget</button></div>
+      <div class="row"><div class="t"><b>Forget this conversation</b><span>Follow-ups start fresh.</span></div><button class="btn red" data-do="clearRecent">Forget</button></div>
     </div>
   </section>
 
   <section id="apps">
-    <h1>Apps</h1>
-    <p class="lede">Tick the apps Atticus can control. macOS asks once for each one, so allow them all now and Atticus won’t stop to ask later.</p>
+    <button class="btn" id="appsback" onclick="st.tab('account')">← Account &amp; Access</button>
+    <h1><i class="ni" style="background:#ff453a" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg></i>Apps</h1>
+    <p class="lede">Tick the apps Atticus can control. Allow them now so it won’t stop to ask.</p>
     <div class="appbar"><div class="seg" id="appview"><button data-v="key" class="on">Key Apps</button><button data-v="all">All Apps</button></div>
       <input id="appq" class="search" placeholder="Search all apps" aria-label="Search all apps"><button class="btn blue" id="allow" disabled>Allow</button></div>
     <div id="applist"><div class="group"><div class="empty">Finding your apps…</div></div></div>
-    <p class="note">Atticus opens each app out of sight, asks, and closes it again. Click OK on each macOS box.<br>
-      Using an app that isn’t ticked? macOS asks the first time, and it shows up here as allowed.
-      To take access away: System Settings → Privacy &amp; Security → Automation. <a data-do="automation">Open it</a></p>
+    <p class="note">Click OK on each macOS box. To take access away: System Settings → Privacy &amp; Security → Automation. <a data-do="automation">Open it</a></p>
   </section>
 
   <section id="account">
@@ -401,52 +415,45 @@
     </div>
     <h3>Safety</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Safe mode</b><span id="safenote">AI commands use a scratch folder. Deletes, sends, purchases and commands requesting access outside it need your approval.</span></div><label class="sw"><input type="checkbox" data-k="safe"></label></div>
+      <div class="row"><div class="t"><b>Safe mode</b><span id="safenote">AI commands use a scratch folder. Deletes, sends, purchases and outside access need approval.</span></div><label class="sw"><input type="checkbox" data-k="safe"></label></div>
     </div>
     <h3>Privacy</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Count me as a user</b><span>Once a day, sends a random ID so the maker knows how many people use Atticus. Never your name, your asks or your screen.</span></div><label class="sw"><input type="checkbox" data-k="stats"></label></div>
-      <div class="row"><div class="t"><b>Help improve Atticus</b><span>When a task fails, sends what you asked, the steps it took and why, so the next version gets it right. Anonymous. Emails, numbers, file paths and anything typed for you are removed first.</span></div><label class="sw"><input type="checkbox" data-k="improve"></label></div>
+      <div class="row"><div class="t"><b>Look at my screen</b><span>Only when you mean it, like “this”. <i class="info" title="The picture goes with that one ask.">i</i></span></div><div class="seg" data-k="screen"><button data-v="auto">Automatic</button><button data-v="never">Never</button></div></div>
+      <div class="row"><div class="t"><b>Hide from screen sharing</b></div><label class="sw"><input type="checkbox" data-k="hideWhenSharing"></label></div>
+      <div class="row"><div class="t"><b>Count me as a user</b><span>A random ID, once a day. <i class="info" title="So the maker knows how many people use Atticus. Never your name, your asks or your screen.">i</i></span></div><label class="sw"><input type="checkbox" data-k="stats"></label></div>
+      <div class="row"><div class="t"><b>Help improve Atticus</b><span>Anonymous reports when a task fails. <i class="info" title="Sends what you asked, the steps it took and why. Emails, numbers, file paths and anything typed for you are removed first.">i</i></span></div><label class="sw"><input type="checkbox" data-k="improve"></label></div>
     </div>
     <h3>Permissions</h3>
     <div class="group" id="perms">
-      <div class="row"><div class="t"><b>Microphone</b><span>Hears you while you hold the keys.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="mic">Allow</button></div>
-      <div class="row"><div class="t"><b>Speech Recognition</b><span>Turns your words into text, on this Mac.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="speech">Allow</button></div>
-      <div class="row"><div class="t"><b>Accessibility</b><span>Moves windows and clicks buttons for you.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="ax">Allow</button></div>
-      <div class="row"><div class="t"><b>Screen Recording</b><span>Looks at your screen when you say “this”.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="screen">Allow</button></div>
-      <div class="row"><div class="t"><b>Apps</b><span>Which apps Atticus can control.</span></div><button class="btn" onclick="st.tab('apps')">Choose</button></div>
+      <div class="row"><div class="t"><b>Microphone</b><span>To hear you.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="mic">Allow</button></div>
+      <div class="row"><div class="t"><b>Speech Recognition</b><span>On this Mac.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="speech">Allow</button></div>
+      <div class="row"><div class="t"><b>Accessibility</b><span>To click and move windows.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="ax">Allow</button></div>
+      <div class="row"><div class="t"><b>Screen Recording</b><span>When you say “this”.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="screen">Allow</button></div>
+      <div class="row"><div class="t"><b>Apps</b></div><button class="btn" onclick="st.tab('apps')">Choose</button></div>
     </div>
     <h3>Agents</h3>
     <div class="group" id="agentsetup">
-      <div class="row"><div class="t"><b>Set up agents</b><span>Agents ask for these only when a task needs them. Atticus turns on its own; macOS and Claude need your click.</span></div><button class="btn blue" id="enableAll">Enable All</button></div>
+      <div class="row"><div class="t"><b>Set up agents</b><span>Asked only when a task needs them.</span></div><button class="btn blue" id="enableAll">Enable All</button></div>
       <div class="row"><div class="t"><b>Page reading in Chrome</b><span>Atticus turns this on itself.</span></div><span class="pill ok">On</span><button class="btn" data-g="chrome">Turn On</button></div>
-      <div class="row"><div class="t"><b>Automation</b><span>Lets an agent script your apps. macOS asks once per app.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="auto">Allow</button></div>
-      <div class="row"><div class="t"><b>Calendar</b><span>Reads and updates events when you ask.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="calendar">Allow</button></div>
+      <div class="row"><div class="t"><b>Automation</b><span>Lets agents script your apps.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="auto">Allow</button></div>
+      <div class="row"><div class="t"><b>Calendar</b><span>When you ask.</span></div><span class="pill ok">Allowed</span><button class="btn" data-g="calendar">Allow</button></div>
       <div class="row"><div class="t"><b>Claude connectors</b><span id="conntext">Checking your Claude account…</span></div><button class="btn" data-do="connectors">Connect in Claude</button></div>
-      <div class="row"><div class="t"><b>Fix setup for me</b><span>When an agent needs a setting Atticus can change, it changes it without asking and says so.</span></div><label class="sw"><input type="checkbox" data-k="fixSetup"></label></div>
-    </div>
-    <h3>Atticus</h3>
-    <div class="group">
-      <div class="row"><div class="t"><b>Quit Atticus</b><span>Open it again from Spotlight or Applications.</span></div><button class="btn red" data-do="quit">Quit</button></div>
     </div>
   </section>
 
   <section id="meetings">
     <div id="meetingbrowse">
       <h1>Meetings</h1><p class="lede">A little context, whenever you need it. Saved on this Mac.</p>
-      <div class="group meeting-prep"><div class="row"><div class="t"><b>Prepare for a call</b><span>Notes and files load when your next call starts.</span></div><button class="btn" data-do="meetingDemo" id="meetingDemo">Try Demo</button><button class="btn blue" data-do="meetingPrepOpen" id="meetingPrepOpen">Open Copilot</button></div></div>
+      <div class="group meeting-prep"><div class="row"><div class="t"><b>Prepare for a call</b><span>Notes and files load when your next call starts.</span></div><button class="btn" data-do="meetingDemo" id="meetingDemo">Try Demo</button><button class="btn blue" data-do="meetingPrepOpen" id="meetingPrepOpen">Open Copilot</button><button class="btn blue" id="meetingOn">Turn On</button></div></div>
       <details class="meeting-controls"><summary>Meeting Copilot settings</summary><div class="group">
-      <div class="row"><div class="t"><b>Meeting Copilot</b><span>Hear a call and your microphone in a private panel. On supported calls, listening ends two seconds after the app releases the mic.</span></div><label class="sw"><input type="checkbox" data-k="meeting" aria-label="Meeting Copilot"></label></div>
-      <div class="row"><div class="t"><b>Save meeting transcripts</b><span>Keep local transcripts, notes and answers. At the end, choose Save or Don’t save. Turning off offers to keep or delete past meetings.</span></div><label class="sw"><input type="checkbox" data-k="meetingSave" aria-label="Save meeting transcripts"></label></div>
-      <div class="row"><div class="t"><b>AI meeting summaries</b><span>Claude reads the transcript once for a recap and action items. With Devin or Pi, meetings stay on this Mac. Off: a local recap, and prep won’t search connected email or documents.</span></div><label class="sw"><input type="checkbox" data-k="meetingSummary" aria-label="AI meeting summaries"></label></div>
-      <div class="row"><div class="t"><b>Get ready before calls</b><span>A minute or two before a call on your calendar, a small card offers to load the invite and notes as context.</span></div><label class="sw"><input type="checkbox" data-k="meetingNudge" aria-label="Get ready before calls"></label></div>
-      <div class="row"><div class="t"><b>Notice when you’re in a call</b><span>When Zoom, Meet, Teams, FaceTime, Slack or WhatsApp has used your mic for a few seconds, a small card asks if Atticus should listen.</span></div><label class="sw"><input type="checkbox" data-k="meetingDetect" aria-label="Notice when you’re in a call"></label></div>
-      <div class="row"><div class="t"><b>Answer questions on its own</b><span>It uses a strict AI check and ignores small talk, rhetoric and anything you say on your own mic.</span></div><div class="seg" data-k="meetingAuto" aria-label="Answer questions on its own"><button data-v="sure">When it’s sure</button><button data-v="always">Always</button><button data-v="ask">Ask me first</button></div></div>
-      <div class="row"><div class="t"><b>Prep in a Claude chat</b><span>Copies a prompt that drafts your call notes.</span></div><button class="btn" data-do="meetingPrepPrompt" id="meetingPrepPrompt">Copy Prompt</button></div>
+      <div class="row"><div class="t"><b>Meeting Copilot</b><span>The call and your mic, in a private panel. <i class="info" title="On supported calls, listening ends two seconds after the app releases the mic.">i</i></span></div><label class="sw"><input type="checkbox" data-k="meeting" aria-label="Meeting Copilot"></label></div>
+      <div class="row"><div class="t"><b>Save meeting transcripts</b><span>On this Mac. <i class="info" title="Transcripts, notes and answers. At the end, choose Save or Don’t save. Turning off offers to keep or delete past meetings.">i</i></span></div><label class="sw"><input type="checkbox" data-k="meetingSave" aria-label="Save meeting transcripts"></label></div>
+      <div class="row"><div class="t"><b>AI meeting summaries</b><span>Claude reads the transcript once. <i class="info" title="For a recap and action items. With Devin or Pi, meetings stay on this Mac. Off: a local recap, and prep won’t search connected email or documents.">i</i></span></div><label class="sw"><input type="checkbox" data-k="meetingSummary" aria-label="AI meeting summaries"></label></div>
+      <div class="row"><div class="t"><b>Prep in a Claude chat</b><span>Copies a prompt for call notes.</span></div><button class="btn" data-do="meetingPrepPrompt" id="meetingPrepPrompt">Copy Prompt</button></div>
       </div>
-      <h3>Answer styles</h3>
-      <div class="group" id="styles"></div>
       </details>
+      <h3>Saved meetings</h3>
       <input type="search" id="meetingq" placeholder="Search titles and transcripts" aria-label="Search meetings" autocomplete="off">
       <div id="meetingcount" role="status">Loading meetings…</div>
       <div id="meetinglist" class="group" role="list" aria-label="Saved meetings"></div>
@@ -467,22 +474,22 @@
     <div class="about"><img id="bigicon" alt=""><h1>Atticus</h1><p id="aboutver"></p></div>
     <h3>Updates</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Update automatically</b><span>Checks every few hours. New versions install in the background and Atticus restarts when you’re not using it.</span></div><label class="sw"><input type="checkbox" data-k="autoUpdate"></label></div>
+      <div class="row"><div class="t"><b>Update automatically</b><span>Restarts when you’re not using it.</span></div><label class="sw"><input type="checkbox" data-k="autoUpdate"></label></div>
       <div class="row"><div class="t"><b>Check for updates</b><span id="upstatus">Never checked this session.</span></div><button class="btn" data-do="checkUpdate">Check Now</button></div>
     </div>
     <h3>Atticus</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Source code</b><span>Open source on GitHub.</span></div><button class="btn" data-do="github">Open</button></div>
-      <div class="row"><div class="t"><b>Support Atticus</b><span>Free and open source. If it saves you time, a tip keeps it going.</span></div><button class="btn" data-do="kofi">Leave a Tip</button></div>
+      <div class="row"><div class="t"><b>Source code</b><span>On GitHub.</span></div><button class="btn" data-do="github">Open</button></div>
+      <div class="row"><div class="t"><b>Support Atticus</b><span>A tip keeps it going.</span></div><button class="btn" data-do="kofi">Leave a Tip</button></div>
     </div>
   </section>
   <section id="feedback">
-    <h1>Report feedback</h1><p class="lede">Something off? Write your feedback and review exactly what goes into the GitHub draft.</p>
-    <div class="group"><div class="row"><div class="t"><b>Include my last ask</b><span>Off by default. Your ask may contain private details.</span></div><label class="sw"><input id="feedbackinclude" type="checkbox" aria-label="Include my last ask"></label></div></div>
+    <h1>Report feedback</h1><p class="lede">Something off? You see exactly what gets sent.</p>
+    <div class="group"><div class="row"><div class="t"><b>Include my last ask</b><span>It may contain private details.</span></div><label class="sw"><input id="feedbackinclude" type="checkbox" aria-label="Include my last ask"></label></div></div>
     <textarea id="feedbacktext" class="group" rows="5" maxlength="4000" placeholder="What happened? What did you expect?" aria-label="Your feedback"></textarea>
     <pre id="feedbackbody" class="group" aria-live="polite">Preparing preview…</pre>
     <button class="btn blue" id="feedbackopen" disabled>Open GitHub issue</button>
-    <p class="note">Only the text above goes into the issue draft. Nothing is submitted until you submit it on GitHub.</p>
+    <p class="note">Only the text above goes in. Nothing is sent until you submit on GitHub.</p>
   </section>
 </main>
 <div id="notice" role="status" aria-live="polite" hidden><span id="noticetext"></span><button class="btn" id="noticebtn" hidden></button></div>
@@ -493,7 +500,7 @@
   const post = m => window.webkit?.messageHandlers.st.postMessage(m);
   let P = {};
   let hotkeyTaken = false, dictateHotkeyTaken = false;   // another app owns a saved shortcut, so it does nothing
-  const shortcutHint = () => hotkeyTaken ? 'Another app uses this shortcut. Change it to use Atticus.' : P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go. Hover the box to type.';
+  const shortcutHint = () => hotkeyTaken ? 'Another app uses this shortcut. Change it to use Atticus.' : P.input === 'type' ? 'Press to type. Return sends.' : P.talkMode === 'toggle' ? 'Press to listen. Press again to send.' : 'Hold it, talk, let go.';
   const set = (k, v) => { P[k] = v; post({ do: 'set', k, v }); paint(); };
   // One status line for the whole window, with an optional action. It fades on its own; a waiting deletion happens when it goes.
   let noticeTimer, pending = null;   // pending: {msg, sel}, a deletion its Undo can still take back
@@ -509,17 +516,69 @@
     pending = { msg, sel }; hidePending();
   }
 
+  const svg = d => `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="${d}"/></svg>`;
+  const ICON = { trash: svg('M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M7 7v3.5M9 7v3.5'),
+    copy: svg('M6.5 5.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1zM10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2'),
+    check: svg('M3.5 8.5l3 3 6-7') };
+  const copied = b => { b.innerHTML = ICON.check; setTimeout(() => b.innerHTML = ICON.copy, 1200); };
+  const iconButton = (kind, label, cls = '') => { const b = document.createElement('button'); b.type = 'button'; b.className = 'x' + cls; b.innerHTML = ICON[kind]; b.setAttribute('aria-label', label); return b; };
+  let dictations = { words: [], history: [], stats: {} };
+  function paintDictation() {
+    const d = dictations, n = d.stats;
+    const num = v => (v || 0).toLocaleString(undefined, v >= 1e5 ? { notation: 'compact', maximumFractionDigits: 1 } : {}), mins = n.minutes || 0;
+    $('dstoday').textContent = num(n.today); $('dsall').textContent = num(n.words); $('dssessions').textContent = num(n.sessions);
+    $('dssaved').textContent = mins < 60 ? mins : (mins / 60).toLocaleString(undefined, { maximumFractionDigits: 1 }); $('dssavedunit').textContent = mins < 60 ? 'minutes' : 'hours';
+    $('dictationwords').replaceChildren();
+    for (const word of d.words) {
+      const row = document.createElement('form'); row.className = 'row';
+      const input = document.createElement('input'); input.className = 'field'; input.value = word; input.maxLength = 80; input.required = true; input.setAttribute('aria-label', `Spelling for ${word}`);
+      const save = iconButton('check', `Save ${word}`, ' save'); save.type = 'submit'; save.hidden = true;   // shows once the word is edited
+      const remove = iconButton('trash', `Remove ${word}`);
+      input.oninput = () => save.hidden = input.value === word;
+      row.onsubmit = e => { e.preventDefault(); post({do: 'dictationWord', old: word, word: input.value}); };
+      remove.onclick = () => post({do: 'dictationWordDelete', word}); row.append(input, save, remove); $('dictationwords').append(row);
+    }
+    $('dictationwords').hidden = !d.words.length;
+    $('dictationnote').textContent = d.words.length ? 'Names, slang and product names.' : 'No words yet. Add names, slang or product names.';
+    const query = $('dictationsearch').value.toLocaleLowerCase();
+    const rows = d.history.filter(r => `${r.text} ${r.raw || ''} ${r.app}`.toLocaleLowerCase().includes(query));
+    $('dictationhistory').replaceChildren(); $('dictationclear').disabled = !d.history.length;
+    for (const item of rows) {
+      const row = document.createElement('div'); row.className = 'row hist'; row.setAttribute('role', 'listitem');
+      const text = document.createElement('div'); text.className = 't';
+      const meta = document.createElement('small');
+      meta.textContent = `${new Date(item.timestamp * 1000).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})} · ${item.app}`;
+      const final = document.createElement('span'); final.textContent = item.text;
+      text.append(meta, final);
+      if (item.raw) { const raw = document.createElement('details'), title = document.createElement('summary'), body = document.createElement('span'); title.textContent = 'Raw transcript'; body.textContent = item.raw; raw.append(title, body); text.append(raw); }
+      const copy = iconButton('copy', 'Copy dictation', ' copy'); copy.onclick = () => { post({do: 'copy', text: item.text}); copied(copy); };
+      const remove = iconButton('trash', 'Delete dictation'); remove.onclick = () => post({do: 'dictationDelete', id: item.id});
+      row.append(text, copy, remove); $('dictationhistory').append(row);
+    }
+    if (!rows.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = query ? 'No matching dictations.' : 'Your dictations will appear here.'; $('dictationhistory').append(empty); }
+  }
+  $('dictationadd').onsubmit = e => { e.preventDefault(); post({do: 'dictationWord', word: $('dictationword').value}); $('dictationword').value = ''; };
+  $('dictationsearch').oninput = paintDictation;
+  $('dictationclear').onclick = () => { showNotice('Clear all saved dictations?', 'Clear all', () => post({do: 'dictationClear'})); };
+
   $('agentsnav').onclick = () => post({ do: 'agents' });   // its own window, beside Settings
-  document.querySelectorAll('nav button[data-s]').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button[data-s] .ni').forEach(i => {
+    const icon = i.cloneNode(true); icon.setAttribute('aria-hidden', 'true');
+    $(i.parentNode.dataset.s).querySelector(':scope > h1, #meetingbrowse > h1')?.prepend(icon);
+  });
+  function openSection(s) {
     cancelRecord();
     document.querySelectorAll('nav button, section').forEach(e => e.classList.remove('on'));
-    b.classList.add('on'); $(b.dataset.s).classList.add('on'); document.querySelector('main').scrollTop = 0;
-    if (b.dataset.s === 'meetings') { meetingBack(false); requestMeetings(); }
-    if (b.dataset.s === 'feedback') { $('feedbackinclude').checked=false; feedbackPreview(); }
-    if (b.dataset.s === 'apps') post({ do: 'apps' });   // fresh list and statuses each visit
-    if (b.dataset.s === 'brain') probe();
-  });
+    (document.querySelector(`nav button[data-s="${s}"]`) || document.querySelector('nav button[data-s="account"]')).classList.add('on');   // Apps opens from Account & Access
+    $(s).classList.add('on'); document.querySelector('main').scrollTop = 0;
+    if (s === 'meetings') { meetingBack(false); requestMeetings(); }
+    if (s === 'feedback') { $('feedbackinclude').checked=false; feedbackPreview(); }
+    if (s === 'apps') post({ do: 'apps' });   // fresh list and statuses each visit
+    if (s === 'brain') probe();
+  }
+  document.querySelectorAll('nav button[data-s]').forEach(b => b.onclick = () => openSection(b.dataset.s));
   document.querySelectorAll('[data-do]').forEach(b => b.onclick = () => post({ do: b.dataset.do }));
+  $('meetingOn').onclick = () => set('meeting', true);
   let connected = false;   // Enable All opens claude.ai's connectors page only when none is connected
   document.getElementById('enableAll').onclick = () => post({ do: 'enableAll', connected: String(connected) });
 
@@ -534,7 +593,7 @@
     showCaps('', 'Recording — press your shortcut'); $('schint').textContent = 'Press a key combo, a modifier on its own, or an F-key. Esc or click away cancels.'; $('schint').className = '';
     post({ do: 'record' });
   };
-  const dictateHint = () => dictateHotkeyTaken ? 'Another app uses this shortcut. Record another to dictate.' : 'Hold it in any text field, speak, then let go. Esc cancels.';
+  const dictateHint = () => dictateHotkeyTaken ? 'Another app uses this shortcut. Record another.' : 'Hold to talk. Double-tap to lock.';
   const showKeys = (label, text) => {   // the dictation field: its keys, or what to do
     $('dictatechange').innerHTML = label ? capsOf(label).map(c => `<i class="cap">${esc(c)}</i>`).join('') : `<span>${esc(text)}</span>`;
     $('dictatechange').classList.toggle('set', !!label && recording !== 'dictate');
@@ -555,12 +614,8 @@
   document.addEventListener('pointerdown', e => { if (!e.target.closest('#change,#dictatechange')) cancelRecord(); });
 
   document.querySelectorAll('.seg[data-k],input[data-k],select[data-k]').forEach(e=>{if(e.matches('.seg'))e.setAttribute('role','group');if(!e.hasAttribute('aria-label')&&!e.hasAttribute('aria-labelledby'))e.setAttribute('aria-label',e.closest('.row')?.querySelector('.t b')?.textContent||e.dataset.k)});
+  document.querySelectorAll('.info').forEach(i => { i.tabIndex = 0; i.setAttribute('role', 'img'); i.setAttribute('aria-label', i.title); });
 
-  const SOUNDS = ['None', 'Pop', 'Tink', 'Glass', 'Ping', 'Purr', 'Bottle', 'Blow', 'Hero', 'Funk', 'Morse', 'Submarine', 'Frog', 'Sosumi', 'Basso'];
-  document.querySelectorAll('select[data-k^="sound"]').forEach(s => {
-    s.innerHTML = SOUNDS.map(n => `<option>${n}</option>`).join('');
-    s.onchange = () => { set(s.dataset.k, s.value); if (s.value !== 'None') post({ do: 'preview', sound: s.value }); };
-  });
   document.querySelector('[data-k="microphone"]').onchange = e => set('microphone', e.target.value);
   document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => set(g.dataset.k, b.dataset.v)));
   document.querySelectorAll('.sw input[data-k]').forEach(i => i.onchange = () => set(i.dataset.k, i.checked));
@@ -569,9 +624,9 @@
     r.onchange = () => { set(r.dataset.k, +r.value); if (r.dataset.k === 'volume') post({ do: 'preview', sound: P.soundDone === 'None' ? 'Glass' : P.soundDone }); };
   });
 
-  const WHY = { cheapest: 'Haiku for every ask and agent. Fastest, and uses the least of your plan.',
-    balanced: 'Haiku for questions and quick commands. Your work model takes over real work.',
-    capable: 'Your work model for every ask and agent. Slower, and uses the most of your plan.' };
+  const WHY = { cheapest: 'Haiku for everything. Fastest.',
+    balanced: 'Haiku for quick asks, work model for real work.',
+    capable: 'Work model for everything. Slower.' };
   const dim = (k, off) => { const e = document.querySelector(`[data-k=${k}]`); e.closest('.row').classList.toggle('dim', off); if (e.type === 'range') e.disabled = off; };   // greyed, not hidden: rows below stay put
   function paint() {
     const devin = P.client === 'devin', pi = P.client === 'pi', other = devin || pi;
@@ -584,13 +639,13 @@
     if (recording !== 'dictate' && $('dictatehint').className !== 'warn') { $('dictatehint').textContent = dictateHint(); $('dictatehint').className = dictateHotkeyTaken ? 'taken' : ''; }
     dim('dictateMode', !P.dictateHotkeyLabel);
     document.querySelector('[data-k=dictateMode] [data-v=cleanup]').disabled = other;
-    $('dictatemodehint').textContent = other ? 'Clean up needs Claude. Use Verbatim instead.' : 'Clean up drops fillers and slips but keeps your words.';
+    $('dictatemodehint').textContent = other ? 'Clean up needs Claude.' : 'Clean up drops fillers, fixes misheard words.';
     document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => {
       const value = g.dataset.k === 'model' && P.model === 'haiku' ? (P.agentModel === 'opus' ? 'opus' : 'sonnet') : P[g.dataset.k];
       const on = value === b.dataset.v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
     }));
     if (!recording && $('schint').className !== 'warn') $('schint').textContent = shortcutHint();
-    $('talkhint').textContent = P.talkMode === 'toggle' ? 'Press again to send. Pauses keep listening. During an answer, press to stop it.' : 'Release to send. During an answer, press to stop it. Esc cancels.';
+    $('talkhint').textContent = P.talkMode === 'toggle' ? 'Pauses keep listening.' : 'Esc cancels.';
     document.querySelector('[data-k=talkMode]').closest('.row').hidden = P.input === 'type';
     document.querySelectorAll('.sw input[data-k]').forEach(i => i.checked = !!P[i.dataset.k]);
     document.querySelectorAll('select').forEach(s => {
@@ -599,25 +654,22 @@
     });
     document.querySelectorAll('input[type=range]').forEach(r => r.value = P[r.dataset.k]);
     $('volv').textContent = Math.round(P.volume / .6 * 100) + '%';
-    $('quietv').textContent = Math.round(P.quietLevel * 100) + '%'; dim('quietLevel', !P.quietAudio); dim('live', !P.instant); dim('aheadDelay', !P.ahead);
-    $('delayv').textContent = (+P.aheadDelay).toFixed(1) + ' s';
     $('routingwhy').textContent = WHY[P.routing] || '';
     SERVER.forEach(k => { if (document.activeElement !== $(k)) $(k).value = P[k] || ''; });
     $('agentServerModel').hidden = !P.apiBase || other;
     $('brainlede').textContent = devin ? 'Atticus thinks with Devin, on your Devin plan.' : pi ? 'Atticus thinks with the provider and model selected in Pi.'
       : P.apiBase ? 'Atticus thinks with the model on your custom server.' : 'Atticus thinks with Claude, on your Claude plan.';
-    $('clientwhy').textContent = devin ? 'Through the Devin CLI. Commands still pass Atticus’s safety check.'
-      : pi ? 'Through the Pi CLI, including local models. Commands still pass Atticus’s safety check.'
-      : P.apiBase ? 'Through Claude Code, using your custom server below.' : 'Through Claude Code. No API key needed.';
+    $('clientwhy').textContent = devin ? 'Devin CLI, with Atticus’s safety check.'
+      : pi ? 'Pi CLI, local models too, with Atticus’s safety check.'
+      : P.apiBase ? 'Uses your server below.' : 'No API key needed.';
     document.querySelector('[data-k=routing]').closest('.row').hidden = other || !!P.apiBase;
     document.querySelector('[data-k=model]').closest('.row').hidden = other || !!P.apiBase || P.routing === 'cheapest';
     $('agentsheading').hidden = $('agentsettings').hidden = other;
     $('planname').textContent = devin ? 'Devin' : pi ? 'Pi' : 'Claude';
-    $('safenote').textContent = devin ? 'Safe mode makes every Devin command wait for approval. Direct file-edit, MCP and subagent tools stay off.'
-      : pi ? 'Safe mode makes every Pi command wait for approval. Direct file-edit and MCP tools stay off.'
-      : 'AI commands use a scratch folder. Deletes, sends, purchases and commands requesting access outside it need your approval.';
-    $('meetingDemo').disabled = $('meetingPrepOpen').disabled = !P.meeting;
-    paintStyles();
+    $('safenote').textContent = devin ? 'Every Devin command waits for approval. File-edit, MCP and subagent tools stay off.'
+      : pi ? 'Every Pi command waits for approval. File-edit and MCP tools stay off.'
+      : 'AI commands use a scratch folder. Deletes, sends, purchases and outside access need approval.';
+    $('meetingDemo').hidden = $('meetingPrepOpen').hidden = !P.meeting; $('meetingOn').hidden = !!P.meeting;   // off: one way to turn it on, not two dead buttons
   }
 
   function paintRoutines() {
@@ -635,37 +687,10 @@
         title.textContent = `${routine.days === 'weekdays' ? 'Weekdays' : 'Every day'} at ${hour % 12 || 12}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`;
       }
       ask.textContent = `${routine.ask} · ${routine.mode === 'capable' ? 'Most capable' : routine.mode === 'balanced' ? 'Balanced' : 'Cheapest'}`; text.append(title, ask);
-      const remove = document.createElement('button'); remove.className = 'x'; remove.textContent = '×'; remove.setAttribute('aria-label', `Remove ${title.textContent} routine`);
+      const remove = iconButton('trash', `Remove ${title.textContent} routine`);
       remove.onclick = () => { remove.disabled = true; post({ do: 'routineRemove', id: routine.id }); };
       row.append(text, remove); root.append(row);
     }
-  }
-
-  // Meeting answer styles: rename, rewrite, remove or add; a rename keeps the picked default pointing at it.
-  function paintStyles() {
-    if (document.activeElement?.matches('#styles input')) return;   // a refresh must not wipe what is being typed
-    const now = () => P.meetingStyles || [], save = l => set('meetingStyles', l);   // read at event time: an edit may not have re-rendered yet
-    const rows = now().map((s, i) => {
-      const row = document.createElement('div'); row.className = 'row rule';
-      row.innerHTML = '<input class="field sname" maxlength="24" placeholder="Name" aria-label="Style name"><input class="field" maxlength="300" placeholder="How answers should sound"><button class="x" aria-label="Remove style">×</button>';
-      const [name, text, x] = row.children; name.value = s.name; text.value = s.text; text.setAttribute('aria-label', s.name + ' instructions');
-      name.onchange = () => {
-        const v = name.value.trim(), old = now()[i].name;
-        if (!v || v === 'Custom…' || now().some((o, j) => j !== i && o.name === v)) { name.value = old; return; }
-        if (P.meetingStyle === old) set('meetingStyle', v);
-        save(now().map((o, j) => j === i ? { ...o, name: v } : o));
-      };
-      text.onchange = () => save(now().map((o, j) => j === i ? { ...o, text: text.value.trim() } : o));
-      x.onclick = () => { document.activeElement?.blur(); save(now().filter((_, j) => j !== i)); };
-      return row;
-    });
-    const add = document.createElement('div'); add.className = 'add'; add.innerHTML = '<button class="btn">Add Style</button>';
-    add.firstChild.onclick = () => {
-      document.activeElement?.blur();
-      const list = now(); let n = list.length + 1; while (list.some(o => o.name === 'Style ' + n)) n++;
-      save([...list, { name: 'Style ' + n, text: '' }]); $('styles').querySelectorAll('.rule input:not(.sname)')[list.length]?.focus();
-    };
-    $('styles').replaceChildren(...rows, add);
   }
 
   const money = u => u < 1 ? (u * 100).toFixed(u < .1 ? 2 : 1) + '¢' : '$' + u.toFixed(2);
@@ -676,7 +701,7 @@
         `<div class="stat"><small>Avg cost</small><b>${s.all.unknown ? '≥' : ''}${money(s.all.usd / s.all.asks)}</b><span>per ask, all time</span></div>` : '');
     const typed = $('newrule')?.value || '';
     $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
-      `<div class="row rule"><input class="field" data-rule="${i}" value="${esc(r)}" aria-label="Edit rule"><button class="x" data-i="${i}" aria-label="Forget this rule">×</button></div>`).join('')
+      `<div class="row rule"><input class="field" data-rule="${i}" value="${esc(r)}" aria-label="Edit rule"><button class="x" data-i="${i}" aria-label="Forget this rule">${ICON.trash}</button></div>`).join('')
       : '<div class="empty">No rules yet.</div>') +
       '<div class="add"><input id="newrule" placeholder="When I say focus mode, close Slack and open Notes" aria-label="New rule"><button class="btn blue" id="addrule">Add</button></div>';
     $('rules').querySelectorAll('[data-i]').forEach(b => b.onclick = () => undoable({ do: 'forget', line: s.rules[+b.dataset.i] }, `#rules [data-i="${b.dataset.i}"]`, 'Rule forgotten.'));
@@ -686,8 +711,8 @@
     const add = () => { const v = $('newrule').value.trim(); if (v) post({ do: 'remember', line: v }); };
     $('newrule').value = typed; $('addrule').onclick = add; $('newrule').onkeydown = e => { if (e.key === 'Enter') add(); };
     $('skills').innerHTML = (s.skills || []).length ? s.skills.map((k, i) =>
-      `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this command or procedure">×</button></div>`).join('')
-      : '<div class="empty">None yet. Ask Atticus to do something; if it works, it lands here.</div>';
+      `<div class="row rule"><div class="t"><b>“${esc(k.say)}”</b><span>${esc(k.reply)}</span></div><button class="x" data-u="${i}" aria-label="Forget this command or procedure">${ICON.trash}</button></div>`).join('')
+      : '<div class="empty">None yet. What works lands here.</div>';
     document.querySelectorAll('[data-u]').forEach(b => b.onclick = () => undoable({ do: 'unlearn', say: s.skills[+b.dataset.u].say }, `[data-u="${b.dataset.u}"]`, 'Command forgotten.'));
     paintProfile(s.me || { facts: [] }); hidePending();
     $('ptext').textContent = s.plan.text; $('pdot').classList.toggle('bad', !s.plan.ok);
@@ -702,10 +727,10 @@
     const q = $('askq').value.trim().toLowerCase(), shown = asks.filter(a => !q || (a.task + '\n' + a.reply).toLowerCase().includes(q));
     $('asklist').replaceChildren(...shown.map(a => {
       const row = document.createElement('div'); row.className = 'row'; row.setAttribute('role', 'listitem');
-      row.innerHTML = '<div class="t"><b></b><span></span></div><button class="btn">Copy</button>';
-      row.querySelector('b').textContent = a.task; row.querySelector('span').textContent = a.at.slice(5, 16) + ' · ' + a.reply;
-      row.querySelector('button').setAttribute('aria-label', 'Copy answer to ' + a.task);
-      row.querySelector('button').onclick = () => post({ do: 'copy', text: a.reply });
+      row.innerHTML = '<div class="t"><b></b><span></span></div>';
+      row.querySelector('b').textContent = a.task; row.querySelector('span').textContent = new Date(a.at.replace(' ', 'T')).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) + ' · ' + a.reply;
+      const copy = iconButton('copy', 'Copy answer to ' + a.task, ' copy'); copy.onclick = () => { post({ do: 'copy', text: a.reply }); copied(copy); };
+      row.append(copy);
       return row;
     }));
     if (!shown.length) $('asklist').innerHTML = `<div class="empty">${q ? 'No asks match.' : 'Your asks and answers will appear here.'}</div>`;
@@ -738,7 +763,7 @@
       const rows = facts.filter(f => f.category === key);
       return `<details class="profile-category" data-category="${key}" ${openProfile.has(key) ? 'open' : ''}><summary><b>${title}</b><span>${rows.length}</span></summary>` +
         rows.map(f => `<div class="row profile-fact"><input class="field" data-profile-id="${esc(f.id)}" value="${esc(f.kind + ': ' + f.value)}" aria-label="Edit ${esc(f.kind)}">` +
-          `<span class="source-pill">${esc(f.source)} · ${esc(f.date || '')}</span><button class="x" data-profile-drop="${esc(f.id)}" aria-label="Delete ${esc(f.kind)}">×</button></div>`).join('') +
+          `<span class="source-pill">${esc(f.source)} · ${esc(f.date || '')}</span><button class="x" data-profile-drop="${esc(f.id)}" aria-label="Delete ${esc(f.kind)}">${ICON.trash}</button></div>`).join('') +
         `<div class="add profile-add"><input data-profile-add="${key}" maxlength="345" placeholder="${esc(hint)}" aria-label="Add to ${title}"><button class="btn blue">Add</button></div></details>`;
     }).join('');
     document.querySelectorAll('.profile-category').forEach(d => d.ontoggle = () => d.open ? openProfile.add(d.dataset.category) : openProfile.delete(d.dataset.category));
@@ -762,7 +787,7 @@
   $('profileImport').onclick = () => { $('profileImport').disabled = true; $('profileStatus').textContent = 'Importing from Contacts and Mail…'; post({do:'profileImport'}); };
   const SERVER = ['apiBase', 'apiKey', 'apiModel', 'agentApiModel'];   // Intelligence → Custom server, saved like About you
   const probe = () => {   // ask the saved server for its models; st.models says whether it answered
-    $('srvnote').textContent = P.apiBase ? 'Checking the server…' : 'Screen tasks need a model that can see images.';
+    $('srvnote').textContent = P.apiBase ? 'Checking the server…' : 'Needs vision for screen tasks.';
     if (P.apiBase) post({ do: 'models' });
   };
   SERVER.forEach(k => { const e = $(k); e.onchange = () => { set(k, e.value.trim()); if (['apiBase', 'apiKey'].includes(k)) probe(); };
@@ -788,7 +813,7 @@
       : '<div class="group"><div class="empty">No app matches.</div></div>';
     document.querySelectorAll('#appview button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
     document.querySelectorAll('.ck').forEach(c => c.onchange = () => { c.checked ? pick.add(c.dataset.id) : pick.delete(c.dataset.id); count(); });
-    document.querySelectorAll('h3 .all').forEach(b => b.onclick = () => { shown.filter(a => a.status === 'new').forEach(a => pick.add(a.id)); paintApps(); });
+    $('applist').querySelectorAll('h3 .all').forEach(b => b.onclick = () => { shown.filter(a => a.status === 'new').forEach(a => pick.add(a.id)); paintApps(); });
     document.querySelectorAll('#applist [data-do]').forEach(b => b.onclick = e => { e.preventDefault(); post({ do: b.dataset.do }); });
     count();
   }
@@ -824,7 +849,7 @@
   function paintMeetings(){
     const query=$('meetingq').value.trim();$('meetingcount').textContent=`${savedMeetings.length} meeting${savedMeetings.length===1?'':'s'}${query?' found':''}`;
     $('meetinglist').replaceChildren();
-    if(!savedMeetings.length){const empty=document.createElement('div');empty.className='empty';empty.textContent=query?'No meetings match. Try another word or date.':'Your meetings will appear here after you start listening with transcript saving on.';$('meetinglist').append(empty);return;}
+    if(!savedMeetings.length){const empty=document.createElement('div');empty.className='empty';empty.textContent=query?'No meetings match. Try another word or date.':'Saved meetings appear here.';$('meetinglist').append(empty);return;}
     savedMeetings.forEach((m,i)=>{const b=document.createElement('button');b.className='meetingrow';b.setAttribute('role','listitem');
       const title=document.createElement('b'),meta=document.createElement('small'),summary=document.createElement('span');title.textContent=m.title;
       meta.textContent=[meetingDate(m.started),meetingDuration(m.duration),m.app].filter(Boolean).join(' · ');summary.textContent=m.summary?.split('\n')[0]||m.status;
@@ -885,8 +910,8 @@
     models(result) {   // Ignore answers from a server or credential that has since changed.
       if (result.base !== P.apiBase || result.key !== (P.apiKey || '')) return;
       const list = result.list;
-      if (P.apiBase) $('srvnote').textContent = list.length ? `Found ${list.length} model${list.length > 1 ? 's' : ''}. Screen tasks need one that can see images.`
-        : 'No models found there. Is the server running? You can still type a model name.';
+      if (P.apiBase) $('srvnote').textContent = list.length ? `Found ${list.length} model${list.length > 1 ? 's' : ''}.`
+        : 'No models found there. You can still type one.';
       $('apimodels').innerHTML = list.map(m => `<option value="${esc(m)}">`).join('');
       if (list.length && !P.apiModel && document.activeElement !== $('apiModel')) set('apiModel', list[0]);
     },
@@ -904,13 +929,13 @@
       if(Array.isArray(result.meetings)){if(result.query!==undefined&&result.query!==$('meetingq').value.trim())return;savedMeetings=result.meetings;selectedMeeting=0;paintMeetings();}
     },
     walk(id) { document.querySelectorAll('#perms .row, #agentsetup .row').forEach(r => r.classList.toggle('now', !!id && !!r.querySelector(`[data-g="${id}"]`))); },   // Enable All: the step it is on
-  connectors(c) { const n = c.connected.length, s = c.signin.length; document.getElementById('conntext').textContent = n ? c.connected.slice(0, 3).join(', ') + (n > 3 ? ` and ${n - 3} more` : '') + ' connected' + (s ? ` · ${s} need sign-in` : '') : s ? `${s} need sign-in` : 'Gmail, Drive and more, from your Claude account.'; connected = n > 0; },
+  connectors(c) { const n = c.connected.length, s = c.signin.length; document.getElementById('conntext').textContent = n ? c.connected.slice(0, 3).join(', ') + (n > 3 ? ` and ${n - 3} more` : '') + ' connected' + (s ? ` · ${s} need sign-in` : '') : s ? `${s} need sign-in` : 'Gmail, Drive and more.'; connected = n > 0; },
   perms(p) {   // each row shows Allowed or its Allow button
       document.querySelectorAll('[data-g]').forEach(b => { b.hidden = !!p[b.dataset.g]; b.previousElementSibling.hidden = !p[b.dataset.g]; });
     },
     notice(n) { showNotice(n.text); },
     flush() { return flush(false); },   // the window is closing: Atticus.swift runs the waiting deletion
-    tab(name) { document.querySelector(`nav button[data-s="${name}"]`).click(); },
+    tab(name) { openSection(name); },
     reveal(item) { want = item; reveal(); },
     apps(list) {
       if (asking) return;
@@ -924,8 +949,10 @@
     },
     allowDone() { asking = 0; post({ do: 'apps' }); },
     agents({ count }) { $('agentcount').textContent = count ? count + ' running' : ''; $('agentsnav').setAttribute('aria-label', count ? `Open Agents, ${count} running` : 'Open Agents'); },
+    dictation(d) { dictations = d; paintDictation(); },
+    globe(on) { $('globefix').hidden = !on; },   // fn alone also fires macOS's own 🌐 action
     load(d) {
-      P = {talkMode: 'hold', dictateMode: 'verbatim', dictateHotkeyLabel: '', microphone: 'automatic', quietAudio: false, quietLevel: 0.18, meetingSave: true, meetingSummary: true, client: 'claude', ...d.prefs}; recording = '';
+      P = {talkMode: 'hold', dictateMode: 'verbatim', dictateHotkeyLabel: '', microphone: 'automatic', meetingSave: true, meetingSummary: true, client: 'claude', ...d.prefs}; recording = '';
       P.routines = d.routines || []; paintRoutines();
       $('shortcut').classList.remove('rec'); $('change').textContent = 'Change Shortcut'; $('dictatechange').classList.remove('rec');
       hotkeyTaken = !!d.hotkeyTaken; dictateHotkeyTaken = !!d.dictateHotkeyTaken; if ($('schint').className !== 'warn') $('schint').className = hotkeyTaken ? 'taken' : '';
@@ -933,6 +960,7 @@
       $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
       if (d.update) $('upstatus').textContent = d.update;
       if (d.mics) this.mics(d.mics);
+      this.globe(d.globeTaken);
       paint(); if (!P.apiBase) post({do:'localServers'}); if (d.state) state(d.state);
     },
     mics(list) {

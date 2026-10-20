@@ -181,32 +181,33 @@ class NativeHandsTests(unittest.TestCase):
         print('HANDS NET TIMINGS (fixture): ' + ', '.join(f'{name} {value:.2f} ms' for name,value in net.items() if value is not None), flush=True)
 
 
-    def test_quartz_event_spies_restore_cursor_and_clear_held_modifiers(self):
+    def test_quartz_event_spies_post_to_the_app_without_moving_the_pointer(self):
         source = (ROOT / 'Atticus.swift').read_text()
+        background = source[source.index('    static func mouse('):source.index('    static func screenLease(')] + source[source.index('    static func wheel('):source.index('    static func contentMoved(')]
+        for forbidden in ('CGWarpMouseCursorPosition', 'post(tap', 'activate', 'screenLease', 'restoreFocus'):
+            self.assertNotIn(forbidden, background)
         methods = source[source.index('    static func normalized('):source.index('    static func attribute(')]
-        methods += source[source.index('    static func sendKeys('):source.index('    static func raise(')]
-        methods += source[source.index('    static func mouse('):source.index('    static func fingerprint(')]
+        methods += source[source.index('    static func sendKeys('):source.index('    static let skyLight')]
+        methods += source[source.index('    static func deliver('):source.index('    static func targetWindow(')]
+        methods += source[source.index('    static func mouse('):source.index('    static func screenLease(')]
         methods += source[source.index('    static func wheel('):source.index('    static func contentMoved(')]
-        methods = methods.replace('NSRunningApplication','TargetApp').replace('CGEventSource(', 'EventSource(').replace('CGEvent(', 'Event(').replace('CGWarpMouseCursorPosition(', 'warp(')
+        methods = methods.replace('NSRunningApplication','TargetApp').replace('CGEventSource(', 'EventSource(').replace('CGEvent(', 'Event(').replace('_ e: CGEvent', '_ e: Event')
         swift = '''import Cocoa
 enum Prefs { static var path:String { CommandLine.arguments[1] + "/settings.json" } }
 struct TargetApp { var processIdentifier: Int32 = 123 }
-var cursor = CGPoint(x:900,y:600), traces:[Event] = [], warped:[CGPoint] = []
-var cancelDrag=false, restored=0
-func warp(_ p: CGPoint) { cursor = p; warped.append(p) }
+var traces:[Event] = [], cancelDrag=false
 final class EventSource {
- init?(stateID: CGEventSourceStateID) { precondition(stateID == .privateState) }
+ init?(stateID: CGEventSourceStateID) {}
 }
 final class Event {
- var location = cursor, flags:CGEventFlags = .maskAlternate, type:CGEventType = .null
- var count:Int64 = 0, pid:Int32 = 0, code:CGKeyCode = 0
- init?(source:EventSource) {}
+ var location = CGPoint(x:900,y:600), stamped:CGPoint?, flags:CGEventFlags = .maskAlternate, type:CGEventType = .null
+ var wheel:Int32 = 0, pid:Int32 = 0, code:CGKeyCode = 0, fields:[UInt32:Int64] = [:]
  init?(keyboardEventSource:EventSource,virtualKey:CGKeyCode,keyDown:Bool) { code = virtualKey; type = keyDown ? .keyDown : .keyUp }
  init?(mouseEventSource:EventSource,mouseType:CGEventType,mouseCursorPosition:CGPoint,mouseButton:CGMouseButton) { type = mouseType; location = mouseCursorPosition }
- init?(scrollWheelEvent2Source:EventSource,units:CGScrollEventUnit,wheelCount:UInt32,wheel1:Int32,wheel2:Int32,wheel3:Int32) { type = .scrollWheel; count = Int64(wheel1) }
- func setIntegerValueField(_ field:CGEventField,value:Int64) { count = value }
+ init?(scrollWheelEvent2Source:EventSource,units:CGScrollEventUnit,wheelCount:UInt32,wheel1:Int32,wheel2:Int32,wheel3:Int32) { type = .scrollWheel; wheel = wheel1 }
+ func setIntegerValueField(_ field:CGEventField,value:Int64) { fields[field.rawValue] = value }
  func postToPid(_ target:Int32) { pid = target; traces.append(self) }
- func post(tap:CGEventTapLocation) { traces.append(self); if cancelDrag && type == .leftMouseDragged { Hands.stopped=1 } }
+ func post(tap:CGEventTapLocation) { preconditionFailure("Global event post") }
 }
 enum Hands {
  static let env:[String:String] = [:]
@@ -214,27 +215,38 @@ enum Hands {
  static func matches(_ s:String,_ p:String)->Bool { s.range(of:p,options:.regularExpression) != nil }
  static var stopped:Int32=0
  static func checkStopped()throws { if stopped != 0 { throw Failure("Cancelled") } }
- static func raise(_ a:TargetApp) throws {}
- static func restoreFocus(_ a:TargetApp)->()->Void { { restored += 1 } }
+ static let stampLocation:((Event,CGPoint)->Void)? = { e,p in e.stamped = p }
+ static let skyPost:((Int32,Event)->Void)? = { pid,e in e.pid = pid; traces.append(e); if cancelDrag && e.type == .leftMouseDragged { stopped = 1 } }
+ static var window:UInt32 = 77, front:[String] = []
+ static func targetWindow(_ a:TargetApp)->UInt32 { window }
+ static func keysReachTask(_ pid:Int32)throws {}
+ static func frontMouse(_ p:CGPoint,_ a:TargetApp,double:Bool,right:Bool,to:CGPoint?)throws { front.append("mouse") }
+ static func frontWheel(_ d:String,_ p:CGPoint,_ a:TargetApp,fraction:Double)throws { front.append("wheel") }
 ''' + methods + '''
 }
-let a = TargetApp(), saved = cursor
+enum MiniScreen { static var workInFront = false }
+func routed(_ e:Event)->Bool { e.pid == 123 && e.fields[40] == 123 && [51,91,92].allSatisfy { e.fields[$0] == 77 } && e.flags.isEmpty && e.stamped == e.location }
+let a = TargetApp(), off = CGPoint(x:-1,y:-1)
 try Hands.mouse(CGPoint(x:10,y:20),a,double:true)
-precondition(traces.map(\\.type) == [.leftMouseDown,.leftMouseUp,.leftMouseDown,.leftMouseUp])
-precondition(traces.map(\\.count) == [1,1,2,2] && traces.allSatisfy { $0.flags.isEmpty })
-precondition(cursor == saved)
+precondition(traces.map(\\.type) == [.mouseMoved,.leftMouseDown,.leftMouseUp,.leftMouseDown,.leftMouseUp,.leftMouseDown,.leftMouseUp])
+precondition(traces.allSatisfy(routed) && traces.map { $0.fields[1]! } == [0,1,1,1,1,2,2] && Set(traces.map { $0.fields[58]! }).count == 1)
+precondition(traces[1].location == off && traces[2].location == off && traces[3...].allSatisfy { $0.location == CGPoint(x:10,y:20) && $0.fields[7] == 3 })
 traces = []; try Hands.mouse(CGPoint(x:10,y:20),a,right:true)
-precondition(traces.map(\\.type) == [.rightMouseDown,.rightMouseUp] && cursor == saved)
+precondition(traces.map(\\.type) == [.mouseMoved,.rightMouseDown,.rightMouseUp] && traces.allSatisfy(routed) && traces[1].fields[3] == 1)
 traces = []; try Hands.mouse(CGPoint(x:10,y:20),a,to:CGPoint(x:50,y:60))
-precondition(traces.count == 22 && traces.first!.type == .leftMouseDown && traces.last!.type == .leftMouseUp)
-precondition(traces.filter { $0.type == .leftMouseDragged }.count == 20 && cursor == saved)
+precondition(traces.count == 25 && traces[3].type == .leftMouseDown && traces.last!.type == .leftMouseUp && traces.last!.location == CGPoint(x:50,y:60))
+precondition(traces.filter { $0.type == .leftMouseDragged }.count == 20 && traces[3...].allSatisfy { $0.fields[7] == 0 } && traces.allSatisfy(routed))
 traces = []; try Hands.sendKeys("cmd+shift+4",pid:123,times:2)
 precondition(traces.count == 4 && traces.allSatisfy { $0.pid == 123 && $0.code == 21 && $0.flags == [.maskCommand,.maskShift] })
 traces = []; try Hands.wheel("down",CGPoint(x:5,y:6),a,fraction:0.25)
-precondition(traces.count == 1 && traces[0].type == .scrollWheel && traces[0].count == -125 && traces[0].flags.isEmpty && cursor == saved)
+precondition(traces.map(\\.type) == [.mouseMoved,.scrollWheel] && traces[1].wheel == -125 && traces.allSatisfy { routed($0) && $0.location == CGPoint(x:5,y:6) })
 traces=[]; cancelDrag=true
 do { try Hands.mouse(CGPoint(x:10,y:20),a,to:CGPoint(x:50,y:60)); preconditionFailure("Cancelled drag continued") } catch {}
-precondition(traces.last!.type == .leftMouseUp && cursor == saved && restored == 5)
+precondition(traces.last!.type == .leftMouseUp && traces.allSatisfy(routed))
+traces=[]; cancelDrag=false; Hands.stopped=0
+try Hands.mouse(CGPoint(x:10,y:20),a,front:true); MiniScreen.workInFront=true; try Hands.wheel("down",CGPoint(x:5,y:6),a)
+MiniScreen.workInFront=false; Hands.window=0; try Hands.mouse(CGPoint(x:10,y:20),a,to:CGPoint(x:50,y:60))
+precondition(Hands.front == ["mouse","wheel","mouse"] && traces.isEmpty, "front work or an unknown window posted background events")
 print("hands Quartz spies ok")
 '''
         path = self.root / 'event-spies.swift'; path.write_text(swift)
@@ -245,6 +257,51 @@ print("hands Quartz spies ok")
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('hands Quartz spies ok',result.stdout)
 
+    def test_background_input_reaches_a_window_behind_without_focus_or_pointer(self):
+        env = {k: v for k, v in self.env.items() if k != 'ATTICUS_AX_ONLY'}   # the real Quartz paths
+        def hands(*args, receipt=None, extra={}):
+            result = subprocess.run([str(self.binary), '--hands', *args], input=json.dumps(receipt) if receipt else None,
+                                    env={**env, **extra, 'ATTICUS_HANDS_RECEIPT': '1' if receipt else '0'}, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr); return result.stdout
+        if 'Allow Atticus' in subprocess.run([str(self.binary), '--hands', 'see', '2147483647'], env=env, capture_output=True, text=True).stdout:
+            self.skipTest('Temporary binary lacks Accessibility permission; no permission changes made')
+        bundle = self.root / 'BackgroundFixture.app'; executable = bundle / 'Contents/MacOS/fixture'; executable.parent.mkdir(parents=True, exist_ok=True)
+        (bundle / 'Contents/Info.plist').write_text('''<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.atticus.background.fixture</string><key>CFBundleExecutable</key><string>fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/><key>NSPrincipalClass</key><string>NSApplication</string></dict></plist>''')
+        compiled = subprocess.run(['swiftc', str(ROOT / 'tests/background_fixture.swift'), '-o', str(executable)], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        ready, log = self.root / 'background-ready', self.root / 'background-events.jsonl'
+        ready.unlink(missing_ok=True)
+        process = subprocess.Popen(['open', '-W', '-g', '-n', str(bundle), '--args', str(self.root)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def stop():
+            if ready.exists():
+                try: os.kill(int(ready.read_text()), signal.SIGTERM)
+                except (ProcessLookupError, ValueError): pass
+            try: process.wait(timeout=3)
+            except subprocess.TimeoutExpired: process.kill()
+        self.addCleanup(stop)
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline: time.sleep(.01)
+        pid = ready.read_text().strip()
+        subprocess.run(['open', '-a', 'Finder'], check=True); time.sleep(1)
+        finder = subprocess.run(['pgrep', '-x', 'Finder'], capture_output=True, text=True).stdout.split()[0]
+        self.assertIn('Pad', hands('see', pid))
+        for args in (('click', 'Pad'), ('click', 'Pad', 'double'), ('click', 'Pad', 'right')):
+            hands(*args, receipt=json.loads(hands('label', *args)))
+        hands('press', 'h'); hands('press', 'i'); time.sleep(.5)
+        rows = [json.loads(line) for line in log.read_text().splitlines()]
+        inside = [r for r in rows if r['inWindow'] and 0 <= r['x'] <= 360 and 0 <= r['y'] <= 220]
+        self.assertEqual([r['count'] for r in inside if r['type'] == 1], [1, 1, 2], rows)   # click, then double-click
+        self.assertEqual(len([r for r in inside if r['type'] == 3]), 1, rows)   # right-click
+        self.assertEqual(''.join(r['chars'] for r in rows if r['type'] == 10), 'hi', rows)
+        self.assertTrue(all(not r['active'] and str(r['front']) == finder for r in rows), rows)   # Finder stayed in front
+        self.assertEqual(len({tuple(r['pointer']) for r in rows}), 1, rows)   # the pointer never moved
+        print('BACKGROUND INPUT (fixture): ' + json.dumps(rows), flush=True)
+        front = {'ATTICUS_FOCUS_REQUESTED': '1'}   # the user asked to see the work: the old foreground pointer path
+        hands('click', 'Pad', receipt=json.loads(hands('label', 'click', 'Pad', extra=front)), extra=front); time.sleep(.5)
+        clicks = [r for r in map(json.loads, log.read_text().splitlines()[len(rows):]) if r['type'] == 1 and r['inWindow']]
+        self.assertEqual(len(clicks), 1, clicks); self.assertTrue(clicks[0]['active'], clicks)
+
     def test_ax_algorithms_with_in_memory_window(self):
         source = (ROOT / 'Atticus.swift').read_text()
         section = source[source.index('enum Hands {'):source.index('// MARK: - End Hands')]
@@ -253,7 +310,7 @@ print("hands Quartz spies ok")
         header = header.replace('ProcessInfo.processInfo.environment', '["ATTICUS_DIR":CommandLine.arguments[1], "ATTICUS_AX_ONLY":"1"]')
         names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu','screenLease',
                  'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','stringValue','selectedRange','insertionTarget','insertAfter','typeText',
-                 'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root']
+                 'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root','windowNumber','targetWindow','lease','unlock','submitReceipt','keysReachTask']
         matches = list(re.finditer(r'^    static func (\w+)\(', section, re.M))
         methods = ''.join(section[m.start():matches[i+1].start() if i+1<len(matches) else section.rfind('\n}')]
                           for i,m in enumerate(matches) if m[1] in names)
@@ -271,6 +328,8 @@ final class TestElement:NSObject {
 }
 func axWindowNumber(_ e:TestElement) -> NSNumber? { e.attrs["AXWindowNumber"] as? NSNumber }
 struct TestApp { let processIdentifier:Int32 = 123; let localizedName:String? = "Fixture"; var isTerminated=false; let bundleURL:URL?=nil }
+extension TestApp { init?(processIdentifier pid:Int32) { guard pid == 123 else { return nil }; self.init() } }
+enum MiniScreen { static var workInFront = false }
 let application = TestElement("AXApplication"), window = TestElement("AXWindow","Fixture",CGRect(x:0,y:0,width:400,height:400))
 window.attrs["AXWindowNumber"]=NSNumber(value:42)
 let menuBar=TestElement("AXMenuBar"), file=TestElement("AXMenuBarItem","File"), fileMenu=TestElement("AXMenu"), exportTo=TestElement("AXMenuItem","Export To"), formats=TestElement("AXMenu"), pdf=TestElement("AXMenuItem","PDF…")
@@ -341,8 +400,7 @@ func AXUIElementGetPid(_ e:TestElement,_ pid:UnsafeMutablePointer<pid_t>)->AXErr
   guard let action=names.first(where:e.supported.contains) else { return false }; e.action?(action); return true
  }
  static func fingerprint(_ m:Map)->[UInt8] { [] }
- static func wheel(_ d:String,_ p:CGPoint,_ a:TestApp,fraction:Double=1)throws { preconditionFailure("Unexpected real mouse fallback") }
- static func raise(_ a:TestApp)throws { preconditionFailure("Unexpected app activation") }
+ static func wheel(_ d:String,_ p:CGPoint,_ a:TestApp,fraction:Double=1,front:Bool=false)throws { preconditionFailure("Unexpected real mouse fallback") }
  static func restoreFocus(_ a:TestApp)->()->Void { {} }   // menu presses tell the focus guard; nothing to restore in memory
  static func sendKeys(_ text:String,pid:Int32,times:Int=1)throws { precondition(pid==123); keysSent.append(text)
   guard let field=application.attrs[kAXFocusedUIElementAttribute] as? TestElement, let value=field.attrs[kAXValueAttribute] as? String else { return }
@@ -397,6 +455,22 @@ do { _=try Hands.root(app); preconditionFailure("Application accepted as a windo
 let foreign=TestElement("AXWindow"); foreign.pid=999; rootHit=foreign
 do { _=try Hands.root(app); preconditionFailure("Another app's window accepted") } catch {}
 rootHit=nil; cgWindows=[]; application.attrs[kAXWindowsAttribute]=[window] as NSArray
+let userWindow=TestElement("AXWindow","User window",CGRect(x:500,y:0,width:300,height:300)); userWindow.attrs["AXWindowNumber"]=NSNumber(value:43)
+application.attrs[kAXWindowsAttribute]=[userWindow,window] as NSArray; application.attrs[kAXFocusedWindowAttribute]=userWindow
+Hands.pinnedWindow="42"; precondition(try! Hands.root(app).1 === window, "the pinned task window lost to the user's focused window")
+Hands.pinnedWindow="42"; try! Hands.keysReachTask(123)   // focus is in the task's window
+let userField=TestElement("AXTextField","User field"); userWindow.add(userField); application.attrs[kAXFocusedUIElementAttribute]=userField
+do { try Hands.keysReachTask(123); preconditionFailure("Keys went to the user's window instead of the task's") } catch {}
+application.attrs[kAXFocusedUIElementAttribute]=name
+Hands.pinnedWindow="44"; do { _=try Hands.root(app); preconditionFailure("A missing pinned window fell back to the user's window") } catch {}
+application.attrs[kAXWindowsAttribute]=[] as NSArray; rootHit=userWindow
+cgWindows=[[kCGWindowOwnerPID as String:123,kCGWindowLayer as String:0,kCGWindowNumber as String:43,kCGWindowBounds as String:userWindow.rect.dictionaryRepresentation]]
+do { _=try Hands.root(app); preconditionFailure("The hit-test fallback substituted another window for the pinned one") } catch {}
+Hands.pinnedWindow=nil; rootHit=nil; application.attrs[kAXWindowsAttribute]=[window] as NSArray; application.attrs[kAXFocusedWindowAttribute]=application
+window.attrs.removeValue(forKey:"AXWindowNumber")
+cgWindows=[[kCGWindowOwnerPID as String:123,kCGWindowLayer as String:0,kCGWindowNumber as String:77,kCGWindowBounds as String:window.rect.dictionaryRepresentation]]
+precondition(Hands.targetWindow(app) == 77 && (try! Hands.capture(app)).windowID == "77", "input lost the window id that capture recovered")
+window.attrs["AXWindowNumber"]=NSNumber(value:42); cgWindows=[]
 let nestedText=String(repeating:"Deep document words. ",count:100)
 let level1=TestElement("AXGroup"), level2=TestElement("AXGroup"), level3=TestElement("AXGroup"), deepEditor=TestElement("AXTextArea","Deep document")
 deepEditor.attrs[kAXValueAttribute]=nestedText as NSString; level1.add(level2); level2.add(level3); level3.add(deepEditor)
@@ -487,7 +561,10 @@ name.attrs[kAXValueAttribute]="Question remains:\\nNext line remains." as NSStri
 precondition((try! Hands.insertAfter("Question remains:"," Answer.",app)).contains("Typed after"))
 precondition(name.attrs[kAXValueAttribute] as? String == "Question remains: Answer.\\nNext line remains.")
 do { _=try Hands.checked(["press","backspace"],try Hands.capture(app),app); preconditionFailure("Destructive key accepted in editable text") } catch {}
+let heldClipboard=try Hands.lease("clipboard.lock"), releaseAt=Date().addingTimeInterval(0.2)   // another Atticus process mid-paste
+DispatchQueue.global().asyncAfter(deadline:.now()+0.2){ Hands.unlock(heldClipboard) }
 refuseValueWrite=true; try Hands.typeText("Background paste",field,name,app,append:false)
+precondition(Date() >= releaseAt && Hands.leaseWaited, "a paste borrowed the clipboard while another Atticus process held it")
 precondition(name.attrs[kAXValueAttribute] as? String == "Background paste" && Clipboard.general.text == "Original clipboard")
 precondition(keysSent.suffix(2) == ["cmd+a","cmd+v"])
 name.attrs[kAXValueAttribute]="Line one\\nLine two" as NSString; caret=CFRange(location:0,length:0); name.attrs[kAXSelectedTextRangeAttribute]=AXValueCreate(.cfRange,&caret)!
@@ -495,6 +572,11 @@ try Hands.typeText("!",field,name,app,append:true) // Paste-only append lands at
 precondition(name.attrs[kAXValueAttribute] as? String == "Line one\\nLine two!" && keysSent.last == "cmd+v" && !keysSent.contains("cmd+right")); refuseValueWrite=false
 precondition(!Hands.pageKeysAllowed(app))
 precondition(try! Hands.settle(app,seconds:0.5))
+let sentBefore=try Hands.capture(app); var badge=sentBefore; badge.texts.append("3 unread")
+precondition(!Hands.submitReceipt("Hello","Hello","Hello",sentBefore,badge), "an unrelated window update counted as a sent message")
+precondition(!Hands.submitReceipt("Hello","Hello\\n","Hello",sentBefore,sentBefore), "a new line in the field counted as a sent message")
+precondition(Hands.submitReceipt("Hello","","Hello",sentBefore,sentBefore) && Hands.submitReceipt("Hello",nil,"Hello",sentBefore,sentBefore))
+var posted=sentBefore; posted.texts.append("Hello"); precondition(Hands.submitReceipt("Hello","Hello","Hello",sentBefore,posted))
 print("hands in-memory AX fixture ok")
 '''
         swift = swift.replace('AXUIElementCreateApplication','testApplication').replace('AXUIElementCreateSystemWide','testSystemWide').replace('CGWindowListCopyWindowInfo','testCGWindows')

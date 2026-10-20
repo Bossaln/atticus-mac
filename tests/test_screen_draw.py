@@ -29,6 +29,40 @@ class DrawingTests(unittest.TestCase):
         anchored = {'steps':[{'target':'Exact control','wait':True,'shapes':[{'kind':'rect'},{'kind':'pointer'},{'kind':'label','text':'Here'}]}]}
         self.assertEqual(atticus.drawing(anchored)['steps'][0]['target'],'Exact control')
 
+    def test_large_text_lines_for_worked_math(self):
+        mapping = {'2':{'frame':[-1920,0,1920,1080],'pixels':[1280,720]}}
+        steps = [{'screen':2,'say':'Split the 12.','shapes':[{'kind':'text','text':'12x⁵ = (3·4)·x⁵','at':[640,360],'size':'l'}]},
+                 {'say':'Check it.','shapes':[{'kind':'text','text':'3·4 = 12 ✓','color':'green'}]}]
+        value = atticus.drawing({'steps':steps},mapping)
+        self.assertEqual(value['steps'][0]['shapes'][0],{'kind':'text','text':'12x⁵ = (3·4)·x⁵','at':[-960,540],'size':'l'})
+        self.assertTrue(value['teaching'])
+        for bad in ({'kind':'text'},{'kind':'text','text':''},{'kind':'text','text':'x'*301},{'kind':'text','text':'a','size':'xl'},
+                    {'kind':'text','text':'a','rect':[1,2,3,4]},{'kind':'label','at':[1,1],'text':'a','size':'l'}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError): atticus.drawing({'steps':[{'say':'s','shapes':[bad]}]})
+        self.assertIn('text text (one large line',atticus.DRAW_HELP)
+        self.assertIn('Drawings stay through later asks',atticus.DRAW_HELP)
+
+    def test_follow_up_sees_the_drawing_and_a_selected_mark(self):
+        drawn = {'steps':[{'say':'The shared x.','shapes':[{'kind':'circle','rect':[600,170,60,60],'color':'red'}]}],'shown':1}
+        context = atticus.drawing_context(drawn)
+        self.assertIn('still on screen, step 1 of 1',context)
+        self.assertIn('"rect":[600,170,60,60]',context)
+        self.assertIn('replaces it',context)
+        for bad in (None,{},{'steps':[]},{'steps':'x'},'steps'):
+            self.assertEqual(atticus.drawing_context(bad),'')
+        many = {'steps':[{'say':f'Step {i}','shapes':[{'kind':'path','points':[[j,j] for j in range(256)]}]} for i in range(12)]}
+        squeezed = atticus.drawing_context(many)
+        self.assertIn('"Step 11"',squeezed); self.assertLess(len(squeezed),2300)
+        with tempfile.NamedTemporaryFile(prefix='atticus-point-',suffix='.jpg') as image:
+            value = {'bounds':[570,140,120,120],'path':[[594,164],[666,236]],'image':image.name,'element':'',
+                     'mark':'circle in step 1 of 1: The shared x.'}
+            context, shots = atticus.point_context(value)
+        self.assertIn('User selected a mark of your drawing',context)
+        self.assertIn('The shared x.',context)
+        self.assertIn('selected this mark',shots[0][1])
+        self.assertEqual(atticus.point_context({**value,'image':'/etc/hosts','mark':'circle'})[0][:30],'User selected a mark of your d')   # text alone still counts
+        self.assertEqual(atticus.point_context({**value,'image':'/etc/hosts','mark':7})[0],'')
+
     def test_bad_coordinates_and_unbounded_payloads_are_rejected(self):
         good = {'steps':[{'shapes':[{'kind':'rect','rect':[1,2,3,4]}]}]}
         for rect in ([0,0,0,1],[0,0,-2,1],[True,0,1,1],[float('nan'),0,1,1],[float('inf'),0,1,1],[100001,0,1,1],[0,0,1],'bad'):
@@ -43,16 +77,20 @@ class DrawingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 atticus.drawing({'steps':[{'shapes':[{'kind':kind,'points':[[1,2],[3,4]],'rect':[1]}]}]})
 
-    def test_actual_retina_and_two_display_pixel_mapping(self):
+    def test_retina_scaled_and_non_retina_pixel_mapping(self):
         mapping = {'1':{'frame':[0,0,1440,900],'pixels':[2880,1800]},
-                   '2':{'frame':[-1920,-180,1920,1080],'pixels':[1280,720]}}
+                   '2':{'frame':[-1920,-180,1920,1080],'pixels':[1280,720]},
+                   '3':{'frame':[1440,0,1920,1080],'pixels':[1920,1080]}}
         step = lambda n,p: {'screen':n,'say':'Look here.','shapes':[{'kind':'pointer','at':p}]}
-        result = atticus.drawing({'steps':[step(1,[1440,900]),step(2,[640,360])]},mapping)
+        second = step(2,[640,360]); second['shapes'].append({'kind':'rect','rect':[0,0,1280,720]})
+        result = atticus.drawing({'steps':[step(1,[1440,900]),second,step(3,[960,540])]},mapping)
         self.assertEqual(result['steps'][0]['shapes'][0]['at'],[720,450])
         self.assertEqual(result['steps'][1]['shapes'][0]['at'],[-960,360])
+        self.assertEqual(result['steps'][1]['shapes'][1]['rect'],[-1920,-180,1920,1080])
+        self.assertEqual(result['steps'][2]['shapes'][0]['at'],[2400,540])
         for pixel in ([-1,0],[1281,0],[0,721]):
             with self.assertRaises(ValueError): atticus.drawing({'steps':[step(2,pixel)]},mapping)
-        with self.assertRaises(ValueError): atticus.drawing({'steps':[step(3,[0,0])]},mapping)
+        with self.assertRaises(ValueError): atticus.drawing({'steps':[step(4,[0,0])]},mapping)
 
     def test_disabled_tool_and_prompt_budget(self):
         with patch.object(atticus,'pref',side_effect=lambda k,d: False if k == 'draw' else d):
@@ -61,13 +99,16 @@ class DrawingTests(unittest.TestCase):
         prompt = atticus.system_prompt(atticus.ASK_FIRST)
         installed = str(Path.home()/'Applications/Atticus.app/Contents/Resources/atticus.py')
         self.assertIn('--draw',prompt)
-        self.assertLessEqual(len(prompt.replace(atticus.ME,installed)),10000)
+        self.assertIn('use ' + atticus.DRAW + ' once on Request screen unless user names another',prompt)
+        self.assertLessEqual(len(prompt.replace(atticus.ME,installed)),10050)   # +50 for the send-to-running-input rule (1.3.2)
         self.assertIn('draw',atticus.switches())
         self.assertFalse(atticus.replayable(atticus.DRAW + " '{}'"))
 
     def test_confirmation_and_request_relay(self):
         data = {'steps':[{'say':'Look here.','shapes':[{'kind':'pointer','at':[10,10]}]}]}
         target = {'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
+        (self.root/'draw-screens.json').write_text(json.dumps({
+            'screens':{'1':{'frame':[0,0,800,600],'pixels':[1600,1200]}}, 'target':target}))
         with patch.dict(os.environ,{'ATTICUS_ASK':str(self.root)},clear=False), \
              patch.object(atticus,'draw_target',return_value=target), patch.object(atticus,'emit') as emit:
             with patch.object(atticus,'wait_commit',return_value=False):
@@ -82,6 +123,23 @@ class DrawingTests(unittest.TestCase):
             self.assertEqual(value['target'],target)
             self.assertEqual(value['state'],atticus.hands_state())
             self.assertTrue(value['teaching'])
+
+    def test_draw_requires_fresh_screen_context(self):
+        data = {'steps':[{'say':'Look here.','shapes':[{'kind':'pointer','at':[10,10]}]}]}
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(self.root)},clear=False), \
+             patch.object(atticus,'wait_commit',return_value=True), patch.object(atticus,'emit') as emit, \
+             patch.object(atticus,'draw_target') as target:
+            with self.assertRaisesRegex(ValueError,'--look before drawing'):
+                atticus.draw(data)
+        emit.assert_not_called()
+        target.assert_not_called()
+
+    def test_verified_guide_replaces_a_long_final_answer(self):
+        long_answer = 'A long duplicate explanation that belongs in the guide.'
+        self.assertEqual(atticus.guide_reply([{'error':False,'result':'Guide shown (step 1 of 4). Leave it running.'}],long_answer),
+                         'Done. Steps are on screen.')
+        self.assertEqual(atticus.guide_reply([{'error':True,'result':'Guide shown (step 1 of 4). Leave it running.'},
+                                              {'error':False,'result':long_answer}],long_answer),long_answer)
 
     def test_teaching_steps_keep_order_and_visible_captions(self):
         data = {'steps':[
@@ -100,26 +158,43 @@ class DrawingTests(unittest.TestCase):
     def test_app_lifecycle_connects_to_clear(self):
         source = (ROOT/'Atticus.swift').read_text()
         app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
-        for start,end in [('func hush()', 'func stopOfferInput()'),('func run(_ t:', '// MARK: - Agent panels')]:
-            self.assertIn('drawing.clear()',app.split(start,1)[1].split(end,1)[0])
-        self.assertIn('if drawing.active { cancel(); return }',app)
+        section = lambda start, end: app.split(start,1)[1].split(end,1)[0]
+        self.assertIn('drawing.clear()',section('func close(clear: Bool)','\n    }'))   # the box's ✕ takes the drawing with it
+        for start,end in [('func hush()', 'func stopOfferInput()'),('func run(_ t:', '// MARK: - Agent panels'),('func typed(', 'func finish()')]:
+            self.assertNotIn('drawing.clear()',section(start,end),start)   # a follow-up keeps the drawing; only a new one replaces it
+        self.assertIn('drawing.clearInput(); drawing.deselect()',section('func run(_ t:', '// MARK: - Agent panels'))
+        self.assertIn('if let drawn { request["drawing"] = drawn }',app)
+        esc = section('func escape()','func hush()')
+        self.assertLess(esc.index('} else if busy {'),esc.index('} else if drawing.active {'))   # Esc stops the answer first, then clears the drawing
+        self.assertIn('app.drawing.clear()',source.split('func applicationShouldTerminate',1)[1].split('\n    }',1)[0])
         self.assertIn('!stuck, !drawing.active',app)
         self.assertIn('!mini.holds, !drawing.active',app)
         ask_finish = app.split('func spawn()',1)[1].split('func unwarm()',1)[0]
         self.assertNotIn('drawing.clear()',ask_finish)
 
-    def test_teaching_dismissal_caption_and_voice_policy(self):
+    def test_guide_steps_callouts_and_voice_policy(self):
         source = (ROOT/'Atticus.swift').read_text()
         drawing = source.split('final class ScreenDrawing {',1)[1].split('// The box can take typing',1)[0]
-        self.assertIn('r.steps[...index].flatMap(\\.shapes)',drawing)
-        self.assertIn('render(shapes,animate:animate,previous:previousPointer,append:true)',drawing)
-        self.assertIn('r.steps[...index].compactMap(\\.say)',drawing)
-        self.assertIn('caption.onClose = { [weak self] in self?.clear() }',drawing)
+        self.assertIn('r.steps[..<index].enumerated().map { view.render($0.element.shapes,animate:false,previous:nil,append:true,dim:true,step:$0.offset) }',drawing)
+        for wiring in ('callout.onClose = { [weak self] in self?.clear() }','callout.onNext = { [weak self] in self?.next() }',
+                       'callout.onBack = { [weak self] in self?.back() }'):
+            self.assertIn(wiring,drawing)
         self.assertIn('guard step.wait != true || hit?.contains(point) == true',drawing)
         self.assertIn('deadline = r.teaching ? .distantFuture',drawing)
         self.assertIn('else if !r.teaching { clear() }',drawing)
-        self.assertIn('if speechEnabled()',drawing)
-        self.assertIn('shown = active && (!r.teaching || captionPanel?.isVisible == true)',drawing)
+        self.assertIn('if !words.isEmpty, speechEnabled()',drawing)
+        self.assertIn('shown = active && (!r.teaching || calloutPanel?.isVisible == true)',drawing)
+        self.assertIn('!manual, autoSteps()',drawing.split('func tick()',1)[1])
+        self.assertNotIn('status?(words)',drawing)   # step text lives beside its marks, never in the ask box
+        app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
+        self.assertIn('drawing.autoSteps = { Prefs.str("guideSteps") != "next" }',app)
+        self.assertIn('(guided ? finish : result)',app)
+        self.assertIn('deliver(guided ? finish : result, aloud: !guided)',app)   # a follow-up answer beside an old drawing still speaks
+        self.assertIn('guard !marks.isNull else { clear(); return }',drawing)
+        self.assertIn('guard screen.intersects(global) else { return }',source)
+        self.assertNotIn('drawing.advance()',app)   # a spoken or typed "next" takes over like the Next button
+        self.assertIn('"guideSteps": "auto"',source)
+        self.assertIn('"guideSteps"', source[source.index('static let retiredKeys'):])   # steps advance by themselves; no Settings row
 
     def test_user_mark_reaches_the_ask_and_has_bounded_fallback(self):
         with tempfile.NamedTemporaryFile(prefix='atticus-point-',suffix='.jpg') as image:
@@ -136,22 +211,35 @@ class DrawingTests(unittest.TestCase):
                 self.assertEqual(atticus.point_context(bad),('',[]))
         app = (ROOT/'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
         self.assertIn('if let point { request["point"] = point }',app)
-        self.assertIn('if drawing.hasInput { drawing.clear(); return }',app)
+        self.assertIn('if drawing.hasInput { drawing.clearInput(); return }',app)
         self.assertIn('if !dictate && !drawing.hasInput { drawing.clear() }',app)
+        self.assertNotIn('if drawing.active { drawing.clear() }',app.split('func startPointing()',1)[1].split('func finishPointing()',1)[0])   # pointing keeps a guide up
 
     def test_point_controls_reach_the_app(self):
         app = (ROOT/'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
-        for wiring in ('drawing.inputMode ? finishPointing() : startPointing()', 'if b["pointDone"] != nil { finishPointing() }',
-                       'if b["pointClear"] != nil, drawing.hasInput { drawing.clear() }', 'Prefs.set("pointCoached", true)',
+        for wiring in ('drawing.inputMode ? finishPointing() : startPointing()', 'drawing.inputAway = { [weak self] in self?.finishPointing() }',
+                       'if b["pointClear"] != nil { if drawing.hasInput { drawing.clearInput() } else { clearPointContext() } }', 'Prefs.set("pointCoached", true)',
+                       'drawing.picked = { [weak self] r, words in self?.finishPoint([CGPoint(x:r.minX,y:r.minY),CGPoint(x:r.maxX,y:r.maxY)],mark:words) }',
                        '!Prefs.bool("pointCoached") { js("pointCoach") }'):
             self.assertIn(wiring,app)
-        start = app.split('func startPointing()',1)[1].split('func finishPointing()',1)[0]
-        self.assertLess(start.index('drawing.beginInput'),start.index('panel.orderFrontRegardless()'),'the box must stay above the pointing overlay')
+        self.assertNotIn('pointDone',app)
+        begin = (ROOT/'Atticus.swift').read_text().split('func beginInput(',1)[1].split('func startInput(',1)[0]
+        self.assertIn('panel.level = NSWindow.Level(rawValue:NSWindow.Level.statusBar.rawValue - 1)',begin)   # Atticus's .statusBar panels stay above it, even after a click raises it
         finish = app.split('func finishPoint(',1)[1].split('func startPointing()',1)[0]
         self.assertLess(finish.index('removeItem(atPath:old)'),finish.index('pointContext = context'),'a redrawn mark must delete the last crop')
         self.assertNotIn('thumb',finish.split('pointContext = context',1)[0].split('var context',1)[1],'the thumbnail is for the box, not the model request')
         ui = (ROOT/'ui'/'ui.html').read_text()
+        self.assertIn('#comp.pick #model, #comp.pick #point, #comp.pick #mic { opacity: 0;',ui)   # the open Model row never shows the button through
         self.assertIn('Click, circle or scribble on anything, then ask',ui)
+        bar = ui.split('<div id="pointbar"',1)[1].split('</div>',1)[0]
+        self.assertNotIn('Done',bar); self.assertNotIn('Cancel',bar); self.assertNotIn('pointDone',ui)   # mark, then ask: nothing to confirm
+        setup = (ROOT/'ui'/'onboarding.html').read_text()
+        coach = ui.split('const coachShow',1)[1].split('};',1)[0]
+        for words in ('next to the mic','circle, click or scribble on anything','type or say your question'):
+            self.assertIn(words,setup.lower())
+        for words in ('circle, click or scribble on anything','type or say your question'):
+            self.assertIn(words,coach)   # the first-open tip teaches the same steps as setup
+        self.assertIn('id="pa-pt"',setup)   # setup's picture shows the pointer button being clicked
         self.assertNotIn('Draw on screen',ui)   # that name belongs to Atticus's own drawings
         for page in ('README.md','ui/settings.html','ui/onboarding.html'):
             self.assertIn('Point at your screen',(ROOT/page).read_text(),page)
@@ -167,7 +255,7 @@ class PointBoxTests(unittest.TestCase):
 const el = (more = {}) => ({ dataset: {}, hidden: false, innerHTML: '', textContent: '', attrs: {}, src: '',
   classList: { s: new Set(), toggle(c, on) { on ? this.s.add(c) : this.s.delete(c); }, contains(c) { return this.s.has(c); } },
   setAttribute(k, v) { this.attrs[k] = String(v); }, getAttribute(k) { return this.attrs[k]; }, removeAttribute(k) { delete this.attrs[k]; if (k === 'src') this.src = ''; }, ...more });
-const parts = { '.chip i': el(), '.done': el(), '.cancel': el(), '.rm': el(), '.gotit': el(), '.hint': el(), img: el({ hidden: true }) };
+const parts = { '.chip i': el(), '.rm': el(), '.gotit': el(), '.hint': el(), img: el({ hidden: true }) };
 const els = { point: el({ innerHTML: '<svg></svg>' }), pointbar: el({ querySelector: s => parts[s] }), comp: el(), status: el() };
 const $ = id => els[id], messages = [], post = m => messages.push(m), fit = () => {}, comps = [];
 const status = s => { els.status.textContent = s; };
@@ -185,19 +273,25 @@ if (bar.dataset.s !== 'on' || parts['.hint'].textContent !== 'Click, circle or s
 if (els.status.textContent !== 'Pointing…' || els.point.getAttribute('aria-pressed') !== 'true' || !els.point.classList.contains('active') || comps.at(-1).join() !== 'true,true') fail('pointing is not unmistakable: ' + els.status.textContent);
 ui.point({ active: true, marked: true, thumb: 'data:image/jpeg;base64,AA' });
 if (!bar.classList.contains('has') || img.hidden || img.src !== 'data:image/jpeg;base64,AA' || parts['.hint'].textContent) fail('a mark did not show its thumbnail');
+if (markShot() !== 'data:image/jpeg;base64,AA') fail('the next ask would not carry the marked crop');
 ui.point({ active: false, marked: true });
-if (bar.dataset.s !== 'marked' || img.src !== 'data:image/jpeg;base64,AA' || els.status.textContent !== 'Marked' || els.point.getAttribute('aria-pressed') !== 'false') fail('Done lost the chip');
-parts['.rm'].onclick(); parts['.cancel'].onclick(); parts['.done'].onclick();
-if (messages.filter(m => m.pointClear).length !== 2 || !messages.some(m => m.pointDone)) fail('chip and buttons do not reach the app');
+if (bar.dataset.s !== 'marked' || img.src !== 'data:image/jpeg;base64,AA' || els.status.textContent !== 'Marked' || els.point.getAttribute('aria-pressed') !== 'false') fail('leaving point mode lost the chip');
+parts['.rm'].onclick();
+if (messages.filter(m => m.pointClear).length !== 1) fail('the chip does not reach the app');
 ui.point(false);
 if (bar.dataset.s || !img.hidden || img.src || els.status.textContent !== '' || els.point.classList.contains('marked')) fail('clearing left the chip or status');
+if (markShot()) fail('a cleared mark would still go with the next ask');
 status('Thinking…'); ui.point(false); if (els.status.textContent !== 'Thinking…') fail('clearing a mark wiped another status');
-ui.point({ active: false, marked: true, thumb: '' }); if (!img.hidden) fail('an empty thumbnail showed a broken image');
+ui.point({ active: false, marked: true, thumb: '' }); if (!img.hidden || markShot()) fail('an empty thumbnail showed a broken image');
 working = true; const before = messages.length; els.point.onclick();
 if (messages.slice(before).some(m => m.point) || els.status.textContent !== 'Finish or stop the current answer first') fail('pointing during an answer gave no reason');
 '''
         result = subprocess.run(['node','--input-type=module'],input=script,capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
+        listen = page[page.index('    listen(keep) {'):page.index('    level(v) {')]
+        self.assertIn("!document.body.classList.contains('dictate') && markShot()",listen)   # the sent bubble shows the crop; dictation never does
+        run = (ROOT/'Atticus.swift').read_text().split('    func run(_ t: String',1)[1]
+        self.assertLess(run.index('pointContext = nil'),run.index('drawing.clearInput()'))   # sending takes the mark off the screen but keeps its crop for the worker
 
 
 HARNESS = r'''
@@ -239,24 +333,39 @@ func data(_ steps: [[String:Any]], teaching: Bool = false) -> Data { try! JSONSe
 let drawing = ScreenDrawing()
 var marked: [CGPoint] = []
 drawing.beginInput { marked = $0 }
-precondition(drawing.panels.count == NSScreen.screens.count && drawing.panels.allSatisfy { !$0.ignoresMouseEvents && !$0.canBecomeKey && !$0.canBecomeMain })
+precondition(drawing.inputPanels.count == NSScreen.screens.count && drawing.inputPanels.allSatisfy { !$0.ignoresMouseEvents && !$0.canBecomeKey && !$0.canBecomeMain })
 precondition(app.keyWindow === keyBefore && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontBefore,
              "Point input changed the focused app or key window")
-precondition(drawing.panels.allSatisfy { ($0.contentView as? DrawingView)?.pointing == true && $0.acceptsMouseMovedEvents },"Pointing has no crosshair cursor")
+precondition(drawing.inputPanels.allSatisfy { ($0.contentView as? DrawingView)?.pointing == true && $0.acceptsMouseMovedEvents },"Pointing has no crosshair cursor")
 drawing.startInput(CGPoint(x:x+100,y:y+200)); drawing.moveInput(CGPoint(x:x+140,y:y+240)); drawing.endInput(CGPoint(x:x+140,y:y+240))
-precondition(marked.count == 2 && drawing.inputMode && drawing.panels.allSatisfy { !$0.ignoresMouseEvents },"A stroke ended pointing before Done")
+precondition(marked.count == 2 && drawing.inputMode && drawing.inputPanels.allSatisfy { !$0.ignoresMouseEvents },"A stroke ended pointing at once")
+precondition(drawing.inputPanels.allSatisfy { $0.level.rawValue < NSWindow.Level.statusBar.rawValue },"Pointing can cover Atticus's own panels")
 drawing.startInput(CGPoint(x:x+300,y:y+300)); drawing.endInput(CGPoint(x:x+300,y:y+300))
 precondition(marked == [CGPoint(x:x+300,y:y+300)] && drawing.inputPath.count == 1,"A new stroke did not replace the last mark")
-drawing.finishInput()
-precondition(!drawing.inputMode && drawing.hasInput && drawing.panels.allSatisfy { $0.ignoresMouseEvents && ($0.contentView as? DrawingView)?.pointing == false },"Done did not keep the mark and hand clicks back")
-drawing.startInput(CGPoint(x:x+10,y:y+10)); precondition(drawing.inputPath.count == 1,"A click after Done changed the mark")
-drawing.clear(); precondition(!drawing.hasInput && drawing.panels.isEmpty,"Point input did not clear")
+drawing.inputAway = { drawing.finishInput() }
+drawing.hoverInput(CGPoint(x:x+340,y:y+340)); precondition(drawing.inputMode,"Moving near the mark ended pointing")
+drawing.hoverInput(CGPoint(x:x+500,y:y+300))
+precondition(!drawing.inputMode && drawing.hasInput && drawing.inputPanels.allSatisfy { $0.ignoresMouseEvents && ($0.contentView as? DrawingView)?.pointing == false },"Moving off the mark did not keep it and hand clicks back")
+drawing.startInput(CGPoint(x:x+10,y:y+10)); precondition(drawing.inputPath.count == 1,"A click after pointing changed the mark")
+drawing.clear(); precondition(!drawing.hasInput && drawing.inputPanels.isEmpty,"Point input did not clear")
+drawing.beginInput { _ in }; drawing.hoverInput(nil); precondition(drawing.inputMode,"Leaving before any mark ended pointing")
+drawing.inputAway = nil
 var cleared = 0; drawing.inputCleared = { cleared += 1 }
-drawing.beginInput { _ in }; drawing.finishInput()
-precondition(!drawing.hasInput && drawing.panels.isEmpty && cleared == 1,"Done with no mark did not cancel")
+drawing.finishInput()
+precondition(!drawing.hasInput && drawing.inputPanels.isEmpty && cleared == 1,"Turning pointing off with no mark did not cancel")
 drawing.inputCleared = nil
 precondition(drawing.receive(data(steps)))
 precondition(drawing.panels.count == NSScreen.screens.count)
+drawing.beginInput { _ in }; precondition(drawing.active && drawing.panels.count == NSScreen.screens.count,"Pointing cleared the guide")
+drawing.clearInput(); precondition(drawing.active && drawing.inputPanels.isEmpty,"Clearing a mark took the guide")
+var picked = ""; drawing.picked = { _, words in picked = words }
+let markView = drawing.panels.compactMap { $0.contentView as? DrawingView }.first { $0.hits.contains { $0.shape == 2 } }!
+let legA = markView.hits.first { $0.shape == 2 }!.area.boundingBoxOfPath.offsetBy(dx:markView.origin.x,dy:markView.origin.y)
+drawing.pick(CGPoint(x:legA.midX,y:legA.midY))
+precondition(picked.hasPrefix("label \"Leg A\" in step 1 of 3") && drawing.selected?.shape == 2 && drawing.manual,"Clicking a mark did not select it: \(picked)")
+precondition(markView.layer!.sublayers!.contains { $0.name == "pick" },"The selected mark has no highlight")
+drawing.deselect(); precondition(drawing.selected == nil && !markView.layer!.sublayers!.contains { $0.name == "pick" })
+drawing.manual = false; drawing.picked = nil
 precondition(app.keyWindow === keyBefore && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontBefore,
              "Drawing changed the focused app or key window")
 for panel in drawing.panels {
@@ -283,6 +392,14 @@ shot("03-finish")
 let panels = drawing.panels
 var cleanups = 0; drawing.cleanup = { cleanups += 1 }
 drawing.clear(); precondition(cleanups == 1,"AX session was not restored on clear"); precondition(!drawing.active && drawing.voice == nil && drawing.timer == nil && drawing.monitors.isEmpty && panels.allSatisfy { !$0.isVisible })
+let lesson: [[String:Any]] = [["say":"Draw the square.","shapes":[["kind":"rect","rect":[x+60,y+150,200,200]]]],
+                              ["say":"Label its side.","shapes":[["kind":"label","at":[x+160,y+250],"text":"x"]]]]
+precondition(drawing.receive(data(lesson,teaching:true)) && drawing.calloutPanel?.isVisible == true,"Whiteboard step had no callout")
+precondition(!drawing.calloutPanel!.frame.intersects(CGRect(x:x+60,y:NSScreen.screens[0].frame.maxY-(y+350),width:200,height:200)),"Callout covered its mark")
+drawing.advanceAt = .distantPast; drawing.tick(); precondition(drawing.index == 1,"Auto step did not advance")
+drawing.back(); precondition(drawing.index == 0 && drawing.manual,"Back did not return to the last step")
+drawing.advanceAt = .distantPast; drawing.tick(); precondition(drawing.index == 0,"Auto steps fought the user's Back")
+drawing.next(); precondition(drawing.index == 1); drawing.next(); precondition(!drawing.active,"Done on the last step did not clear")
 let anchored: [[String:Any]] = [["target":"Exact control","wait":true,"shapes":[["kind":"rect"],["kind":"pointer"],["kind":"label","text":"Here"]]],steps[2]]
 let nativeTarget = try! JSONDecoder().decode(DrawingWindow.self,from:JSONSerialization.data(withJSONObject:target))
 let anchor = CGRect(x:x+400,y:y+350,width:200,height:38)
@@ -378,3 +495,139 @@ for mutation in 0..<3 {
 print("Stable AX anchor identity and stale-target rejection passed")
 '''
         self.assertIn('Stable AX anchor',run_swift(self,harness))
+
+
+GEOMETRY = r'''
+import Cocoa
+func applySharing(_ window: NSWindow) {}
+__DRAWING__
+let gap = ScreenDrawing.gap, t = CGRect(x:100,y:100,width:80,height:20)
+func inEllipse(_ p: CGPoint, _ e: CGRect) -> Bool { let dx = (p.x-e.midX)/(e.width/2), dy = (p.y-e.midY)/(e.height/2); return dx*dx+dy*dy <= 1 }
+let corners = [CGPoint(x:t.minX,y:t.minY),CGPoint(x:t.maxX,y:t.minY),CGPoint(x:t.minX,y:t.maxY),CGPoint(x:t.maxX,y:t.maxY)]
+precondition(ScreenDrawing.ring(t,circle:false).insetBy(dx:1.5+gap,dy:1.5+gap) == t,"A box's stroke must sit outside its target")
+precondition(corners.allSatisfy { inEllipse($0,ScreenDrawing.ring(t,circle:true).insetBy(dx:1.5,dy:1.5)) },"A circle's stroke cut through its target")
+let tip = ScreenDrawing.arrowTip(from:CGPoint(x:300,y:110),to:CGPoint(x:140,y:110),avoiding:[t])
+precondition(!t.insetBy(dx:-gap,dy:-gap).contains(tip) && tip.x > t.maxX && tip.x < t.maxX+gap+4,"An arrow head landed on its target: \(tip)")
+precondition(ScreenDrawing.arrowTip(from:.zero,to:CGPoint(x:50,y:50),avoiding:[t]) == CGPoint(x:50,y:50),"An arrow to open space moved")
+precondition(!t.contains(ScreenDrawing.beside(CGPoint(x:t.midX,y:t.midY),[t])) && ScreenDrawing.beside(CGPoint(x:5,y:5),[t]) == CGPoint(x:5,y:5))
+let area = CGRect(x:0,y:0,width:1000,height:800), keep = [t.insetBy(dx:-gap,dy:-gap)], tag = CGSize(width:60,height:26)
+let onTarget = ScreenDrawing.labelBox(tag,at:CGPoint(x:t.midX,y:t.midY),keepOff:keep,in:area)
+precondition(!keep[0].intersects(onTarget) && area.contains(onTarget),"A label covered the thing it names")
+precondition(ScreenDrawing.labelBox(tag,at:CGPoint(x:500,y:500),keepOff:keep,in:area).origin == CGPoint(x:512,y:470),"A free label moved")
+precondition(area.contains(ScreenDrawing.labelBox(tag,at:CGPoint(x:995,y:2),keepOff:[],in:area)),"A label left the screen")
+let square = CGRect(x:300,y:300,width:200,height:200), inside = ScreenDrawing.labelBox(tag,at:CGPoint(x:380,y:420),keepOff:[square],in:area)
+precondition(inside.origin == CGPoint(x:392,y:390),"An area-model label was pushed out of its box")
+let edgeLabel = ScreenDrawing.labelBox(tag,at:CGPoint(x:490,y:420),keepOff:[square],in:area)
+precondition(!edgeLabel.intersects(square) || square.insetBy(dx:2*gap,dy:2*gap).contains(edgeLabel),"A label crossed a mark's edge")
+
+let view = DrawingView(frame:CGRect(x:0,y:0,width:1000,height:800)); view.origin = CGPoint(x:-200,y:50)
+let g = CGRect(x:100,y:300,width:120,height:24)
+let drawn = view.render([DrawingShape(kind:"circle",rect:[100,300,120,24]),DrawingShape(kind:"label",at:[160,312],text:"x² + 6x"),
+                         DrawingShape(kind:"arrow",points:[[500,312],[160,312]],color:"blue")],animate:false,previous:nil)
+precondition(drawn.contains(g),"Drawn bounds miss the ring")
+let layers = view.layer!.sublayers!, global = { (r: CGRect) in r.offsetBy(dx:view.origin.x,dy:view.origin.y) }
+for text in layers.compactMap({ $0 as? CATextLayer }) { precondition(!global(text.frame).intersects(g),"Label text sits on its target") }
+let arrow = layers.compactMap { $0 as? CAShapeLayer }.first { $0.strokeColor == NSColor.systemBlue.cgColor }!
+precondition(global(arrow.path!.boundingBoxOfPath).minX > g.maxX,"Arrow head sits on its target")
+let dim = DrawingView(frame:view.frame); dim.render([DrawingShape(kind:"line",points:[[1,2],[30,40]])],animate:false,previous:nil,dim:true)
+precondition(dim.layer!.sublayers!.allSatisfy { $0.opacity == 0.5 },"Earlier whiteboard steps are not quieter")
+let boardFrame = CGRect(x:0,y:0,width:300,height:100), boardPad: CGFloat = 8
+let boardLines = [
+    ScreenDrawing.BoardLine(text:NSAttributedString(string:"First"),rect:CGRect(x:8,y:10,width:100,height:20),step:0,shape:0),
+    ScreenDrawing.BoardLine(text:NSAttributedString(string:"Middle"),rect:CGRect(x:8,y:70,width:100,height:20),step:1,shape:0),
+    ScreenDrawing.BoardLine(text:NSAttributedString(string:"Later"),rect:CGRect(x:8,y:150,width:100,height:30),step:2,shape:0)]
+let laterPage = ScreenDrawing.boardPage((boardFrame,boardPad,boardLines),through:2)!
+precondition(laterPage.lines.contains { $0.step == 2 } && laterPage.lines.allSatisfy { $0.rect.minY >= boardPad && $0.rect.maxY <= boardFrame.maxY-boardPad },
+             "Long whiteboard dropped or clipped the active step")
+let earlierPage = ScreenDrawing.boardPage((boardFrame,boardPad,boardLines),through:0)!
+precondition(earlierPage.lines.map(\.step) == [0],"Back could not page earlier whiteboard text into view")
+
+let size = CGSize(width:240,height:120), marks = CGRect(x:100,y:100,width:200,height:50)
+var (card, side) = ScreenDrawing.calloutFrame(size,marks:marks,avoid:[],in:area)
+precondition(side == .minX && card.minX > marks.maxX && card.minX-marks.maxX < 24 && !card.intersects(marks),"Callout is not beside its marks")
+let edge = CGRect(x:700,y:100,width:250,height:50)
+(card, side) = ScreenDrawing.calloutFrame(size,marks:edge,avoid:[],in:area)
+precondition(side == .maxX && card.maxX < edge.minX && area.contains(card),"No room on the right did not flip left")
+let earlier = CGRect(x:310,y:0,width:300,height:400)
+(card, side) = ScreenDrawing.calloutFrame(size,marks:marks,avoid:[earlier],in:area)
+precondition(side != nil && !card.intersects(earlier) && !card.intersects(marks) && area.contains(card),"Callout covered an earlier step")
+(card, side) = ScreenDrawing.calloutFrame(size,marks:area.insetBy(dx:10,dy:10),avoid:[],in:area)
+precondition(side == nil && area.contains(card),"No-room fallback left the screen")
+
+func buttons(_ v: NSView) -> [NSButton] { v.subviews.compactMap { $0 as? NSButton } }
+func labels(_ v: NSView) -> [String] { v.subviews.compactMap { ($0 as? NSTextField)?.stringValue } }
+func click(_ b: NSButton) { b.sendAction(b.action,to:b.target) }
+var events: [String] = []
+func callout(_ text: String, _ step: Int, _ total: Int) -> DrawingCalloutView {
+    let s = DrawingCalloutView.size(text,total:total)
+    let v = DrawingCalloutView(frame:CGRect(x:0,y:0,width:s.width+24,height:s.height+24),card:CGRect(x:12,y:12,width:s.width,height:s.height),side:.minX,tip:40,text:text,step:step,total:total)
+    v.onNext = { events.append("next") }; v.onBack = { events.append("back") }; v.onClose = { events.append("close") }
+    return v
+}
+let first = callout("Complete the square: add 9 to both sides.",1,3)
+precondition(labels(first) == ["Step 1 of 3"],"Progress missing")
+precondition(buttons(first).first { $0.title == "Back" }?.isEnabled == false && buttons(first).contains { $0.title == "Next" })
+click(buttons(first).first { $0.title == "Next" }!); click(buttons(first).first { $0.toolTip == "Close guide" }!)
+let last = callout("So x² + 6x = (x + 3)² − 9.",3,3)
+click(buttons(last).first { $0.title == "Back" }!); click(buttons(last).first { $0.title == "Done" }!)
+precondition(events == ["next","close","back","next"],"Controls did not reach the guide: \(events)")
+let single = callout("Click Share.",1,1)
+precondition(labels(single).isEmpty && buttons(single).map(\.title) == ["Done"],"A one-step guide shows step controls")
+let long = callout(String(repeating:"A readable instruction needs enough words to wrap. ",count:20),2,4)
+let scroll = long.subviews.compactMap { $0 as? NSScrollView }.first!, body = scroll.documentView as! NSTextView
+body.layoutManager!.ensureLayout(for:body.textContainer!)
+precondition(DrawingCalloutView.size(body.string,total:4).height < 400 && body.frame.height > scroll.contentSize.height,"Long step text is not scrollable")
+let bubble = DrawingCalloutView.bubble(CGRect(x:12,y:12,width:200,height:100),side:.minX,tip:60)
+precondition(bubble.boundingBoxOfPath.minX < 12-DrawingCalloutView.notch+1 && bubble.contains(CGPoint(x:8,y:60)),"The notch does not point at the marks")
+let plain = DrawingCalloutView.bubble(CGRect(x:12,y:12,width:200,height:100),side:nil,tip:60).boundingBoxOfPath
+precondition([plain.minX-12,plain.minY-12,plain.maxX-212,plain.maxY-112].allSatisfy { abs($0) < 0.01 },"A card with no room beside its marks grew a notch")
+
+let pickView = DrawingView(frame:CGRect(x:0,y:0,width:1000,height:800))
+pickView.render([DrawingShape(kind:"circle",rect:[100,100,80,20]),DrawingShape(kind:"arrow",points:[[400,110],[200,110]],color:"blue"),
+                 DrawingShape(kind:"label",at:[500,500],text:"x"),DrawingShape(kind:"text",text:"board only")],animate:false,previous:nil,step:2)
+let ringFrame = ScreenDrawing.ring(CGRect(x:100,y:100,width:80,height:20),circle:true)
+precondition(pickView.mark(at:CGPoint(x:ringFrame.midX,y:ringFrame.minY))?.shape == 0,"A ring's stroke takes no click")
+precondition(pickView.mark(at:CGPoint(x:140,y:110)) == nil,"A ring took the click meant for its target")
+precondition(pickView.mark(at:CGPoint(x:300,y:110)).map { $0.shape == 1 && $0.step == 2 } == true,"An arrow takes no click")
+let arrowLayer = pickView.layer!.sublayers!.compactMap { $0 as? CAShapeLayer }.first { $0.strokeColor == NSColor.systemBlue.cgColor }!
+precondition(arrowLayer.path!.boundingBoxOfPath.height >= 10,"The arrow has no head")
+precondition(!pickView.hits.contains { $0.shape == 3 },"Text drew outside its board")
+pickView.highlight((2,1)); precondition(pickView.layer!.sublayers!.filter { $0.name == "pick" }.count == 1,"The selected mark has no highlight")
+pickView.highlight(nil); precondition(!pickView.layer!.sublayers!.contains { $0.name == "pick" })
+
+let laptop = ScreenDrawing.textSize(nil,display:CGRect(x:0,y:0,width:1512,height:982)), monitor = ScreenDrawing.textSize(nil,display:CGRect(x:0,y:0,width:1920,height:1080))
+precondition(laptop >= 26 && laptop <= 32 && monitor >= 29 && monitor <= 34 && ScreenDrawing.textSize("l",display:.zero) > ScreenDrawing.textSize("s",display:.zero),"Text is not readable: \(laptop) \(monitor)")
+if let main = NSScreen.screens.first {
+    let d = CGDisplayBounds(main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! CGDirectDisplayID)
+    let near = CGRect(x:d.minX+80,y:d.minY+200,width:200,height:60)
+    let worked = [DrawingStep(id:nil,say:"Split it.",target:nil,shapes:[DrawingShape(kind:"text",text:"12x⁵ = 3x² · 4x³")],wait:nil,hit:nil,timeout:nil),
+                  DrawingStep(id:nil,say:"Check.",target:nil,shapes:[DrawingShape(kind:"circle",rect:[near.minX,near.minY,near.width,near.height]),
+                              DrawingShape(kind:"text",text:"3 · 4 = 12",size:"s")],wait:nil,hit:nil,timeout:nil)]
+    let b = ScreenDrawing.board(worked,near:near)!
+    precondition(b.lines.map { [$0.step,$0.shape] } == [[0,0],[1,1]] && b.lines[1].rect.minY > b.lines[0].rect.maxY,"Lines are not stacked in order")
+    precondition(b.lines.allSatisfy { b.frame.contains($0.rect) } && !b.frame.intersects(near) && b.lines[0].rect.height >= 22,"The board covered its marks or text is small")
+    var pinned = worked; pinned[0] = DrawingStep(id:nil,say:"Here.",target:nil,shapes:[DrawingShape(kind:"text",at:[d.minX+300,d.minY+300],text:"x")],wait:nil,hit:nil,timeout:nil)
+    precondition(ScreenDrawing.board(pinned,near:near)!.frame.origin == CGPoint(x:d.minX+300,y:d.minY+300),"The board ignored its at")
+    let boardView = DrawingView(frame:CGRect(origin:.zero,size:d.size)); boardView.origin = d.origin
+    boardView.renderBoard(b.frame,b.lines,current:1,animate:false)
+    precondition(boardView.hits.count == 2 && boardView.layer!.sublayers!.compactMap { $0 as? CATextLayer }.first!.opacity == 0.7,"Board lines are not selectable, or the earlier line is not quieter")
+}
+
+let screenA = CGRect(x:0,y:0,width:1512,height:944), screenB = CGRect(x:1512,y:0,width:1920,height:1050), box = CGRect(x:14,y:800,width:340,height:120)
+precondition(ScreenDrawing.clearSpot(box,avoiding:[CGRect(x:600,y:300,width:100,height:100)],in:[screenA,screenB]) == box.origin,"A clear box moved")
+let covering = CGRect(x:0,y:780,width:400,height:100), spot = ScreenDrawing.clearSpot(box,avoiding:[covering],in:[screenA,screenB])!
+let moved = CGRect(origin:spot,size:box.size)
+precondition(!moved.intersects(covering) && screenA.insetBy(dx:8,dy:8).contains(moved) && hypot(spot.x-box.minX,spot.y-box.minY) < 200,"The box did not take the nearest clear spot: \(spot)")
+precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA],in:[screenA,screenB]).map { screenB.contains(CGRect(origin:$0,size:box.size)) } == true,"A covered display did not send the box to the other one")
+precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA,screenB],in:[screenA,screenB]) == nil,"With no room the box must stay")
+print("Guide geometry: rings outside targets, arrows and labels beside them, callouts beside their marks, Back/Next/Done, selectable marks, text board, box placement")
+'''
+
+
+@unittest.skipUnless(sys.platform == 'darwin','macOS guide geometry check')
+class GuideGeometryTests(unittest.TestCase):
+    def test_marks_and_callouts_stay_clear_of_targets(self):
+        from tests import run_swift
+        source = (ROOT/'Atticus.swift').read_text()
+        drawing = source[source.index('// Screen drawings use Quartz'):source.index('// The box can take typing')]
+        self.assertIn('Guide geometry',run_swift(self,GEOMETRY.replace('__DRAWING__',drawing),timeout=20))

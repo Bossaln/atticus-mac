@@ -83,7 +83,7 @@ class ReplayTests(unittest.TestCase):
             def __init__(self,*a,**kw): pass
             def start(self): pass
             def join(self,*a): pass
-        missing=self.root/'fresh';brain=unittest.mock.Mock(return_value=('Found them.',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[]
+        missing=self.root/'fresh';brain=unittest.mock.Mock(return_value=('Found them.',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[];brain.observed=[]
         with patch.object(atticus,'DIR',str(missing)),patch.object(atticus,'RECENT',str(missing/'recent.jsonl')),patch.object(atticus,'MEMORY',str(missing/'memory.md')),patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Find fixture notes']),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
             atticus.main();self.assertEqual(atticus.recent()[0]['a'],'Found them.');self.assertTrue((missing/'log.jsonl').exists())
         brain.assert_called_once()
@@ -98,7 +98,7 @@ class ReplayTests(unittest.TestCase):
         atticus.private_json(str(agent/'context.json'),{'id':'a'*32,'status':'done','created':time.time(),
                                                        'brief':'Find a useful post','links':[url]})
         (self.root/'worked.json').write_text(json.dumps({'app':'Reader Fixture','window':'Earlier post'}))
-        brain=unittest.mock.Mock(return_value=('Opened the earlier post.',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[]
+        brain=unittest.mock.Mock(return_value=('Opened the earlier post.',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[];brain.observed=[]
         with patch.object(atticus,'RECENT',str(self.root/'recent.jsonl')),patch.object(atticus,'MEMORY',str(self.root/'memory.md')):
             atticus.remember_turn('Find a useful post','Opened '+url)
             with patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Open that post you opened']),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
@@ -107,4 +107,4 @@ class ReplayTests(unittest.TestCase):
         self.assertIn('Earlier:\nQ: Find a useful post\nA: Opened '+url,prompt)
         self.assertIn('Last task worked in: Reader Fixture "Earlier post"',prompt)
         self.assertIn('Background tasks',prompt);self.assertIn('a'*32,prompt)
-        self.assertIn('Request: Open that post you opened',prompt)
+        self.assertEqual(brain.call_args.kwargs['request'],'Open that post you opened')

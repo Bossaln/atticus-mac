@@ -52,6 +52,13 @@ class TelemetryTests(unittest.TestCase):
             send.assert_not_called()
             self.assertEqual(list(Path(root).iterdir()), [])
 
+    def test_new_users_are_counted_by_default(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
+             patch.object(atticus, 'PREFS', str(Path(root) / 'settings.json')), \
+             patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), patch.object(atticus.subprocess, 'Popen') as send:
+            atticus.ping()
+        send.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

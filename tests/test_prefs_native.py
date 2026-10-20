@@ -42,29 +42,67 @@ for enabled in [false, true, false] {
                                     env={**os.environ, "ATTICUS_DIR": root})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_start_agents_switch_becomes_long_asks_move_by_itself_once(self):
+    def test_old_long_asks_choices_are_not_read(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        self.assertNotIn('"longAsks"', source)
+        self.assertNotIn('agentsAuto', source)
+
+    def test_retired_settings_keep_saved_values_without_rewriting_disk(self):
         source = (ROOT / "Atticus.swift").read_text()
         prefs = source[source.index("enum Prefs"):source.index("func applySharing(")]
         swift = """import Foundation
 let controlKey = 1, optionKey = 2
 """ + prefs + """
-precondition(Prefs.str("longAsks") == CommandLine.arguments[1] && Prefs.d["agentsAuto"] == nil, "migration")
-let disk = try! JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: Prefs.path))) as! [String: Any]
-precondition(disk["agentsAuto"] == nil || CommandLine.arguments[2] == "kept", "the old key stayed on disk")
-precondition(disk["longAsks"] as? String == CommandLine.arguments[1], "atticus.py would read the old choice")
+if CommandLine.arguments.contains("--saved") {
+    precondition(Prefs.str("workIn") == "front" && !Prefs.bool("askMe") && Prefs.num("aheadDelay") == 1.2, "retired choices changed")
+    precondition(Prefs.bool("quietAudio") && !Prefs.bool("selection") && !Prefs.bool("learn") && !Prefs.bool("dictateLearn"), "hidden choices changed")
+    precondition(!Prefs.bool("tips") && Prefs.bool("speak") && Prefs.str("routing") == "capable", "visible choices changed")
+} else {
+    precondition(Prefs.str("workIn") == "back" && Prefs.bool("askMe") && Prefs.num("aheadDelay") == 0.7, "new user missed defaults")
+    precondition(!Prefs.bool("quietAudio") && Prefs.bool("selection") && Prefs.bool("learn") && Prefs.bool("dictateLearn"), "new hidden defaults are wrong")
+}
 """
         with tempfile.TemporaryDirectory() as root:
-            path, binary = Path(root) / "migrate.swift", Path(root) / "migrate"
+            path, binary = Path(root) / "retired.swift", Path(root) / "retired"
             path.write_text(swift)
             compiled = subprocess.run(["swiftc", str(path), "-o", str(binary)], capture_output=True, text=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            saved = '{"workIn":"front","askMe":false,"tips":false,"aheadDelay":1.2,"speak":true,"routing":"capable","quietAudio":true,"selection":false,"learn":false,"dictateLearn":false}'
             settings = Path(root) / "settings.json"
-            # on: moves by itself, now and after the next launch; off with Never ask: the choice stays
-            for before, want, disk in [('{"agentsAuto": true, "longAsks": "ask"}', "auto", "gone"), (None, "auto", "gone"),
-                                       ('{"agentsAuto": false, "longAsks": "never"}', "never", "kept")]:
-                if before: settings.write_text(before)
-                result = subprocess.run([str(binary), want, disk], capture_output=True, text=True, env={**os.environ, "ATTICUS_DIR": root})
+            settings.write_text(saved)
+            result = subprocess.run([str(binary), "--saved"], capture_output=True, text=True, env={**os.environ, "ATTICUS_DIR": root})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(settings.read_text(), saved)
+            fresh = Path(root) / "fresh"
+            result = subprocess.run([str(binary)], capture_output=True, text=True, env={**os.environ, "ATTICUS_DIR": str(fresh)})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((fresh / "settings.json").exists())
+
+    def test_dictation_shortcut_defaults_to_fn_but_keeps_any_choice(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        prefs = source[source.index("enum Prefs"):source.index("func applySharing(")]
+        swift = """import Foundation
+let controlKey = 1, optionKey = 2
+""" + prefs + """
+print(Prefs.str("dictateHotkeyLabel") + "|" + String(Int(Prefs.num("dictateHotkeyCode"))) + "|" + String(Int(Prefs.num("dictateHotkeyMods"))))
+"""
+        with tempfile.TemporaryDirectory() as root:
+            path, binary = Path(root) / "fn.swift", Path(root) / "fn"
+            path.write_text(swift)
+            compiled = subprocess.run(["swiftc", str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            fn = f"fn|-2|{1 << 20}"
+            cases = [(None, fn),   # fresh install
+                     ('{"dictateHotkeyLabel": "", "dictateHotkeyCode": -1, "dictateHotkeyMods": 0}', fn),   # an old build saved its empty default
+                     ('{"dictateHotkeyLabel": "⌃⌥D", "dictateHotkeyCode": 2, "dictateHotkeyMods": 3}', "⌃⌥D|2|3"),   # recorded: kept
+                     ('{"dictateHotkeyLabel": "", "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyOff": true}', "|-1|0"),   # cleared on purpose
+                     (f'{{"hotkeyLabel": "fn", "hotkeyCode": -2, "hotkeyMods": {1 << 20}}}', "|-1|0")]   # the talk shortcut already holds fn
+            for i, (before, want) in enumerate(cases):
+                case = Path(root) / str(i); case.mkdir()
+                if before: (case / "settings.json").write_text(before)
+                result = subprocess.run([str(binary)], capture_output=True, text=True, env={**os.environ, "ATTICUS_DIR": str(case)})
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.strip(), want, before)
 
     def test_settings_are_private_and_usage_counts_final_rows(self):
         source = (ROOT / "Atticus.swift").read_text()

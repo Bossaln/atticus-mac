@@ -20,7 +20,8 @@ import atticus
 CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 
 
-@unittest.skipUnless(sys.platform == 'darwin' and CHROME.exists(), 'Isolated Chrome profile requires macOS Chrome (run in VM)')
+@unittest.skipUnless(os.environ.get('ATTICUS_VM') == '1' and sys.platform == 'darwin' and CHROME.exists(),
+                     'Isolated Chrome profile requires ATTICUS_VM=1 and macOS Chrome')
 class ChromeBackgroundTests(unittest.TestCase):
     def test_pinned_background_window_javascript_and_ax(self):
         with tempfile.TemporaryDirectory(prefix='atticus-chrome-') as tmp:

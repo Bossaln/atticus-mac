@@ -5,6 +5,8 @@
   Atticus moves your windows, finds your files, reads your screen and gets it done.
 </p>
 
+<p align="center"><a href="https://ko-fi.com/saarthr"><b>☕ Leave a tip</b></a> · Atticus is free; tips keep it going.</p>
+
 <p align="center">
   <b>⚡ Fast</b> &nbsp;·&nbsp; <b>🔑 No API key</b> &nbsp;·&nbsp; <b>🧠 Remembers you</b> &nbsp;·&nbsp; <b>Free and open source</b>
 </p>
@@ -38,11 +40,10 @@ https://github.com/user-attachments/assets/26822ad2-6281-477d-b676-2f490a4a207b
 | *"Find my notes about the Tokyo trip."* | Searches your files by what's inside them, opens the match on your other screen. |
 | *"What's wrong with this code?"* | Looks at your screen and answers in a line. |
 | *"Reply to this. Thursday works, send me a time."* | Reads the email on screen and writes the reply. Insert puts it at your cursor. It never sends. |
-| *"Move my dentist appointment to 4."* | Shows the old and new time on a card and moves it when you approve. Adds events right away; deletes ask first. |
+| *"Move my dentist appointment to 4."* | Shows the old and new time on a card and moves it when you approve. Adding is immediate; moving or deleting asks first. |
 | *"Tell the agent in my terminal to also run the tests."* | Types it into that window in the background while you keep working. If it can't confirm the send, it leaves the text there and asks for the window. |
 | *"Find me a desk lamp under $30 on Amazon."* | Works in Chrome behind your apps; a live mini screen shows it. |
 | *"Where do I turn on Night Shift?"* | A ring lights up the exact spot on your screen (Show me where). |
-| *"Move my dentist appointment to 4."* | Shows the old and new time on a card and moves it when you approve. Adding events needs no card; moving or deleting always asks. |
 | *"Summarize this article in three bullets."* | Reads the page for you. |
 | *"Play my late night coding playlist on Spotify."* | Plays it in a second, no clicks. Any song, artist or playlist. |
 | *"When I say focus mode, close Slack and open my to-do list."* | Remembers it. Next time, two words do it all. |
@@ -72,7 +73,7 @@ Choose **Hold to talk** or **Press to toggle** in Settings → General → Short
 
 Click any answer to copy it, including earlier answers still shown in the box. Click your request to edit and ask again, or press ↑ in an empty typing box to recall the latest request. The overlay stays within your display when resized and respects Reduce Motion. While Atticus works in a covered window, another Space, or another display, a live mini screen shows that window; the steps below show the action. The finished view stays until the next ask, typing, or a click on it. Click it to open that exact window. The preview stays on your Mac, is never sent to the AI or saved, and stops streaming when the task ends. Without Screen Recording permission, the same card shows the app icon and window title.
 
-Apple's final transcript confirms each voice request before AI tools or learned shortcuts run. AI reasoning can start during a pause, but its tools wait for confirmation. If speech finalization takes too long, Atticus offers the partial text for review. Instant commands still skip the AI entirely. Supported built-in commands run mid-sentence, before you send, with Instant commands and Act while I’m talking on (Settings → Intelligence). Learned shortcuts wait for confirmed words.
+Apple's final transcript confirms each voice request before AI tools or learned shortcuts run. AI reasoning can start during a pause, but its tools wait for confirmation. If speech finalization takes too long, Atticus offers the partial text for review. Instant commands still skip the AI entirely. Supported built-in commands run mid-sentence, before you send. Learned shortcuts wait for confirmed words.
 
 When Atticus acts but can't see the result, it says so ("…but I couldn't confirm the result") and doesn't learn that shortcut. Try again checks what already happened before it acts again.
 
@@ -80,17 +81,19 @@ When Atticus acts but can't see the result, it says so ("…but I couldn't confi
 
 ## Dictate anywhere
 
-Record a shortcut in Settings → General → Dictate anywhere. There is none until you set one; Fn and modifier-only chords like fn+Control work too. Hold it in any text field, speak, then let go. **Verbatim** types Apple's on-device transcript with no AI. **Clean up** makes one quick AI pass that keeps your words and drops the slips: "um" and "you know" go, "scratch that" removes the thought before it, "four, actually five" leaves five, a spoken list becomes a list, and "new line" or "question mark" become formatting. It types what you dictate and never answers or acts on it. It starts while you talk, so the text lands soon after you let go; if the AI's version adds or drops too much, Atticus types your words with only the obvious fillers removed. Highlight text first and Clean up tidies that text in place. Esc cancels. If the field changes or Atticus can't confirm the words landed, it copies them to your clipboard and tells you instead of typing twice.
+Hold fn to talk. Double-tap to lock. In any text field, hold the fn (🌐) key, speak, then let go. Double-tap it to lock dictation on for hands-free talking; an orange ring circles the pill, and one more press inserts. fn is the shortcut until you record another in Settings → Dictation (a key combo, an F-key, or a modifier chord like fn+Control); a shortcut you already set stays. If macOS's "Press 🌐 key to" setting opens emoji, switches input source or starts Apple dictation, Settings and setup show "Set Press 🌐 key to Do Nothing" with a button to Keyboard settings. fn with another key (fn+Delete, fn+←) stays that key's shortcut. While you talk, a small one-line pill shows your latest words. The Dictation tab shows your words today and all time, time saved, sessions, your dictionary and history. **Verbatim** types Apple's on-device transcript with no AI. **Clean up** makes one quick AI pass that keeps your words, fixes words it clearly misheard ("talk it and it' type" becomes "talk to it and it'll type"), and drops the slips: "um" and "you know" go, "scratch that" removes the thought before it, "four, actually five" leaves five, a spoken list becomes a list, and "new line" or "question mark" become formatting. It types what you dictate and never answers or acts on it. To spell names and terms it uses your Dictionary and the text just before your cursor. It starts while you talk, so the text lands soon after you let go; if the AI's version adds or drops too much, Atticus types your words with only the obvious fillers removed. Highlight text first and Clean up tidies that text in place. Esc cancels. When the words land, the pill shrinks into its orb and fades. Dictation never leaves your words on the clipboard: if a field only takes a paste, Atticus borrows the clipboard for that one paste and puts back what you had copied. If the field changes or Atticus can't confirm the words landed, it saves them to Dictation History and says "Saved to History" instead of typing twice; with History off, the words stay in the pill.
 
 ## Point at your screen
 
-This is how you show Atticus something; [Draw on screen](#draw-on-screen) is how Atticus shows you. Click the pointer button, **Point at your screen**, next to the mic in the ask box. The cursor becomes a crosshair and the box says "Click, circle or scribble on anything, then ask". Mark the spot (a new stroke replaces the last), then type your question, or click **Done** to use your apps again with the mark still showing. A small picture of what you marked waits in the box; its × removes it, and **Cancel** or Esc clears everything. Atticus gets a crop of that spot with your question, and the mark stays until you send. While a mark is waiting, instant commands and early thinking wait too.
+This is how you show Atticus something; [Draw on screen](#draw-on-screen) is how Atticus shows you. Click the pointer button, **Point at your screen**, next to the mic in the ask box. The cursor becomes a crosshair and the box says "Click, circle or scribble on anything, then ask". Mark the spot, then type or say your question and send. Another stroke near the mark replaces it; move away and your clicks reach your apps again, with the mark still showing. Atticus's own box and cards always take their clicks, so you can type while pointing. Click the pointer button again to stop or to mark somewhere else. A small picture of what you marked waits in the box; its × removes it, and Esc clears everything. Atticus gets a crop of that spot with your question, and the mark stays until you send. While a mark is waiting, instant commands and early thinking wait too.
 
 ## Draw on screen
 
 Ask how to do something and Atticus can show you: it draws boxes, circles, arrows and labels over your screen, with a pointer that moves to each spot. It goes one step at a time and moves on when you click the highlighted spot, change that value, or say "next".
 
-Ask it to explain something and draw it ("explain the Pythagorean theorem and draw it on my screen") and the drawing builds up like a whiteboard: each step adds to the last, and a card in the opposite corner keeps every caption so far. It moves through the steps by itself, and the finished drawing stays after the answer until you close the card, press Esc or ask again. Steps are spoken only when Read answers aloud is on. The drawings let clicks through and never take focus. Esc clears them. Turn it off in Settings → Screen & Windows → Draw on screen to show you.
+Ask it to explain something and draw it ("explain the Pythagorean theorem and draw it on my screen") and the drawing builds up like a whiteboard: each step adds to the last, and a card in the opposite corner keeps every caption so far. It moves through the steps by itself. It works from what you have open: with a video, page or problem on screen, it marks up that figure and uses its numbers, unless you ask for a fresh example. Drawings go on the screen where you asked (the one with the Atticus box) unless you name another. Worked examples and practice problems are written line by line in large text on one panel, readable from your chair on a laptop or a monitor.
+
+The drawing stays while you keep asking about it, and Atticus can add to it; it changes only when an answer draws something new. Click any mark (a box, an arrow, a label, a line of text) to select it, then ask "how does this work?": like Point at your screen, the question carries that mark and a picture of it. While a drawing is up, the Atticus box moves out of its way and comes back when it's gone. Close the card or press Esc to clear it. Steps are spoken only when Read answers aloud is on. The drawings never take focus, and clicks pass through everywhere except on a mark. Turn it off in Settings → General → Draw on screen to show you.
 
 ## Model choice
 
@@ -121,7 +124,9 @@ Small local models are usually weaker at reliable tool use and following long sc
 
 Ask for something big ("find me USB-C hubs") and Atticus hands it to a background agent. A chip shows up in the corner while you keep working. Hover it to see the live steps and a mini screen of the work. To change course, just talk: "tell the hub agent to check HDMI too" steers the running agent instead of starting a new one. When it finishes, a card shows the result once you stop typing. During a meeting or screen share, you get a quiet notification instead. If an agent needs a permission or a connector, it asks on its chip, then carries on. Turn on agents and their connectors in Settings → Agents (or the setup step).
 
-A long ask in the box can move too. While Atticus works, **Move to agent ⌃⌥↩** shows in the box; press ⌃⌥↩ from any app and the ask keeps going as an agent, without taking focus. Settings → Intelligence → **Long asks** decides what happens when an ask runs long: **Ask me** shows a card, **Move by itself** moves it with no card and starts offered agents without asking, **Never ask** shows nothing. ⌃⌥↩ works with every choice.
+A long ask in the box moves to an agent by itself, with no card, and agents Atticus offers start right away. To move one sooner, press ⌃⌥↩ from any app while it runs.
+
+Agents work behind you. Their clicks, typing, scrolling and keys go straight to the app they work in, so your pointer, your front app, your windows and your Space stay where they are. Web work happens in the agent's own browser window, in your signed-in profile; your tabs are left alone, and the window closes when the task ends. If an agent's process stops mid-task, Atticus restarts it once and it picks up where it was. When an agent asks to do something, **Always allow for this task** approves that same kind of action until the task ends; the next task asks again.
 
 ### Named agents
 
@@ -172,7 +177,7 @@ The flake runs the standard installer, which keeps the writable clone Atticus us
 Working on the code instead? Clone the repo anywhere and run `./build.sh` after each change. A Devbox environment is included for Python regression tests; run `devbox shell`, then `devbox run test`.
 
 The first launch opens a setup window. It checks your AI plan, then asks for each macOS permission.
-After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: shortcut, sounds, model, speed, screen, memory and usage. Settings and setup follow your Mac's light or dark appearance.
+After that, Atticus lives in the menu bar. Open it from Spotlight (⌘Space, "Atticus") for Settings: shortcut, voice, model, privacy, memory and usage. Settings and setup follow your Mac's light or dark appearance.
 If you sign out of your AI client later, the setup window comes back by itself.
 To see it again: `defaults delete com.atticus.app onboarded`, then restart the app.
 

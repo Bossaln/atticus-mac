@@ -10,6 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS Swift audio regression")
 class AudioNativeTests(unittest.TestCase):
+    def test_siri_voice_retries_until_the_voice_test_succeeds(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        voice = source[source.index("var siriVoiceTrying"):source.index("// The talk shortcut")]
+        before_test = voice[:voice.index("DispatchQueue.global().async")]
+        self.assertNotIn('set(true, forKey: "siriVoice")', before_test)
+        self.assertIn('else { UserDefaults.standard.set(true, forKey: "siriVoice") }', voice)
+        deliver = source[source.index("    func deliver("):source.index("    func linger(")]
+        self.assertIn("siriVoice()", deliver)
+
     def test_device_choice_falls_back_without_opening_bluetooth(self):
         source = (ROOT / "Atticus.swift").read_text()
         policy = source[source.index("struct MicrophoneDevice"):source.index("func listenMic()")]

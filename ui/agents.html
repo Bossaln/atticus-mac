@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root { color-scheme:dark; --fg:#f5f5f7; --fg2:#a1a1a6; --fg3:#6e6e73; --card:rgba(30,30,34,.92); --line:rgba(255,255,255,.08); --fill:rgba(255,255,255,.05); --fill2:rgba(255,255,255,.09);
+:root { color-scheme:dark; --fg:#f5f5f7; --fg2:#a1a1a6; --fg3:#8e8e93; --card:rgba(30,30,34,.92); --line:rgba(255,255,255,.08); --fill:rgba(255,255,255,.05); --fill2:rgba(255,255,255,.09);
   --accent:#0a84ff; --green:#30d158; --amber:#ff9f0a; --red:#ff453a; --spring:cubic-bezier(.16,1,.3,1); --ease:cubic-bezier(.2,.7,.3,1); }
 * { box-sizing:border-box } html,body { margin:0; background:transparent }
 body { color:var(--fg); font:13px -apple-system,BlinkMacSystemFont,sans-serif; -webkit-font-smoothing:antialiased; user-select:none; cursor:default }
@@ -76,8 +76,8 @@ aside { display:flex; flex-direction:column; min-height:0; border-right:.5px sol
 #list { overflow:auto; padding:0 8px 12px; flex:1 } .group { font-size:10.5px; font-weight:600; color:var(--fg3); letter-spacing:.2px; padding:12px 8px 5px }
 .item { width:100%; height:auto; display:flex; gap:9px; align-items:flex-start; text-align:left; padding:8px; margin:1px 0; border-radius:8px; background:transparent; box-shadow:none; font-weight:400 }
 .item:hover { background:var(--fill) } .item.selected { background:rgba(255,255,255,.1) } .item .dot { margin-top:5px } .item span { min-width:0; flex:1 }
-.agent-row { position:relative; min-width:0 } .agent-row .item { padding-right:27px } .remove { position:absolute; right:4px; top:10px; width:22px; height:24px; padding:0; opacity:0; background:none; color:var(--fg3) } .agent-row:hover .remove,.agent-row:focus-within .remove { opacity:1 } .side-head .actions { gap:2px } .side-head .ghost { font-size:10px; padding:4px }
-.named-row { position:relative; min-width:0 } .named-row .item { padding-right:58px; cursor:default } .named-actions { position:absolute; right:4px; top:8px; display:flex; opacity:0 } .named-row:hover .named-actions,.named-row:focus-within .named-actions { opacity:1 } .named-actions button { padding:4px; background:none; color:var(--fg3); font-size:10px } .named-edit { display:flex; gap:4px; padding:5px 4px } .named-edit input { min-width:0; width:100%; padding:5px 7px; border-radius:6px; border:.5px solid var(--line); background:var(--fill); color:var(--fg) } .named-edit button { padding:4px 6px; font-size:10px }
+.agent-row { position:relative; min-width:0 } .agent-row .item { padding-right:27px } .remove { position:absolute; right:4px; top:10px; width:22px; height:24px; padding:0; opacity:0; background:none; color:var(--fg3); transition:opacity .18s, background .2s, color .2s } .agent-row:hover .remove,.agent-row:focus-within .remove { opacity:1 } .side-head .actions { gap:2px } .side-head .ghost { font-size:10px; padding:4px }
+.named-row { position:relative; min-width:0 } .named-row .item { padding-right:58px; cursor:default } .named-actions { position:absolute; right:4px; top:8px; display:flex; opacity:0; transition:opacity .18s } .named-row:hover .named-actions,.named-row:focus-within .named-actions { opacity:1 } .named-actions button { padding:4px; background:none; color:var(--fg3); font-size:10px } .named-edit { display:flex; gap:4px; padding:5px 4px } .named-edit input { min-width:0; width:100%; padding:5px 7px; border-radius:6px; border:.5px solid var(--line); background:var(--fill); color:var(--fg) } .named-edit button { padding:4px 6px; font-size:10px }
 #named-status { padding:0 16px 8px; color:var(--fg2); font-size:11px; line-height:1.35 } #named-status:empty { display:none }
 .side-head { flex-wrap:wrap; row-gap:5px } .side-head>.actions { width:100%; justify-content:flex-end }
 .item b,.item small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis } .item b { font-size:12.5px; font-weight:500 } .item small { color:var(--fg3); margin-top:2px; font-size:11px; font-variant-numeric:tabular-nums }
@@ -145,6 +145,7 @@ const ACTIVE=['running','needs-you','waiting-screen','queued'];
 const active=r=>ACTIVE.includes(r.status);
 const state=r=>({'needs-you':'Needs you','waiting-screen':'Waiting for the screen',running:r.step||'Starting…',queued:'Queued',offered:'Ready to start',done:r.missingConnector?'Connect in Claude':'Done',failed:r.step||'Couldn’t finish',stopped:'Stopped'})[r.status]||r.status;
 const word=r=>({'needs-you':'Needs you','waiting-screen':'Waiting for the screen',running:'Working',queued:'Queued',offered:'Ready to start',done:'Done',failed:'Couldn’t finish',stopped:'Stopped'})[r.status]||r.status;
+const apiCost=u=>'≈'+(u<1?(u*100).toFixed(u<.1?2:1)+'¢':'$'+u.toFixed(2))+' at API prices';   // as Settings → Usage shows it
 const time=r=>{const s=Math.max(0,Math.floor((r.ended||Date.now()/1000)-(r.started||r.created)));return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';};
 const command=(action,id,more={})=>post({action,id,...more});
 const showNamedStatus=text=>{clearTimeout(namedTimer);setText($('named-status'),text);if(text)namedTimer=setTimeout(()=>setText($('named-status'),''),6000);};
@@ -180,7 +181,7 @@ function setup(r,q,card,actions){const answer=a=>command('answer',r.id,{answer:a
 function approval(r){const q=r.question,card=el('div','pk'),head=el('b');head.append(icon(q.need?'shield':'alert'),el('span','',q.pick||q.q||'Waiting for you'));card.append(head);const actions=el('div','actions');
  if(q.need)setup(r,q,card,actions);
  else if(q.pick){if(q.cmd)card.append(el('p','',q.cmd));(q.options||[]).forEach((option,i)=>actions.append(button(option,()=>command('answer',r.id,{answer:String(i),question:q._a}),i===0?'go':'')));actions.append(button('None of these',()=>command('answer',r.id,{answer:'',question:q._a})));}
- else{if(q.cmd)card.append(el('p','',q.cmd));actions.append(keyButton('Don’t Allow','esc',()=>command('answer',r.id,{answer:'n',question:q._a})));if(q.task)actions.append(button('Allow for this task',()=>command('answer',r.id,{answer:'task',question:q._a}),'task'));actions.append(keyButton('Allow','↩',()=>command('answer',r.id,{answer:'y',question:q._a}),'go'));}
+ else{if(q.cmd)card.append(el('p','',q.cmd));actions.append(keyButton('Don’t Allow','esc',()=>command('answer',r.id,{answer:'n',question:q._a})));if(q.task)actions.append(button('Always allow for this task',()=>command('answer',r.id,{answer:'task',question:q._a}),'task'));actions.append(keyButton('Allow','↩',()=>command('answer',r.id,{answer:'y',question:q._a}),'go'));}
  card.append(actions);return card;}
 function mini(r){const n=el('div','mini',r.target.window||r.target.app||'Window');n.dataset.mini=r.id;n.onclick=()=>command('open',r.id);return n;}
 const answer=r=>(r.result||'').replace(/\[agent-result\b[\s\S]*$/,'').trim()||r.summary||'';
@@ -334,7 +335,7 @@ function renderView(){if(!rows.some(r=>r.id===selected))selected=([...rows].sort
  const cards=madeCards(r);if(cards)parts.push(['made',JSON.stringify(r.made||r.links),()=>{const n=el('section');n.append(el('div','label','MADE'),cards);return n;}]);
  const body=r.status==='done'?answer(r):'';
  if(text&&!body)parts.push(['writing',text,()=>{const n=el('section','writing');n.append(el('div','label','WRITING…'),markdown(text,r));return n;}]);
- if(body)parts.push(['result',body+r.cost,()=>{const n=el('section'),card=markdown(body,r);if(r.changes&&!body.includes(r.changes))card.append(el('p','changes',r.changes));card.append(el('div','cost','Plan usage · $'+Number(r.cost||0).toFixed(4)+' · '+time(r)));n.append(el('div','label','RESULT'),card);return n;}]);
+ if(body)parts.push(['result',body+r.cost,()=>{const n=el('section'),card=markdown(body,r);if(r.changes&&!body.includes(r.changes))card.append(el('p','changes',r.changes));card.append(el('div','cost',(r.cost>0?apiCost(r.cost)+' · ':'')+time(r)));n.append(el('div','label','RESULT'),card);return n;}]);
  if(g.length)parts.push(['activity',r.id,()=>{const n=el('section'),fold=button([icon('chev'),'ACTIVITY',el('small')],()=>{folds.set(r.id,!n.classList.contains('open-fold'));n.classList.toggle('open-fold');fold.setAttribute('aria-expanded',n.classList.contains('open-fold'));},'fold');
   const tl=el('div'),inner=el('div');tl.id='timeline';inner.append(el('div','track'));tl.append(inner);n.append(fold,tl);n.classList.toggle('open-fold',folds.has(r.id)?folds.get(r.id):live);fold.setAttribute('aria-expanded',n.classList.contains('open-fold'));return n;}]);
  sync($('body'),parts,true);const act=$('body').querySelector('[data-key=activity]');

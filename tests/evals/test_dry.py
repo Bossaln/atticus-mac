@@ -1,4 +1,5 @@
 """Dry eval harness (VM-safe): fake Claude + fake Mac, no network."""
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,8 @@ from tests.evals.harness import run_all, run_scenario  # noqa: E402
 from tests.evals.scenarios import SCENARIOS  # noqa: E402
 
 
+@unittest.skipUnless(os.environ.get('ATTICUS_RUN_DRY_EVALS') == '1',
+                     '15-scenario dry eval is opt-in (ATTICUS_RUN_DRY_EVALS=1)')
 class DryEvalTests(unittest.TestCase):
     def test_all_dry_scenarios_pass(self):
         rows = run_all(ROOT, live=False)

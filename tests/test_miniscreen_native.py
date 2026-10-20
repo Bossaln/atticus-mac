@@ -236,8 +236,9 @@ func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 func axWindowNumber(_ element: AXUIElement) -> NSNumber? { NSNumber(value:42) }
 '''
-        start_at=swift.index('    func start()')
-        start=swift[start_at:swift.index('        guard !Prefs.bool("paused")',start_at)]+'    }\n'
+        start_at=swift.index('    func start(dictate: Bool)')
+        body_at=swift.index('        drawingReply = !dictate',start_at)
+        start='    func start() { let dictate = false\n'+swift[body_at:swift.index('        guard !Prefs.bool("paused")',start_at)]+'    }\n'
         starter='''enum Prefs { static func bool(_ name:String)->Bool { false }; static func str(_ name:String)->String { "back" } }
 final class EngineStub { var isRunning=false }
 final class PanelStub { var isVisible=false }
@@ -246,7 +247,7 @@ final class Starter {
  let drawing=DrawingStub();var drawingReply=false
  let mini=MiniScreen(),engine=EngineStub(),panel=PanelStub();var busy=false,fresh=false,retryOffer=false,askFile="",focusFile=NSTemporaryDirectory()+"atticus-focus-fixture"
  func shush() {}
- func hush(clearDrawing:Bool) {if clearDrawing {drawing.clear();drawingReply=false}}
+ func hush(keepReply:Bool) {if !keepReply {drawingReply=false}}
  func dismiss() {}
  func cancel() {}
  func cancelFast() {}
@@ -262,6 +263,8 @@ precondition(MiniScreen.windowTarget(.current,windows:candidates)?["windowID"] a
 precondition(MiniScreen.windowTarget(.current,title:"Budget",windows:candidates)?["windowID"] as? String == "41")
 precondition(MiniScreen.windowTarget(.current,title:"Popup",windows:candidates) == nil)
 var moved=info(41,"Budget");moved[kCGWindowBounds as String]=CGRect(x:500,y:100,width:400,height:300).dictionaryRepresentation
+precondition(MiniScreen.windowTarget(.current,screen:CGRect(x:400,y:0,width:600,height:600),windows:[info(42,"Notes"),moved])?["windowID"] as? String == "41",
+             "Request-display targeting ignored the window on that display")
 precondition(MiniScreen.windowTarget(.current,frame:[500,100,400,300],windows:[info(42,"Notes"),moved])?["windowID"] as? String == "41", "Pinned bounds must beat the app's focused window")
 precondition(MiniScreen.windowTarget(.current,frame:[999,100,400,300],windows:candidates) == nil,"Never preview an unrelated window")
 // apps own invisible full-width strips listed before their real window; AX-known windows win, else the largest

@@ -66,6 +66,7 @@ final class AppStub{
  func cue(_ name:String){}
  func hide(after:Double){}
  func escape(){};func shortcut(_ pressed:Bool){};func dictateShortcut(_ pressed:Bool){}
+ struct DrawingStub{var active=false};let drawing=DrawingStub();func avoidDrawing(){}
 ''' + show + defaults + '''
 }
 let app=AppStub()
@@ -101,15 +102,14 @@ def run_fixture(test,body,marker,real_mini=False):
 
 @unittest.skipUnless(sys.platform=='darwin','macOS native agent panels')
 class AgentNativeTests(unittest.TestCase):
-    def test_long_asks_move_by_itself_starts_offered_agents(self):
+    def test_offered_agents_start_without_a_card(self):
         run_fixture(self,'''let agentsUI=AgentPanels()
-func offer(_ id:String){agentsUI.receive(["event":"offer","agent":["id":id,"title":"Standing desks","status":"offered","created":Date().timeIntervalSince1970]])}
-Prefs.set("longAsks","ask");offer(String(repeating:"a",count:32))
-precondition(app.agentCard==String(repeating:"a",count:32)&&app.calls.contains("agentOffer"),"Ask me shows the card")
-app.agentCard="";app.calls=[];Prefs.set("longAsks","auto");offer(String(repeating:"b",count:32))
-precondition(app.agentCard.isEmpty && !app.calls.contains("agentOffer") && agentsUI.rows[String(repeating:"b",count:32)]?["status"] as? String=="running","Move by itself starts it")
-print("long asks offer ok");exit(0)
-''','long asks offer ok')
+Prefs.set("longAsks","ask")   // an old saved choice is ignored
+let id=String(repeating:"b",count:32)
+agentsUI.receive(["event":"offer","agent":["id":id,"title":"Standing desks","status":"offered","created":Date().timeIntervalSince1970]])
+precondition(app.agentCard.isEmpty && agentsUI.rows[id]?["status"] as? String=="running","Offered agent waited for a card")
+print("offer starts ok");exit(0)
+''','offer starts ok')
 
     def test_badge_counts_only_working_agents_but_restart_guard_keeps_live_work(self):
         run_fixture(self,'''let agentsUI=AgentPanels()

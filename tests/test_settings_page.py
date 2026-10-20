@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -38,8 +39,7 @@ DispatchQueue.main.asyncAfter(deadline: .now() + 20) { print("timeout"); exit(1)
 nsapp.run()
 '''
 SETUP = '''
-st.load({prefs: {hotkeyLabel: '⌃⌥Space', volume: .16, quietLevel: .18, aheadDelay: .7, meeting: true,
-  meetingStyles: [{name: 'Direct', text: 'Plain.'}, {name: 'Friendly', text: 'Warm.'}]}});
+st.load({prefs: {hotkeyLabel: '⌃⌥Space', volume: .16, meeting: true}});
 const use = {asks: 0, usd: 0, secs: 0};
 st.state({today: use, week: use, all: use, rules: ['Keep it short'], skills: [{say: 'focus mode', reply: 'Done'}],
   me: {facts: [{id: 'f1', category: 'basics', kind: 'name', value: 'Sam', source: 'you', date: ''}]}, plan: {ok: true, text: 'Ready'}});
@@ -67,11 +67,12 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return json.loads(p.stdout.strip().splitlines()[-1])
 
-    def test_loaded_memory_keeps_meeting_style_remove(self):
-        out = self.page('''document.querySelector('#styles .x').click(); await tick(50);
-            return P.meetingStyles.map(s => s.name);''')
-        self.assertEqual(out['result'], ['Friendly'])
-        self.assertFalse(any(p.get('do') == 'forget' for p in out['posts']))
+    def test_row_lines_stay_short(self):
+        page = (ROOT / 'ui/settings.html').read_text()
+        lines = [re.sub(r'<i class="info"[^>]*>i</i>|<[^>]+>', '', m).strip() for m in re.findall(r'</b><span[^>]*>(.*?)</span></div>', page) if '${' not in m]
+        self.assertGreater(len(lines), 40)
+        self.assertEqual([t for t in lines if len(t.split()) > 14], [])   # rare detail goes in an info tip
+        self.assertTrue(all(re.search(r'<i class="info" title="[^"]+">i</i></span>', m) for m in re.findall(r'<span>[^<]*<i class="info".*?</span>', page)))
 
     def test_notice_shows_and_its_action_runs_once(self):
         out = self.page('''st.notice({text: 'Couldn’t save that change, so the old setting is back.'});
@@ -95,14 +96,22 @@ class SettingsPageTests(unittest.TestCase):
         self.assertIn({'do': 'recordDictate'}, out['posts'])
         self.assertIn({'do': 'clearDictate'}, out['posts'])
 
+    def test_globe_key_fix_shows_only_while_macos_takes_fn(self):
+        out = self.page("""st.load({prefs:{hotkeyLabel:'⌃⌥Space',dictateHotkeyLabel:'fn'},globeTaken:true});
+            const row=$('globefix'), shown=[!row.hidden,row.textContent.includes('Set Press 🌐 key to Do Nothing'),$('dictatehint').textContent];
+            row.querySelector('button').click(); await tick(20); st.globe(false);
+            return [shown,row.hidden];""")
+        self.assertEqual(out['result'], [[True, True, 'Hold to talk. Double-tap to lock.'], True])
+        self.assertIn({'do': 'globeKey'}, out['posts'])
+
     def test_cleanup_is_disabled_with_a_reason_for_pi_and_devin(self):
         out = self.page("""const state=client=>{st.load({prefs:{client,hotkeyLabel:'⌃⌥Space',dictateHotkeyLabel:'⌃⌥D',dictateMode:'cleanup'}});
             const clean=document.querySelector('[data-k=dictateMode] [data-v=cleanup]');
             return [clean.disabled,$('dictatemodehint').textContent];};
             return [state('pi'),state('devin'),state('claude')];""")
-        self.assertEqual(out['result'], [[True, 'Clean up needs Claude. Use Verbatim instead.'],
-                                         [True, 'Clean up needs Claude. Use Verbatim instead.'],
-                                         [False, 'Clean up drops fillers and slips but keeps your words.']])
+        self.assertEqual(out['result'], [[True, 'Clean up needs Claude.'],
+                                         [True, 'Clean up needs Claude.'],
+                                         [False, 'Clean up drops fillers, fixes misheard words.']])
 
     def test_dictation_clash_warns_in_its_row_then_settles(self):
         out = self.page("""st.load({prefs:{hotkeyLabel:'⌃⌥Space',dictateHotkeyLabel:'⌃⌥D'},dictateHotkeyTaken:true});
@@ -115,15 +124,48 @@ class SettingsPageTests(unittest.TestCase):
         self.assertIn('Another app uses this shortcut', taken[0])
         self.assertEqual(own, ['That’s already your Atticus shortcut. Kept your old one.', 'warn', ''])
 
-    def test_one_long_asks_choice_replaces_the_start_agents_switch(self):
+    def test_sections_open_at_top_and_apps_opens_under_account(self):
+        out = self.page("""const main=document.querySelector('main');st.tab('brain');main.scrollTop=300;const scrolled=main.scrollTop>0;
+            st.tab('account');st.tab('brain');const top=main.scrollTop;st.tab('apps');
+            return [scrolled,top,$('apps').classList.contains('on'),document.querySelector('nav button.on')?.dataset.s];""")
+        self.assertEqual(out['result'], [True, 0, True, 'account'])
+        self.assertIn({'do': 'apps'}, out['posts'])
+
+    def test_retired_settings_are_hidden_and_keep_saved_values(self):
         sys.path.insert(0, str(ROOT)); import atticus
-        self.assertNotIn('agentsAuto', (ROOT / 'ui/settings.html').read_text())
-        self.assertNotIn('agentsAuto', atticus.switches())
-        name, options = atticus.picks()['longAsks']
-        self.assertEqual((name, options), ('Long asks', {'Ask me': 'ask', 'Move by itself': 'auto', 'Never ask': 'never'}))
-        with patch.dict(os.environ, {'ATTICUS_ASK': ''}), contextlib.redirect_stdout(io.StringIO()) as said:
-            atticus.set_switch('start agents without asking', 'move by itself')
-        self.assertEqual(said.getvalue().strip(), 'Long asks is now Move by itself.')
+        source, page = (ROOT / 'Atticus.swift').read_text(), (ROOT / 'ui/settings.html').read_text()
+        retired = re.findall(r'"(\w+)"', source[source.index('static let retiredKeys'):source.index(']', source.index('static let retiredKeys'))])
+        self.assertIn('workIn', retired)
+        defaults = source[source.index('static let defaults'):source.index('static let retiredKeys')]
+        self.assertIn('"quietAudio": false', defaults)
+        self.assertNotIn('retiredKeys.filter', source)
+        for key in retired:
+            with self.subTest(key=key):
+                self.assertIn(f'"{key}":', defaults)   # new users still receive a value
+                self.assertNotIn(f'data-k="{key}"', page)
+                self.assertNotIn(key, atticus.switches())
+                self.assertNotIn(key, atticus.picks())
+        self.assertEqual(len(page.split('<nav>')[1].split('</nav>')[0].split('data-s=')) - 1, 9)   # 8 pages and Report feedback
+
+    def test_pages_wear_their_sidebar_color_and_row_actions_show_on_focus(self):
+        out = self.page("""document.body.classList.add('reduce');
+            const nav=[...document.querySelectorAll('nav button[data-s] .ni')].map(i=>i.style.background);
+            const titled=[...document.querySelectorAll('nav button[data-s] .ni')].map(i=>$(i.parentNode.dataset.s).querySelector('h1 .ni')?.style.background===i.style.background);
+            st.load({prefs:{hotkeyLabel:'⌃⌥Space'},routines:[{id:'r',kind:'interval',every:3600,ask:'Check'}]}); const x=$('routines').querySelector('.x');
+            const reveal=[...document.styleSheets[0].cssRules].find(r=>r.selectorText?.includes('.row:hover > .x'))?.selectorText||'';   // a windowless view never takes focus
+            return [new Set(nav).size===nav.length,titled,getComputedStyle(x).opacity,reveal.includes('.row:focus-within > .x'),!!$('general').querySelector('[data-do=quit]'),!!$('account').querySelector('[data-do=quit]')];""")
+        distinct, titled, hidden, keyboard, quit_general, quit_account = out['result']
+        self.assertTrue(distinct)
+        self.assertEqual(titled, [True] * 7 + [False])   # About has its own big icon
+        self.assertEqual((hidden, keyboard), ('0', True))
+        self.assertEqual((quit_general, quit_account), (True, False))
+
+    def test_long_asks_always_move_so_there_is_no_choice(self):
+        sys.path.insert(0, str(ROOT)); import atticus
+        for gone in ('agentsAuto', 'longAsks'):
+            self.assertNotIn(gone, (ROOT / 'ui/settings.html').read_text())
+            self.assertNotIn(gone, atticus.switches())
+            self.assertNotIn(gone, atticus.picks())
         self.assertEqual(atticus.picks()['dictateMode'][1], {'Verbatim': 'verbatim', 'Clean up': 'cleanup'})
 
     def test_scheduled_routines_list_and_remove(self):
@@ -179,21 +221,6 @@ class SettingsPageTests(unittest.TestCase):
         self.assertIn('approval', safety)
         self.assertTrue(agents_hidden)
 
-    def test_sections_open_at_top_and_dependent_rows_grey_out_in_place(self):
-        out = self.page("""const main=document.querySelector('main');st.tab('brain');main.scrollTop=300;const scrolled=main.scrollTop>0;
-            st.tab('screen');st.tab('brain');const top=main.scrollTop;
-            st.load({prefs:{hotkeyLabel:'⌃⌥Space',quietAudio:false,ahead:false,instant:false}});
-            const rows=['quietLevel','aheadDelay','live'].map(k=>document.querySelector(`[data-k=${k}]`).closest('.row'));
-            const off=rows.map(r=>!r.hidden&&r.classList.contains('dim'));
-            st.load({prefs:{hotkeyLabel:'⌃⌥Space',quietAudio:true,ahead:true,instant:true}});
-            return [scrolled,top,off,rows.map(r=>r.classList.contains('dim')),document.querySelector('[data-k=quietLevel]').disabled];""")
-        scrolled, top, off, on, disabled = out['result']
-        self.assertTrue(scrolled)
-        self.assertEqual(top, 0)
-        self.assertEqual(off, [True, True, True])
-        self.assertEqual(on, [False, False, False])
-        self.assertFalse(disabled)
-
     def test_stale_server_models_cannot_change_the_current_model(self):
         out = self.page("""P.apiBase='server-b'; P.apiKey='key-b';
             st.models({base:'server-b',key:'key-b',list:['b']});
@@ -209,7 +236,7 @@ class SettingsPageTests(unittest.TestCase):
               asks: [{at: '2026-10-15 09:30:00', task: 'weather', reply: 'Sunny'}, {at: '2026-10-14 08:00:00', task: 'open notes', reply: 'Opened Notes'}]});
             const all = $('asklist').querySelectorAll('.row').length;
             $('askq').value = 'notes'; $('askq').oninput(); const rows = [...$('asklist').querySelectorAll('.row b')].map(b => b.textContent);
-            $('asklist').querySelector('.btn').click(); return [all, rows];''')
+            $('asklist').querySelector('.x.copy').click(); return [all, rows];''')
         self.assertEqual(out['result'], [2, ['open notes']])
         self.assertIn({'do': 'copy', 'text': 'Opened Notes'}, out['posts'])
 

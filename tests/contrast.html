@@ -5,6 +5,9 @@ const results=document.getElementById('results'), frame=document.getElementById(
 try {
  const native=await (await fetch('../Atticus.swift')).text();
  const tint=+native.match(/blue:20\/255,alpha:([\d.]+)\)\.cgColor/)[1];
+ // The box's glass with its tint, measured in the VM over white, mid grey and black (tests.shoot_boxlook test_measure_glass)
+ const glass={0.9:{255:[49,49,53],128:[40,40,44],0:[30,30,34]},0.88:{255:[53,53,56],128:[41,42,46],0:[30,30,34]},0.85:{255:[57,59,61],128:[43,45,49],0:[30,31,34]},0.8:{255:[66,67,71],128:[49,50,53],0:[30,31,34]}}[tint];
+ if(!glass)throw Error('The box tint changed: measure it with tests.shoot_boxlook and add it here');
  const html=await (await fetch('../ui/ui.html')).text(), orbs=await (await fetch('../ui/orbs.js')).text();
  const ready=new Promise(resolve=>window.addEventListener('message',e=>{if(e.source===frame.contentWindow&&e.data.ready)resolve()}));
  const bridge='<script>window.webkit={messageHandlers:{c:{postMessage:m=>parent.postMessage(m,"*")},h:{postMessage:()=>{}}}};<\/script>';
@@ -14,10 +17,10 @@ try {
  const style=d.createElement('style');style.textContent=[...d.styleSheets[0].cssRules].map(r=>r.cssText.replaceAll(':hover','.fixture-hover').replaceAll(':focus-visible','.fixture-focus').replaceAll(':focus','.fixture-focus')).join('\n')+'*,*::before,*::after{animation:none!important;transition:none!important}';d.head.append(style);
  d.getElementById('thread').innerHTML=`<div class="turn old"><div class="q">Earlier ask</div><div class="a">Earlier answer</div></div><div class="turn">
  <div class="q">Ask bubble</div><div class="q empty hear"></div><div class="steps" data-more="3"><div class="step"><span>Completed step</span></div><div class="step live"><span>Live step</span></div><div class="step cut">Cancelled step</div></div>
- <div class="mini-fallback" style="position:relative"><span class="mini-title">Preview title</span></div><span class="mini-tag" style="position:relative">Preview app</span><span class="mini-hint" style="position:relative;opacity:1;transform:none">Open preview</span><div class="a">Answer</div><div class="a cancel">Cancelled answer</div><div class="a stopped">Stopped answer</div>
+ <div class="mini-fallback" style="position:relative"><span class="mini-title">Preview title</span></div><span class="mini-tag" style="position:relative">Preview app</span><span class="mini-hint" style="position:relative;opacity:1;transform:none">Open preview</span><div class="a">Answer</div><div class="a"><div class="h">Heading</div><p>Answer <strong>bold</strong> <em>italic</em> <code>code</code> <a href="#">link</a> <span class="tex">\\weird</span></p><ol><li>Item</li></ol></div><div class="a cancel">Cancelled answer</div><div class="a stopped">Stopped answer</div>
  <div class="elapsed">Response time <b>1.24 s</b><button class="redo">Try again</button></div>
  <div class="ok"><b>Approval</b><code>Command preview</code><div><button class="go">Continue</button><button>Cancel</button></div></div>
- <div class="ok offer"><p>Offer explanation</p><button class="off">Dismiss</button></div>
+ <div class="ok offer"><p>Offer explanation</p><button class="details">Copy Details</button></div>
  <div class="pk open"><b>Choose</b><div class="g"><button class="c on"><span class="n">Name</span><span class="s">Subtitle</span><span class="p">Folder</span></button></div><input class="other" placeholder="Something else"><div class="bar"><button class="go">Choose</button></div></div>
  <div class="rewrite"><button class="go">Replace</button><button class="del">Delete</button></div><div class="rewrite-note">Selection changed</div><div class="sel">Selected text</div>
  <div class="tip" data-k="Tip">Tip text<button class="off">Turn off tips</button></div><div class="tip learned" data-k="Learned">Learned text</div>
@@ -29,11 +32,10 @@ try {
  const rgba=s=>s.match(/[\d.]+/g).map(Number), over=(fg,bg)=>fg.slice(0,3).map((v,i)=>v*(fg[3]??1)+bg[i]*(1-(fg[3]??1)));
  const lum=c=>c.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
  const rows=[],fails=[];
- // Assume the material transmits the full backdrop: the native tint alone must guarantee AA.
  for(const state of ['rest','hover','focus']) {
   d.querySelectorAll('#card *').forEach(el=>{el.classList.toggle('fixture-hover',state==='hover');el.classList.toggle('fixture-focus',state==='focus')});
- for(const backdrop of [255,20,0]) {
-  const base=over([18,18,20,tint],[backdrop,backdrop,backdrop]);
+ for(const backdrop of [255,128,0]) {
+  const base=glass[backdrop];
   const check=(el,pseudo)=>{
    const css=w.getComputedStyle(el,pseudo);if(css.display==='none'||css.visibility==='hidden'||+css.opacity===0||el.disabled)return;
    const chain=[];for(let e=el;e;e=e.parentElement)chain.unshift(e);

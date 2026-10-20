@@ -31,3 +31,20 @@ def run_swift(test, source, timeout=10):
         result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=timeout)
         test.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout
+
+
+# Host guard: window/app-driving tests run only in the VM (run.sh sets ATTICUS_VM=1). On Saarth's Mac, launching a
+# compiled fixture/harness, osascript, `open` or the Atticus binary skips the test instead of taking over his screen.
+if not os.environ.get('ATTICUS_VM') and not os.environ.get('ATTICUS_ALLOW_HOST_UI'):
+    import subprocess, unittest
+    _popen_init = subprocess.Popen.__init__
+    _tmp = os.path.realpath(tempfile.gettempdir())
+
+    def _guarded(self, args, *a, **k):
+        first = args if isinstance(args, (str, bytes, os.PathLike)) else (args[0] if args else '')
+        exe = os.path.realpath(str(first).split()[0]) if first else ''
+        name = os.path.basename(exe)
+        if exe.startswith(_tmp) or name in ('osascript', 'open', 'Atticus', 'swift') or '/Atticus.app/' in exe:
+            raise unittest.SkipTest(f'host guard: {name} runs only in the VM (run.sh)')
+        _popen_init(self, args, *a, **k)
+    subprocess.Popen.__init__ = _guarded

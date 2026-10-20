@@ -13,6 +13,7 @@ class SelectionTests(unittest.TestCase):
     def test_paste_rechecks_target_cancellation_and_clipboard_ownership(self):
         source = (ROOT / 'Atticus.swift').read_text()
         apply = source[source.index('    func apply(_ draft:'):source.index('    func replace(_ draft:')]
+        borrow = source[source.index('func borrowPasteboard'):source.index('struct TextSelection {')]
         swift = '''import Foundation
 import CoreFoundation
 let kAXFocusedUIElementAttribute = "focus", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value"
@@ -27,7 +28,7 @@ final class FakeApp: Equatable {
  static func == (a: FakeApp, b: FakeApp) -> Bool { a === b }
 }
 final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: FakeApp? }
-enum PasteType: Hashable { case string, rich }
+enum PasteType: Hashable { case string, rich, transient; init(_ raw: String) { self = .transient } }
 final class NSPasteboardItem {
  var data: [PasteType: Data] = [:]
  var types: [PasteType] { Array(data.keys) }
@@ -35,16 +36,25 @@ final class NSPasteboardItem {
  func setData(_ value: Data, forType type: PasteType) { data[type] = value }
 }
 final class NSPasteboard {
+ typealias PasteboardType = PasteType
  static let general = NSPasteboard()
- var pasteboardItems: [NSPasteboardItem]? = [], changeCount = 0, failWrite = false
+ var pasteboardItems: [NSPasteboardItem]? = [], changeCount = 0, failWrite = false, marked = 0
  func clearContents() { changeCount += 1; pasteboardItems = [] }
  func setString(_ text: String, forType type: PasteType) -> Bool {
   if failWrite { return false }
   let item = NSPasteboardItem(); item.setData(Data(text.utf8), forType: type)
   pasteboardItems = [item]; changeCount += 1; return true
  }
- func writeObjects(_ items: [NSPasteboardItem]) { pasteboardItems = items; changeCount += 1 }
+ func setData(_ value: Data, forType type: PasteType) { if type == .transient { marked += 1 }; pasteboardItems?.first?.setData(value, forType: type) }
+ func writeObjects(_ items: [NSPasteboardItem]) -> Bool { pasteboardItems = items; changeCount += 1; return true }
 }
+var clipboardBusy = false, leases = 0, unlocks = 0
+enum Hands {
+ struct Busy: Error {}
+ static func lease(_ name: String, wait: Bool) throws -> Int32 { precondition(name == "clipboard.lock" && !wait); if clipboardBusy { throw Busy() }; leases += 1; return 7 }
+ static func unlock(_ fd: Int32) { precondition(fd == 7); unlocks += 1 }
+}
+''' + borrow + '''
 enum CGEventTapLocation { case cghidEventTap }
 struct Flags: OptionSet { let rawValue: Int; static let maskCommand = Flags(rawValue: 1) }
 final class CGEvent {
@@ -58,9 +68,10 @@ final class CGEvent {
  }
 }
 struct Harness {
- let element: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 0, length: 3)
+ let element: CFTypeRef = NSNumber(value: 1), focus: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 0, length: 3)
  enum Delivery { case landed, unchanged, unknown }
  static let settle: TimeInterval = 0.05
+ static func string(_ value: CFTypeRef?) -> String? { value as? String }
  var editable = false, pastable = true
  static func selectedRange(_ e: CFTypeRef) -> CFRange? { currentRange }
  func replace(_ text: String) -> Bool { if directOK { directWrites += 1; field = text }; return directOK }
@@ -91,8 +102,9 @@ reset(); var ok = false
 h.apply("draft", valid: { true }) { ok = $0 }; pump(0.5); precondition(ok)
 pb.clearContents(); _ = pb.setString("new copy", forType: .string); pump(0.45)
 precondition(pb.pasteboardItems?.first?.data(forType: .string) == Data("new copy".utf8), "new clipboard copy clobbered")
-reset(); h.apply("draft", valid: { true }) { ok = $0 }; pump(0.6)
+reset(); let marks = pb.marked; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.6)
 precondition(ok && pb.pasteboardItems?.first?.data(forType: .rich) == Data("rich original".utf8), "rich clipboard not restored")
+precondition(pb.marked == marks + 1 && pb.pasteboardItems?.first?.data(forType: .string) == nil, "the paste was not transient, or its text stayed")
 reset(); let count = pb.changeCount; h.apply("", valid: { true }) { ok = $0 }; pump(0.5)
 precondition(ok && pb.changeCount == count && Array(keys.suffix(2)) == [51, 51], "delete key/clipboard regressed")
 reset(); pb.failWrite = true; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.2)
@@ -111,6 +123,10 @@ precondition(ok && events == before + 2, "failed AX write did not fall back to p
 reset(); directOK = false; let other = FakeApp(); NSWorkspace.shared.frontmostApplication = other; let eventCount = events, activationCount = activations
 h.apply("private", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication === h.app }) { ok = $0 }; pump(0.2)
 precondition(!ok && events == eventCount && activations == activationCount && NSWorkspace.shared.frontmostApplication === other, "focus-preserving insert raised the old app or typed there")
+reset(); clipboardBusy = true; ok = false; let busyEvents = events
+h.apply("draft", valid: { true }) { ok = $0 }; pump(0.3)
+precondition(!ok && events == busyEvents && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "pasted while another Atticus process held the clipboard")
+clipboardBusy = false; pump(0.6); precondition(ok && leases == unlocks, "paste did not resume after the clipboard freed, or kept the lock")
 print("paste safety ok")
 '''
         self.assertIn('paste safety ok', run_swift(self, swift))
@@ -118,11 +134,12 @@ print("paste safety ok")
     def test_typing_capture_accepts_empty_fields_but_never_secure_fields(self):
         source = (ROOT / 'Atticus.swift').read_text()
         capture = source[source.index('    static func capture('):source.index('    static func selectedRange(')]
+        pastable = source[source.index('    var pastable: Bool'):source.index('    func apply(')]
         typing_guard = next(line for line in source.splitlines() if 'guard let selected = TextSelection.capture(enabled: true' in line)
         swift = '''import Foundation
 import CoreFoundation
-let kAXFocusedUIElementAttribute = "focus", kAXSubroleAttribute = "subrole", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value", kAXSecureTextFieldSubrole = "secure"
-var selectedText = "", subrole = "field", canEdit = true, exposesSelectedText = true
+let kAXFocusedUIElementAttribute = "focus", kAXSubroleAttribute = "subrole", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value", kAXRoleAttribute = "role", kAXParentAttribute = "parent", kAXSecureTextFieldSubrole = "secure"
+var selectedText = "", subrole = "field", canEdit = true, exposesSelectedText = true, useParent = false
 struct Prefs { static func bool(_ key: String) -> Bool { true } }
 final class NSRunningApplication: Equatable {
  static let current = NSRunningApplication()
@@ -135,12 +152,20 @@ func AXIsProcessTrusted() -> Bool { true }
 func AXUIElementCreateApplication(_ pid: Int) -> Int { pid }
 func AXUIElementSetMessagingTimeout(_ e: Int, _ timeout: Double) {}
 func axAttribute(_ e: Int, _ name: String) -> Any? {
- return name == "focus" ? 1 : name == "subrole" ? subrole : name == "value" ? selectedText : exposesSelectedText ? selectedText : nil
+ if name == "focus" { return 1 }
+ if name == "parent" { return useParent && e == 1 ? 2 : nil }
+ if name == "subrole" { return subrole }
+ if name == "role" { return e == 2 ? "AXWebArea" : "AXStaticText" }
+ if e == 2 { return name == "value" ? NSAttributedString(string: "prefix old suffix") : nil }
+ return name == "value" ? selectedText : exposesSelectedText ? selectedText : nil
 }
 struct TextSelection {
- let element: Int, app: NSRunningApplication, text: String, range: CFRange?
- var editable: Bool { canEdit }; var pastable: Bool { false }
- static func selectedRange(_ e: Int) -> CFRange? { CFRange(location: 0, length: selectedText.count) }
+ let element: Int, focus: Int, app: NSRunningApplication, text: String, range: CFRange?
+ var editable: Bool { canEdit }
+''' + pastable + '''
+ static func string(_ value: Any?) -> String? { value as? String ?? (value as? NSAttributedString)?.string }
+ static func parent(_ e: Int) -> Int? { axAttribute(e, kAXParentAttribute) as? Int }
+ static func selectedRange(_ e: Int) -> CFRange? { useParent ? (e == 2 ? CFRange(location: 7, length: 3) : nil) : CFRange(location: 0, length: selectedText.count) }
 ''' + capture + '''}
 func acceptsTyping() -> Bool {
 ''' + typing_guard + ''' return false }; return true
@@ -152,7 +177,10 @@ canEdit = false; precondition(TextSelection.capture() == nil, "an empty read-onl
 precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text == "", "typing rejected an empty field")
 selectedText = "old"; precondition(TextSelection.capture()?.text == "old")
 exposesSelectedText = false; precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text == "old", "field value did not recover a missing selected-text attribute")
-exposesSelectedText = true
+selectedText = ""; exposesSelectedText = true; useParent = true
+let rich = TextSelection.capture()
+precondition(rich?.text == "old" && rich?.element == 2 && rich?.focus == 1 && rich?.pastable == true, "browser parent/attributed selection was not captured as replaceable")
+useParent = false; selectedText = "old"
 precondition(TextSelection.capture(enabled: false, allowEmpty: true) == nil)
 NSWorkspace.shared.frontmostApplication = .current
 precondition(TextSelection.capture(enabled: true, allowEmpty: true) == nil, "Atticus captured its own field")
@@ -177,11 +205,11 @@ struct TextSelection {
  var caret: Bool { text.isEmpty }
  static func capture(_ app: String?, enabled: Bool) -> TextSelection? { Thread.sleep(forTimeInterval: 0.15); return TextSelection(text: app ?? "") }
 }
-final class DrawingStub { var active = false; func advance() {} }
+final class DrawingStub { var active = false; func next() {} }
 func transcriptKey(_ s: String) -> String { s.lowercased() }
 final class Harness {
  var drawingReply = false; let drawing = DrawingStub(); var proc: Process?
- func cancel() {}; func typed(_ s: String) {}
+ func cancel() {}; func hush() {}; func typed(_ s: String) {}
  var selectionID = 0, selectionPending = false, selection: TextSelection?, messages: [String] = []
  var warm: Int? = 1, warmSel = "", respawns = 0
  var busy = true, fastBusy = false, stops = 0, finished = 0

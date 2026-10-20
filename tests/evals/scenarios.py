@@ -41,7 +41,7 @@ SCENARIOS = [
                     {'kind': 'box', 'label': 'Q3 answer'},
                     {'kind': 'box', 'label': 'Q4 answer'},
                     {'kind': 'box', 'label': 'Q5 answer'},
-                    {'kind': 'link', 'label': 'Next page', 'goto_page': 'p2'},
+                    {'kind': 'link', 'label': 'Next page', 'goto_page': 'p2', 'effect': 'read_page2'},
                 ],
             },
             'p2': {
@@ -52,12 +52,13 @@ SCENARIOS = [
                     {'kind': 'box', 'label': 'Q7 answer'},
                     {'kind': 'box', 'label': 'Q8 answer'},
                     {'kind': 'box', 'label': 'Q9 answer'},
-                    {'kind': 'box', 'label': 'Q10 answer'},
+                    {'kind': 'box', 'label': 'Q10 answer', 'effect': 'filled_q10'},
                 ],
             },
         },
         'document': WORKSHEET_DOC,
-        'expect': {'effects': ['read_page2', 'filled_q10'], 'text_before_look': True},
+        'expect': {'effects': ['read_page2', 'filled_q10'], 'control_values': {'p2': {'Q10 answer': '2'}},
+                   'text_before_look': True},
         'dry_bash': [
             f'python3 "$ATTICUS_ME" --web read',
             f'python3 "$ATTICUS_ME" --web fill 1 "3"',
@@ -65,7 +66,6 @@ SCENARIOS = [
             f'python3 "$ATTICUS_ME" --web read',
             f'python3 "$ATTICUS_ME" --web fill 5 "2"',
         ],
-        'dry_finalize': {'effects': ['read_page2', 'filled_q10']},
     },
     {
         'id': 'survey_form',
@@ -281,14 +281,13 @@ SCENARIOS = [
         'expect': {'tool_patterns': [r'--pick']},
         'live_expect': {'max_clarify_questions': 1},
         'dry_bash': ['python3 "$ATTICUS_ME" --pick "Which document?" "Budget.pdf" "Budget draft.pdf"'],
-        'dry_finalize': {},
     },
 ]
 
 
 def initial_state(scenario):
     s = deepcopy(scenario)
-    for key in ('expect', 'dry_bash', 'dry_finalize', 'dry_result', 'live_expect', 'task', 'id'):
+    for key in ('expect', 'dry_bash', 'dry_result', 'live_expect', 'task', 'id'):
         s.pop(key, None)
     s.setdefault('page', 'default')
     s.setdefault('effects', [])

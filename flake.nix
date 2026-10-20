@@ -13,7 +13,7 @@
       nixpkgs-darwin-legacy,
     }:
     let
-      version = "1.0";
+      version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
       targetSystems = [
         "aarch64-darwin"
         "x86_64-darwin"
@@ -45,7 +45,7 @@
             src=${./.}
             case "''${1:-}" in
               ""|install|--install|build|--build)
-                exec bash "$src/install.sh"
+                exec bash "$src/build.sh"
                 ;;
               --check)
                 python3 -c 'import pathlib, sys; compile(pathlib.Path(sys.argv[1]).read_text(), sys.argv[1], "exec")' "$src/atticus.py"

@@ -37,6 +37,8 @@ class BackgroundTests(unittest.TestCase):
         self.assertEqual(self.gate(f'printf again | xargs {atticus.ME} ask'), 'deny')
         self.assertEqual(self.gate(f'echo ready && env {atticus.ME} ask again'), 'deny')
         self.assertEqual(self.gate(f'python3 {atticus.ME} --hands see Notes'), 'allow')
+        self.assertEqual(self.gate(f'A={atticus.ME}; $A --front Fixture && $A --hands see Fixture'), 'allow')
+        self.assertEqual(self.gate(f'A={atticus.ME}; $A ask again'), 'deny')
         self.assertEqual(self.gate('osascript -e \'tell application "Notes" to activate\''), 'deny')
         for separator in (';', '&&', '|', '\n', '\n\n'):
             with self.subTest(separator=separator):
@@ -99,7 +101,7 @@ class BackgroundTests(unittest.TestCase):
             if 'make new tab' in args[2]:
                 self.assertIn('set priorSelection to current tab of w',args[2])
                 self.assertIn('set current tab of w to priorSelection',args[2])
-            return subprocess.CompletedProcess([],0,'10\t2' if 'make new tab' in args[2] else 'Requested page, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else
+            return subprocess.CompletedProcess([],0,'10\t2\t\n' if 'make new tab' in args[2] else 'Requested page, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else
                                                json.dumps({'signature':url+'|ready'}) if '"ready", ' in args[-1][-35:] else 'Actual requested page content', '')
         with patch.object(atticus,'browser_adapter',return_value='webkit'), patch.object(atticus,'page_ready',return_value=True), \
              patch.object(atticus,'preview_app',return_value=self.target),patch.object(atticus,'hands_map'),patch.object(atticus,'emit') as emit,patch.object(atticus.subprocess,'run',side_effect=result):
@@ -141,38 +143,34 @@ class BackgroundTests(unittest.TestCase):
             atticus.keep_behind('Editor', 'Fixture')
             osa.assert_not_called()
 
-    def test_parallel_agent_reads_own_tabs_and_never_launch_select_or_raise(self):
-        barrier=threading.Barrier(3); pins={}; results={}; calls=[]
+    def test_agent_reads_reuse_one_own_window_and_close_it_at_task_end(self):
+        scripts=[]; url=['']
         def result(args,**kw):
-            calls.append(args)
-            self.assertEqual(args[0],'osascript')
-            script=args[2]
-            self.assertNotRegex(script,r'(?i)activate|AXRaise|frontmost|make new window|set (?:index|bounds|miniaturized)')
-            url='https://fixture.example/'+threading.current_thread().name
-            if 'make new tab' in script:
-                self.assertIn('set priorSelection to active tab index of w',script)
-                self.assertIn('set active tab index of w to priorSelection',script)
-                pins[threading.current_thread().name]=len(pins)+1
-                barrier.wait(timeout=3)
-                return subprocess.CompletedProcess(args,0,'10\t'+str(pins[threading.current_thread().name]),'')
+            if args[0]=='pgrep': return subprocess.CompletedProcess(args,0)
+            self.assertEqual(args[0],'osascript'); script=args[2]; scripts.append(args)
+            self.assertNotRegex(script,r'(?i)activate|AXRaise|frontmost|keystroke|key code')
+            if 'make new tab' in script: return subprocess.CompletedProcess(args,0,'77\t'+str(len(scripts))+('\tnew' if args[-1]=='0' else '\t'),'')
             if 'get {name, bounds}' in script: out='Fixture, 0, 0, 300, 200'
+            elif 'close window' in script: out=''
             else:
-                self.assertIn('whose id is '+str(pins[threading.current_thread().name]),script)
-                out=json.dumps({'signature':url+'|ready'}) if '"ready", ' in args[-1][-35:] else url
+                self.assertIn('window id 77',script)
+                out=json.dumps({'signature':url[0]+'|ready'}) if '"ready", ' in args[-1][-35:] else 'page text'
             return subprocess.CompletedProcess(args,0,out,'')
-        with patch.dict(os.environ,{'ATTICUS_AGENT':'fixture'}),patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map'),patch.object(atticus.subprocess,'run',side_effect=result):
-            def read():
-                name=threading.current_thread().name
-                results[name]=atticus.web('read','https://fixture.example/'+name,app='Fixture Browser')
-            threads=[threading.Thread(target=read,name=str(i)) for i in range(3)]
-            for t in threads:t.start()
-            for t in threads:t.join(5)
-            self.assertEqual(results,{str(i):'https://fixture.example/'+str(i) for i in range(3)})
-            self.assertFalse(atticus.wants_focus('Show this browser'))
-            self.assertEqual(len(set(pins.values())),3)
-            path=Path(os.environ['ATTICUS_ASK'],'web.json');saved=json.loads(path.read_text())
-            self.assertIn(saved['tab'],pins.values())
-            self.assertEqual(path.stat().st_mode&0o777,0o600)
+        with patch.dict(os.environ,{'ATTICUS_AGENT':'fixture'}),patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'page_ready',return_value=True), \
+             patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'hands_map'),patch.object(atticus,'osa',return_value='Editor'), \
+             patch.object(atticus,'keep_behind') as behind,patch.object(atticus.subprocess,'run',side_effect=result):
+            for i in range(2):
+                url[0]='https://fixture.example/'+str(i)
+                self.assertIn('page text',atticus.web('read',url[0],app='Fixture Browser'))
+            first,second=[a for a in scripts if 'make new tab' in a[2]]
+            self.assertEqual((first[-1],second[-1]),('0','77'))   # the second page reuses the task's window
+            self.assertIn('make new window',first[2]);self.assertIn('set index of prior to 1',first[2])
+            behind.assert_called_once_with('Editor','Fixture Browser',wait=.5)
+            saved=Path(atticus.agent_gate_dir(os.environ['ATTICUS_ASK']),'browser-window.json')
+            self.assertEqual(json.loads(saved.read_text()),{'app':'Fixture Browser','window':77});self.assertEqual(saved.stat().st_mode&0o777,0o600)
+            atticus.close_agent_window(os.environ['ATTICUS_ASK'])
+            self.assertIn('close window id 77',scripts[-1][2]);self.assertFalse(saved.exists())
+            count=len(scripts);atticus.close_agent_window(os.environ['ATTICUS_ASK']);self.assertEqual(len(scripts),count)   # never a window it did not open
 
     def test_agent_site_placement_uses_main_open_path_only_when_requested(self):
         url = 'https://unseen.example/catalog'
@@ -219,6 +217,32 @@ class BackgroundTests(unittest.TestCase):
             Path(os.environ['ATTICUS_ASK'], 'request').write_text('Open Notes')
             atticus.main(); show.assert_called_with('Notes', False)
 
+    def test_agent_front_work_follows_only_the_users_words_and_uses_the_real_path(self):
+        self.assertTrue(atticus.asks_front('fill the form in front of me') and atticus.asks_front('do it in the foreground'))
+        self.assertFalse(atticus.asks_front('fill the form in the background'))
+        agents = atticus.Agents(emit=lambda event: None)
+        def started(words=None, brief='Open Keynote and show the deck', **extra):
+            row = agents.new(); row.update(brief=brief, status='offered', **({'request': words} if words else {}), **extra); agents.rows[row['id']] = row
+            agents.start(row['id'])
+            return row, Path(atticus.agent_gate_dir(row['directory']), 'focus-requested')
+        with patch.object(agents, 'warm'), patch.object(agents, 'send'), patch.object(agents, 'save'):
+            self.assertFalse(started('Research flights to Lisbon')[1].exists())
+            self.assertFalse(started()[1].exists())   # a model-written brief alone never brings an agent forward
+            self.assertTrue(started('keep going', focus=True)[1].exists())   # a moved ask that already worked in front
+            row, marker = started('Build the deck in Keynote and show it to me in front')
+        self.assertTrue(marker.exists())
+        with patch.dict(os.environ, {'ATTICUS_AGENT': row['id'], 'ATTICUS_ASK': row['directory']}):
+            self.assertTrue(atticus.wants_focus())
+            with patch.object(atticus, 'osa') as osa, patch.object(atticus, 'free_focus'), patch.object(atticus, 'look', return_value=[('/fake.jpg', 'Screen')]), \
+                 patch.object(atticus.time, 'sleep'), patch('sys.stdout', new_callable=io.StringIO), patch('sys.argv', ['atticus.py', '--front', 'Keynote']):
+                atticus.main()
+                osa.assert_any_call('tell application "Keynote" to activate')
+            marker.unlink(); Path(row['directory'], 'focus-requested').touch()   # the agent's own folder is writable by the agent: it does not count
+            self.assertFalse(atticus.wants_focus())
+        Path(os.environ['ATTICUS_ASK'], 'request').write_text('open Keynote and build three slides')
+        move = atticus.MainMove('Request: open Keynote and build three slides', type('Worker', (), {'ask': os.environ['ATTICUS_ASK']})())
+        self.assertTrue(move.handoff()['focus'])
+
     def test_front_carries_model_intent_in_any_language(self):
         marker = Path(os.environ['ATTICUS_ASK'], 'focus-requested')
         with patch.object(atticus.shutil, 'which', return_value='/fake/claude'), \
@@ -250,6 +274,7 @@ class BackgroundTests(unittest.TestCase):
                     popen.return_value.communicate.return_value = ('', '')
                     atticus.hands_call(['see'])
                     self.assertEqual(popen.call_args.kwargs['env']['ATTICUS_FOCUS_REQUESTED'], '1')
+                marker.unlink(missing_ok=True)   # this fixture's agent gate folder is the ask folder itself
                 with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}):
                     self.assertFalse(atticus.wants_focus())
                     self.assertTrue(atticus.wants_focus(sites=True))

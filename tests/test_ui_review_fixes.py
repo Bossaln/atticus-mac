@@ -1,0 +1,130 @@
+"""Regressions from the 1.3.2 UI review; source and Node checks only, no windows."""
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def node(test, script):
+    if not shutil.which('node'):
+        test.skipTest('Node runs the overlay checks')
+    result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
+    test.assertEqual(result.returncode, 0, result.stderr)
+
+
+def contrast(fg, bg):
+    def lum(h):
+        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        c = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in c]
+        return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+    a, b = lum(fg), lum(bg)
+    return (max(a, b) + .05) / (min(a, b) + .05)
+
+
+def tint(color, alpha, bg='#ffffff'):
+    return '#' + ''.join('%02x' % round(alpha * int(color[i:i + 2], 16) + (1 - alpha) * int(bg[i:i + 2], 16)) for i in (1, 3, 5))
+
+
+class UIReviewFixTests(unittest.TestCase):
+    def setUp(self):
+        self.swift = (ROOT / 'Atticus.swift').read_text()
+        self.box = (ROOT / 'ui/ui.html').read_text()
+        self.settings = (ROOT / 'ui/settings.html').read_text()
+        self.onboarding = (ROOT / 'ui/onboarding.html').read_text()
+        self.agents = (ROOT / 'ui/agents.html').read_text()
+
+    def test_native_clicks_reach_try_again_the_agents_pill_and_pill_buttons(self):
+        tap = self.box[self.box.index('    tap([x, y])'):self.box.index('    size(h)')]
+        node(self, r'''let clicked = '';
+const make = key => { const el = { closest: s => s.split(', ').includes(key) ? el : null, click() { clicked = key; } }; return el; };
+const document = { elementFromPoint: () => current }; let current;
+const $ = () => ({ classList: { contains: () => false }, value: '' }), drop = () => {}, comp = () => { clicked = 'typing box'; }, post = () => {}, status = () => {}, fit = () => {};
+const ui = {''' + tap + r'''};
+for (const key of ['.redo', '#agents-pill', '.dn button']) { current = make(key); clicked = ''; ui.tap([0, 0]); if (clicked !== key) { console.error(key + ' opened the ' + clicked); process.exit(1); } }
+''')
+
+    def test_failed_dictation_offers_its_words_to_copy(self):
+        dictated = self.box[self.box.index('    dictated({'):self.box.index('    learned(word)')]
+        node(self, r'''let sent, button;
+const note = () => {}, fit = () => {}, setState = () => {}, $ = () => ({ style: {} }), post = m => { sent = m; };
+let finishTimer = 0, listening = true, boost = 1;
+const document = { createElement: () => ({}) }, part = c => c === 'dn' ? { append: (...a) => { button = a[1]; } } : { classList: { remove() {} } };
+const ui = {''' + dictated + r'''};
+ui.dictated({ text: 'Saved to History', ok: false }); if (button) process.exit(1);
+ui.dictated({ text: 'Couldn’t insert. Your words are still here.', ok: false, words: 'my words' }); button.onclick();
+if (sent?.copy !== 'my words' || button.textContent !== 'Copied') process.exit(1);
+''')
+
+    def test_learned_word_shows_in_the_pill_after_it_folded(self):
+        self.assertIn('learnedWord = word; pill(true); show(); js("learned", word)', self.swift)
+
+    def test_reduce_motion_stops_onboarding_loops(self):
+        rule = re.search(r'@media \(prefers-reduced-motion: reduce\) \{ \*, \*::before, \*::after \{(.*?)\}', self.onboarding).group(1)
+        self.assertIn('animation-iteration-count: 1 !important', rule)
+
+    def test_settings_and_agents_text_colours_are_readable(self):
+        light = re.search(r':root \{(.*?)\}', self.settings, re.S).group(1)
+        dark = re.search(r'prefers-color-scheme: dark\) \{ :root \{(.*?)\}', self.settings, re.S).group(1)
+        var = lambda block, name: re.search(r'--' + name + r': (#[0-9a-f]{6})', block).group(1)
+        for name in ('fg3', 'warn', 'danger'):
+            self.assertGreaterEqual(contrast(var(light, name), '#f5f5f7' if name == 'fg3' else '#ffffff'), 4.5, name)
+        for name in ('fg3', 'warn'):
+            self.assertGreaterEqual(contrast(var(dark, name), '#2a2a2c'), 4.5, 'dark ' + name)
+        self.assertGreaterEqual(contrast(var(light, 'ok-text'), tint('#34c759', .13)), 4.5)
+        self.assertGreaterEqual(contrast(var(light, 'warn'), tint('#ff9f0a', .14)), 4.5)
+        self.assertNotRegex(self.settings, r'\{[^}]*\bcolor: #ff(9f0a|453a)')   # text uses the tokens; fills may keep the bright colours
+        self.assertGreaterEqual(contrast(re.search(r'--fg3:(#[0-9a-f]{6})', self.agents).group(1), '#1e1e22'), 4.5)
+
+    def test_meetings_row_offers_turn_on_instead_of_dead_buttons(self):
+        self.assertIn("$('meetingDemo').hidden = $('meetingPrepOpen').hidden = !P.meeting; $('meetingOn').hidden = !!P.meeting;", self.settings)
+        self.assertIn("$('meetingOn').onclick = () => set('meeting', true);", self.settings)
+
+    def test_onboarding_recorder_names_a_lone_modifier(self):
+        self.assertIn('a modifier on its own', self.onboarding)
+        self.assertNotIn('Use modifiers with a key', self.onboarding)
+
+    def test_turned_off_tips_come_back_from_the_menu_bar(self):
+        menu = self.swift[self.swift.index('final class MenuBar'):self.swift.index('// Settings window (ui/settings.html)')]
+        self.assertIn('if !Prefs.bool("tips") { add(m, "Show Tips Again", #selector(tipsOn), "") }', menu)
+        self.assertIn('@objc func tipsOn() { settings.apply("tips", true); settings.push() }', menu)
+
+    def test_removed_sonnet_offer_leaves_no_card_branch(self):
+        self.assertNotIn('Sonnet', self.box[self.box.index('    respond(text)'):self.box.index('    improve()')])
+        self.assertNotIn('"escalate"', self.swift[self.swift.index('func userContentController'):self.swift.index('    func show()')])
+        self.assertNotIn("j.get('off'", (ROOT / 'atticus.py').read_text())
+
+    def test_agent_cost_reads_like_usage(self):
+        script = ''
+        for page in (self.box, self.agents):
+            line = re.search(r'const apiCost=.*?;', page).group(0)
+            script += '{' + line + r'''
+if (apiCost(.0412) !== '≈4.12¢ at API prices' || apiCost(.1861) !== '≈18.6¢ at API prices' || apiCost(2.5) !== '≈$2.50 at API prices') process.exit(1); }
+'''
+        node(self, script)
+        self.assertNotIn('Plan usage', self.box + self.agents)
+
+    def test_box_card_screenshots_define_the_agents_panel(self):
+        self.assertTrue((ROOT / 'tests/shoot_agents_design.py').read_text().split("CARDS = r'''", 1)[1].startswith('let agentsUI=AgentPanels()\n'))
+
+    def test_usage_history_shows_a_readable_date(self):
+        self.assertNotIn('a.at.slice(5, 16)', self.settings)
+        self.assertIn("new Date(a.at.replace(' ', 'T')).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})", self.settings)
+
+    def test_small_leftovers(self):
+        self.assertIn("moveFailed(){status('Could not move');", self.box)   # a failure, not live work
+        self.assertNotIn('js("shortcut"', self.swift)
+        self.assertNotIn('shortcut() {}', self.box)
+        self.assertIn('d.hidden = skip(pages[i])', self.onboarding)   # Devin/Pi: no dots for skipped pages
+        self.assertNotIn('These need your click', self.onboarding)
+        self.assertNotIn('Use Verbatim instead', self.onboarding)
+        self.assertIn('id="appsback" onclick="st.tab(\'account\')"', self.settings)
+        self.assertEqual(self.settings.count('[hidden] {'), 1)
+        self.assertNotIn('.ok:hover code', self.box)
+
+
+if __name__ == '__main__':
+    unittest.main()

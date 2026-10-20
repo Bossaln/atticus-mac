@@ -18,7 +18,8 @@ class RoutingPreferencesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             file, binary = root / 'prefs.swift', root / 'prefs'
-            file.write_text('import Foundation\nlet controlKey = 1, optionKey = 2\n' + prefs + '\nprint(Prefs.str("routing"))\nprecondition(Prefs.set("tips", false))\n')
+            file.write_text('import Foundation\nlet controlKey = 1, optionKey = 2\n' + prefs +
+                            '\nprecondition(Prefs.bool("stats"))\nprint(Prefs.str("routing"))\nprecondition(Prefs.set("tips", false))\n')
             compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], capture_output=True, text=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             cases = [({}, 'balanced'), ({'escalate': False}, 'cheapest'),

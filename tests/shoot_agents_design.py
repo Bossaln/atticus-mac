@@ -96,7 +96,8 @@ class DesignShots(unittest.TestCase):
         run_fixture(self, BODY.replace('OUTDIR', str(out)).replace('ROWS', json.dumps(ROWS)), 'design shots ok')
 
 
-CARDS = r'''let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)
+CARDS = r'''let agentsUI=AgentPanels()
+let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)
 let out="OUTDIR",screen=NSScreen.screens[0]
 let back=NSWindow(contentRect:screen.frame,styleMask:[.borderless],backing:.buffered,defer:false);let paint=CAGradientLayer();paint.frame=screen.frame
 paint.colors=[NSColor(srgbRed:0.16,green:0.20,blue:0.36,alpha:1).cgColor,NSColor(srgbRed:0.30,green:0.16,blue:0.30,alpha:1).cgColor,NSColor(srgbRed:0.06,green:0.07,blue:0.10,alpha:1).cgColor];paint.startPoint=CGPoint(x:0,y:1);paint.endPoint=CGPoint(x:1,y:0)
@@ -122,14 +123,12 @@ let scenes:[(String,String)]=[
  ("steer-confirmation","ui.reset();ui.listen(true);ui.words('Only include products under $200');ui.think();ui.agentSteered({...(\(row)),steer:{text:'Only include products under $200.'}});"),
  ("box-badge","ui.reset();ui.agentCount(2);ui.listen(true);ui.words('What is on my calendar this afternoon?');ui.think();ui.msg('A design review at 3:00 and a one-on-one with Maya at 4:30.');"),
  ("box-badge-needs-you","ui.agentCount({count:2,attention:true});"),
- ("handoff-card",ask+"ui.agentCount(1);ui.agentOffer(\(row))"),
- ("move-card","ui.reset();ui.agentCount(0);ui.listen(true);ui.words('Research the best standing desks under $600');ui.think();ui.line('Searching the web: standing desks under 600');ui.moveOffer();"),
  ("done-card","ui.reset();ui.agentCount(1);ui.agentDone(\(row))")]
 func play(_ i:Int){
  guard i<scenes.count else{
   // The done card lists what was made; a row opens that exact thing; Esc picks Later.
   web.evaluateJavaScript("[document.querySelectorAll('.agent-card .made button').length,document.querySelector('.agent-card .go span').textContent,document.querySelector('.agent-card [data-esc] kbd').textContent,document.querySelector('.agent-card .usage').textContent,document.querySelector('.agent-card .made small').textContent].join('|')"){v,_ in
-   guard v as? String=="2|Open|esc|Plan usage · $0.1861|Document · docs.google.com" else{print("done card wrong: \(v ?? "nil")");exit(1)}
+   guard v as? String=="2|Open|esc|≈18.6¢ at API prices|Document · docs.google.com" else{print("done card wrong: \(v ?? "nil")");exit(1)}
    web.evaluateJavaScript("document.querySelector('.agent-card .made button').click()"){_,_ in after(0.2){
     guard bridge.got.contains(where:{($0["agentOpen"] as? String)==(ROWID) && ($0["target"] as? String)?.hasPrefix("https://docs.google.com/document/d/")==true}) else{print("made row did not open its target");exit(1)}
     print("card shots ok");exit(0)}}}
@@ -188,8 +187,8 @@ func chipCenter(_ id:String,_ done:@escaping(CGPoint)->Void){shelfJS("(r=>[r.x+r
 var steps:[(Double,()->Void)]=[],from:[Double]=[],point=CGPoint.zero
 let winID=String(repeating:"f",count:32),offerJSON=String(data:try! JSONSerialization.data(withJSONObject:offer),encoding:.utf8)!
 func run(_ i:Int){guard i<steps.count else{return};after(steps[i].0){steps[i].1();run(i+1)}}
-steps.append((1.2,{box("ui.reset();ui.agentCount(2);ui.listen(true);ui.words('Compare standing desks under $600 for me');ui.think();ui.agentOffer(\(offerJSON))")}))
-steps.append((1.4,{shoot("1-handoff",both());box("(r=>[r.x-10,r.y-10,r.width+20,r.height+20])(document.querySelector('.agent-card .eyebrow i').getBoundingClientRect())"){v in from=v as? [Double] ?? []}}))
+steps.append((1.2,{box("ui.reset();ui.agentCount(2);ui.listen(true);ui.words('Compare standing desks under $600 for me');ui.think();ui.movePending()")}))
+steps.append((1.4,{shoot("1-handoff",both());box("ui.moveSource()"){v in from=v as? [Double] ?? []}}))
 steps.append((0.3,{agentsUI.flightPace=8;agentsUI.accept(offerID,from:from);box("ui.agentStarted()")
  after(0.5){box("document.getElementById('card').getBoundingClientRect().height"){v in var f=app.panel.frame;let h=CGFloat(v as? Double ?? 330);f.origin.y=f.maxY-h;f.size.height=h;app.panel.setFrame(f,display:true)}}}))   // the app sizes its box to the page; this stub does it once   // the swim at 1/8 speed, captured as frames
 for i in 0..<7{steps.append((i==0 ? 0.25 : 0.62,{shoot("2-swim-\(i)",both().union(agentsUI.flight?.frame ?? .zero))}))}
@@ -222,39 +221,6 @@ class Round3Shots(unittest.TestCase):
         out = ROOT / 'test-artifacts' / 'design' / 'round3'; out.mkdir(parents=True, exist_ok=True)
         rows = [dict(ROWS[0], started=NOW - 95), dict(ROWS[2], seen=False)]
         run_fixture(self, ROUND3.replace('OUTDIR', str(out)).replace('PAGE', PAGE).replace('OFFER', json.dumps(OFFER)).replace('ROWS', json.dumps(rows)), 'round3 shots ok', real_mini=True)
-
-
-# Moving a running ask: the box's Move to agent control, the Long asks card, its saved note, and the Settings row.
-MOVE = CARDS[:CARDS.index('let row=#"ROW"#')] + r'''let scenes:[(String,String,String)]=[
- ("1-move-running","ui.reset();ui.agentCount(1);ui.listen(true);ui.words('Research the best standing desks under $600 and compare warranties');ui.think();ui.line('▸ Searching the web: standing desks under 600');ui.line('▸ Reading rtings.com');ui.moveReady();","!!document.querySelector('.elapsed .move-now kbd')"),
- ("2-move-card","ui.moveOffer();","document.querySelector('.move-option p').textContent.startsWith('Keeps working')&&!!document.querySelector('.move-now')"),
- ("3-move-saved","document.querySelector('.move-option [data-v=never]').click();","!!document.querySelector('.tip[data-k=Saved]')&&!!document.querySelector('.move-now')&&!document.querySelector('.move-option')")]
-final class Sink:NSObject,WKScriptMessageHandler{func userContentController(_ c:WKUserContentController,didReceive m:WKScriptMessage){}}
-let sink=Sink()
-func settings(){
- let w=NSWindow(contentRect:NSRect(x:60,y:screen.frame.maxY-640,width:780,height:560),styleMask:[.titled,.closable,.fullSizeContentView],backing:.buffered,defer:false)
- w.titlebarAppearsTransparent=true;w.titleVisibility = .hidden;w.appearance=NSAppearance(named:.darkAqua)
- let cfg=WKWebViewConfiguration();cfg.userContentController.add(sink,name:"st")
- let v=WKWebView(frame:NSRect(x:0,y:0,width:780,height:532),configuration:cfg);v.autoresizingMask=[.width,.height]
- v.loadHTMLString(try! String(contentsOfFile:dir+"/ui/settings.html",encoding:.utf8),baseURL:nil);w.contentView=v;w.orderFrontRegardless();box.orderOut(nil)
- after(2.0){v.evaluateJavaScript("st.load({prefs:{hotkeyLabel:'⌃⌥Space',model:'haiku',volume:.16,aheadDelay:.7,routing:'balanced',client:'claude',longAsks:'ask'}});st.tab('brain');document.querySelector('[data-k=longAsks]').scrollIntoView({block:'center'});!!document.querySelector('[data-k=longAsks] .on')"){value,error in
-  guard error == nil,value as? Bool == true else{print("settings scene failed: \(String(describing:error)) \(String(describing:value))");exit(1)}
-  after(1.2){let f=w.frame.insetBy(dx:-24,dy:-24).intersection(screen.frame),p=Process();p.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture");p.arguments=["-x","-R\(Int(f.minX)),\(Int(screen.frame.maxY-f.maxY)),\(Int(f.width)),\(Int(f.height))",out+"/4-settings-long-asks.png"];try! p.run();p.waitUntilExit();print("move shots ok");exit(0)}}}
-}
-func play(_ i:Int){
- guard i<scenes.count else{settings();return}
- web.evaluateJavaScript(scenes[i].1){_,error in guard error == nil else{print("scene failed: \(scenes[i].0): \(error!)");exit(1)};after(1.3){
-  web.evaluateJavaScript(scenes[i].2){value,error in guard error == nil,value as? Bool == true else{print("scene check failed: \(scenes[i].0): \(String(describing:error)) \(String(describing:value))");exit(1)};shot(scenes[i].0){play(i+1)}}}}}
-bridge.ready={after(1.0){play(0)}}
-nsapp.run()'''
-
-
-class MoveShots(unittest.TestCase):
-    def test_shoot(self):
-        import base64
-        out = ROOT / 'test-artifacts' / 'design' / 'move'; out.mkdir(parents=True, exist_ok=True)
-        run_fixture(self, MOVE.replace('OUTDIR', str(out)), 'move shots ok')
-        for png in sorted(out.glob('*.png')): print('PNG', png.name, base64.b64encode(png.read_bytes()).decode(), flush=True)   # the runner copies nothing back
 
 
 # Round 4: setup asks on an agent's chip, steering, and the new setup screens.

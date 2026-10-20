@@ -54,6 +54,36 @@ if($('done-title').textContent!=='Voice is ready'||$('finish').textContent!=='St
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_answer_markdown_and_math_build_safe_dom(self):
+        source = (Path(__file__).resolve().parents[1] / 'ui' / 'ui.html').read_text()
+        helper = source[source.index('  // TeX → MathML'):source.index('  const reveal =')]
+        script = r'''
+class N{constructor(tag,ns){this.tag=tag;this.ns=ns||'';this.kids=[];this.attrs={};this.className=''}
+ append(...k){this.kids.push(...k)}appendChild(k){this.kids.push(k);return k}setAttribute(k,v){this.attrs[k]=v}
+ set textContent(s){this.kids=[String(s)]}get textContent(){return this.kids.map(k=>typeof k==='string'?k:k.textContent).join('')}get childNodes(){return this.kids}}
+const document={createElement:t=>new N(t),createElementNS:(ns,t)=>new N(t,ns),createDocumentFragment:()=>new N('#')};
+const html=n=>typeof n==='string'?n:'<'+n.tag+(n.className?'.'+n.className:'')+Object.entries({...n.attrs,...(n.title?{title:n.title}:{}),...(n.href?{href:n.href}:{}),...(n.start?{start:n.start}:{})}).map(([k,v])=>' '+k+'='+v).join('')+'>'+n.kids.map(html).join('')+'</'+n.tag+'>';
+''' + helper + r'''
+const md=t=>html(markdown(t)),expect=(got,want,name)=>{if(!got.includes(want)){console.error(name+'\n got: '+got+'\nwant: '+want);process.exit(1)}};
+expect(md('$\\frac{\\sqrt{7}}{\\sqrt{10}-\\sqrt{2}}$'),'<math displaystyle=true><mfrac><msqrt><mn>7</mn></msqrt><mrow><msqrt><mn>10</mn></msqrt><mo>−</mo><msqrt><mn>2</mn></msqrt></mrow></mfrac></math>','A stacked fraction with real radicals');
+expect(md('$$x^2_1$$'),'<math display=block><msubsup><mi>x</mi><mn>1</mn><mn>2</mn></msubsup></math>','Display math with scripts');
+expect(md('$\\sum_{i=1}^n i$'),'<munderover><mo movablelimits=true>∑</mo>','Big operators take limits');
+expect(md('$\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}$'),'<mo fence=true stretchy=true>(</mo><mtable><mtr><mtd><mn>1</mn></mtd><mtd><mn>2</mn></mtd></mtr><mtr>','Matrices are tables in fences');
+expect(md('$f(x)=\\sin x$'),'<mi>f</mi><mo stretchy=false>(</mo><mi>x</mi><mo stretchy=false>)</mo><mo>=</mo><mrow><mi>sin</mi><mspace width=0.1667em></mspace></mrow><mi>x</mi>','Plain parentheses keep their size; a function name is spaced');
+expect(md('$\\frac12$ and $\\text{area } r$'),'<mfrac><mn>1</mn><mn>2</mn></mfrac>','\\frac12 takes one digit each');
+expect(md('$\\text{area } r$'),'<mtext>area </mtext>','Text keeps its spaces');
+expect(md('$\\weird{x}$'),'<span.tex>\\weird{x}</span>','Unknown TeX shows as written');
+expect(md('$\\frac{1}{$'),'<span.tex>\\frac{1}{</span>','A broken formula shows as written');
+expect(md('It costs $5 or $10, and \\$3 more.'),'<p>It costs $5 or $10, and $3 more.</p>','Dollar amounts stay money');
+expect(md('**Bold** *it* `code` [OpenTable](https://www.opentable.com) see https://example.com/a.'),'<p><strong>Bold</strong> <em>it</em> <code>code</code> <a title=https://www.opentable.com href=https://www.opentable.com>OpenTable</a> see <a href=https://example.com/a>https://example.com/a</a>.</p>','Inline Markdown');
+expect(md('[x](javascript:alert(1)) <img src=x onerror=alert(1)>'),'<p>[x](javascript:alert(1)) <img src=x onerror=alert(1)></p>','No script links and no HTML: only text');
+expect(md('## Steps\n3. one\n4. **two**\n\n- a\n- b'),'<div.h>Steps</div><ol start=3><li>one</li><li><strong>two</strong></li></ol><ul><li>a</li><li>b</li></ul>','Headings and lists');
+expect(md('one line\nnext line\n\nnew para'),'<p>one line next line</p><p>new para</p>','Paragraphs');
+expect(md('snake_case_name and _em_'),'<p>snake_case_name and <em>em</em></p>','Underscores inside words stay');
+'''
+        result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_worker_start_failure_has_persistent_recovery_actions(self):
         root = Path(__file__).resolve().parents[1]
         page = (root / 'ui' / 'ui.html').read_text()

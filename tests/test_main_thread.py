@@ -196,7 +196,8 @@ final class NSApplication {
  func reply(toApplicationShouldTerminate: Bool) { precondition(Thread.isMainThread); replied = toApplicationShouldTerminate }
 }
 final class FakeQuiet { func end(immediate: Bool) {} }
-final class FakeApp { let quietAudio = FakeQuiet(); func hush() {}; func shush() {} }
+final class FakeDrawing { func clear() {} }
+final class FakeApp { let quietAudio = FakeQuiet(), drawing = FakeDrawing(); func hush() {}; func shush() {} }
 final class FakeMeeting {
  func discard() { archive.append([["kind": "ended"]]) { error in precondition(error == nil) } }
 }

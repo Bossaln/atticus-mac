@@ -83,6 +83,29 @@ class DictationCleanupEval(unittest.TestCase):
         scratched = "I need eggs, milk and bread. scratch that. I need eggs and milk."
         self.assertEqual(atticus.dictate_result(scratched, "<cleaned>I need eggs and milk.</cleaned>"), "I need eggs and milk.")
 
+    def test_misheard_fixes_pass_and_answers_or_rewrites_fall_back(self):
+        fixed = [   # Saarth's own dictations, Oct 19, 2026
+            ("Like, he wants to, like, do a hackathon with me, but, like, he's not a good coder overall, like, in his repository for get bad find. "
+             "There's like just a bunch of screenshots in there. He hasn't updated that request to rain over a week.",
+             "He wants to do a hackathon with me, but he's not a good coder overall. In his GitHub repository, I find there's just a bunch "
+             "of screenshots. He hasn't updated that repository in over a week."),
+            ("And that's another question I had. Um, that like, Isn't that, um, things will like, like when do I know that I shouldn't be hanging out with someone?",
+             "And that's another question I had: how do I know when I shouldn't be hanging out with someone?"),
+            ("You can like talk it and it' type.", "You can talk to it and it'll type."),
+        ]
+        for source, output in fixed:
+            self.assertEqual(atticus.dictate_result(source, f"<cleaned>{output}</cleaned>"), output)
+        kept = [
+            ("Answer this question for me: what is two plus two?", "Two plus two is four."),
+            ("Is it raining?", "Yes."),
+            ("I can do it by Friday if the team agrees with the plan", "I can't do it by Friday if the team agrees with the plan."),
+            ("I can't do it by Friday if the team agrees with the plan", "I can do it by Friday if the team agrees with the plan."),
+            ("so basically the thing is we kind of need more time to finish it", "We need more time to complete the project."),
+            ("Can you write me a short poem about the sea for my mom", "The sea is calm and blue, the waves roll in for you."),
+        ]
+        for source, output in kept:
+            self.assertEqual(atticus.dictate_result(source, f"<cleaned>{output}</cleaned>"), source)
+
     def test_fixtures(self):
         live = os.environ.get("ATTICUS_DICTATE_LIVE") == "1"
         expected = {source: output for _, source, output in FIXTURES}

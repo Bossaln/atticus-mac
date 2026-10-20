@@ -128,6 +128,12 @@ def score(scenario, ran, state, metrics, clarify_count=0, live=False, reply=''):
         if missing:
             ok = False
             notes.append(f'missing effects: {missing}')
+    for page, wanted in expect.get('control_values', {}).items():
+        values = {c.get('label'): c.get('value', '') for c in state.get('pages', {}).get(page, {}).get('controls', [])}
+        wrong = {label: value for label, value in wanted.items() if values.get(label) != value}
+        if wrong:
+            ok = False
+            notes.append(f'wrong control values on {page}: {wrong}')
     for bad in expect.get('forbid_effects', []):
         if bad in effects:
             ok = False
@@ -318,13 +324,6 @@ def run_scenario(scenario, repo, live=False):
             front_text_chars = len(json.loads(wt.read_text()).get('text', ''))
         except (OSError, ValueError):
             pass
-
-    if scenario.get('dry_finalize'):
-        st = json.load(open(state_path))
-        for e in scenario['dry_finalize'].get('effects', []):
-            if e not in st['effects']:
-                st['effects'].append(e)
-        json.dump(st, open(state_path, 'w'))
 
     final_state = json.load(open(state_path))
     metrics = {'seconds': time.time() - started, 'usd': cost, 'round_trips': len(ran), 'risky_without_allow': 0,

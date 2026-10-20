@@ -125,12 +125,13 @@ class WorkflowTests(unittest.TestCase):
             'Created it. [workflow create calendar event | Read calendar, fill current values, save; verify event exists.]', .001, []))
         brain.ok = True
         brain.cmds = brain.ran = [atticus.WEB + ' read', atticus.WEB + ' fill 2 title']
+        brain.observed = []
         with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
                             front=lambda: ('Notes', ''), osa=lambda *a: '', screens=lambda: [],
                             describe=lambda *a: '', me_line=lambda: '', selection_context=lambda: '',
                             relevant_rules=lambda _: '', recent=lambda: [], screen_for=lambda *a: None,
                             wait_commit=lambda: True, run=brain, remember_turn=lambda *a: None,
-                            log_turn=lambda *a: None, restore_focus=lambda *a: None), \
+                            log_turn=lambda *a, **k: None, restore_focus=lambda *a: None), \
              patch.object(atticus.threading, 'Thread'), patch('sys.stdout', io.StringIO()):
             with patch('sys.argv', ['atticus.py', 'make a calendar event']):
                 atticus.main()

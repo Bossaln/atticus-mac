@@ -359,14 +359,14 @@ print("Clicked Export")
             self.assertEqual(atticus.screen_for(task, snap, ''), snap.shots)
 
     def test_request_contains_bounded_summary_before_first_tool_and_omits_pictures(self):
-        def answer(*args):
+        def answer(*args, **_):
             atticus.run.ok = True; atticus.run.ran = atticus.run.cmds = []
             return 'Export opened.',0,[]
         with patch.multiple(atticus, licensed=lambda:True, ping=lambda:None, look=lambda:[], fast=lambda _:None,
                             window_summary=lambda *_:{'app':'Fixture','window':'Window','text':'Worksheet question and answers. ' * 10}, front=lambda:('Fixture','Window'), osa=lambda *_:'', screens=lambda:[],
                             describe=lambda *_:'Fixture display', me_line=lambda:'', selection_context=lambda:'',
                             relevant_rules=lambda _: '', workflows=lambda *args:'', recent=lambda:[], remember_turn=lambda *_:None,
-                            log_turn=lambda *_:None, learn=lambda *_:None, restore_focus=lambda *_:None, tip=lambda *_:None), \
+                            log_turn=lambda *_, **__:None, learn=lambda *_:None, restore_focus=lambda *_:None, tip=lambda *_:None), \
              patch.object(atticus,'run',side_effect=answer) as run, patch.object(atticus,'say'), \
              patch('sys.argv',['atticus.py','click Export in this window']), patch.dict(os.environ,{'ATTICUS_UI':'1'}):
             atticus.main()
@@ -386,7 +386,7 @@ print("Clicked Export")
             return []
         began = time.monotonic()
         started, prompts = [], []
-        def answer(*args):
+        def answer(*args, **_):
             started.append(time.monotonic() - began)
             prompts.append(args[0])
             atticus.run.ok = True; atticus.run.ran = atticus.run.cmds = []
@@ -395,7 +395,7 @@ print("Clicked Export")
                             window_summary=slow_summary, front=lambda:('Fixture','Window'), osa=lambda *_:'', screens=lambda:[],
                             describe=lambda *_:'Fixture display', me_line=lambda:'', selection_context=lambda:'',
                             relevant_rules=lambda _: '', workflows=lambda *args:'', recent=lambda:[], remember_turn=lambda *_:None,
-                            log_turn=lambda *_:None, learn=lambda *_:None, restore_focus=lambda *_:None, tip=lambda *_:None), \
+                            log_turn=lambda *_, **__:None, learn=lambda *_:None, restore_focus=lambda *_:None, tip=lambda *_:None), \
              patch.object(atticus,'run',side_effect=answer), patch.object(atticus,'say'), \
              patch('sys.argv',['atticus.py','answer an unrelated fact']), patch.dict(os.environ,{'ATTICUS_UI':'1'}):
             atticus.main()
@@ -415,7 +415,7 @@ print("Clicked Export")
             return {'app': 'Fixture', 'window': 'Window', 'text': 'Context'}
         with patch.multiple(atticus, licensed=lambda:True, ping=lambda:None, look=lambda:[],
                             fast=lambda _:'Done.', window_summary=summary, selection_context=lambda:'',
-                            remember_turn=lambda *_:None, log_turn=lambda *_:None), \
+                            remember_turn=lambda *_:None, log_turn=lambda *_, **__:None), \
              patch.object(atticus, 'say'), patch('sys.argv', ['atticus.py', 'instant fixture command']), \
              patch.dict(os.environ, {'ATTICUS_UI':'1'}):
             atticus.main()
@@ -425,7 +425,7 @@ print("Clicked Export")
         p = Mock(); p.stdin = io.StringIO(); p.stdout = []
         p.ask = self.root.name; p.returncode = 0
         with patch.object(atticus.threading,'Thread'), patch.object(atticus.threading,'Timer'):
-            atticus.run('Context: Password from page.\nRequest: type my password into Password',p)
+            atticus.run('Context: Password from page.\nRequest: type my password into Password',p,request='type my password into Password')
         self.assertEqual(Path(self.root.name,'request').read_text(),'type my password into Password')
         resolved,acted,_ = self.result(['type','Password','x'],['Password'],False,True)
         for request in ("what is my password", "don't type my password", "never paste my password"):
@@ -449,7 +449,7 @@ print("Clicked Export")
                 cards.append(text)
                 Path(text.split('\t')[2]).write_text('y')
         with patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,hands_map=lambda _: {'nodes':[{'label':'Name'}]},
-                            look=lambda:[],remember_turn=lambda *_:None,log_turn=lambda *_:None), \
+                            look=lambda:[],remember_turn=lambda *_:None,log_turn=lambda *_, **__:None), \
              patch('builtins.print',side_effect=display), patch.object(atticus,'say'), patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))), \
              patch.object(atticus,'start_claude') as model, patch.object(atticus,'ask_user',wraps=atticus.ask_user), \
              patch('sys.argv',['atticus.py','press cmd+q']), patch.dict(os.environ,{'ATTICUS_UI':'1'}):

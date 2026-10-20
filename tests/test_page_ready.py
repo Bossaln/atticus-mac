@@ -168,6 +168,48 @@ class PageReadyTests(unittest.TestCase):
                 atticus.preview_app('Browser Fixture')
             self.assertEqual(json.loads(run.call_args.args[0][-1]),target['windowFrame'])
 
+    def test_agent_hands_stay_in_the_tasks_own_browser_window_or_fail(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            Path(scratch,'browser-window.json').write_text(json.dumps({'app':'Browser Fixture','window':5}))
+            Path(scratch,'hands.json').write_text(json.dumps({'app':'Browser Fixture','pid':9,'windowID':'31'}))   # last map: the user's window
+            process=Mock(returncode=0,args=[]);process.communicate.return_value=('mapped','');process.poll.return_value=0;process.stdout.readline.return_value='mapped'
+            def native(args,**kwargs):
+                if args[0]=='osascript':
+                    self.assertIn('window id 5',args[2]);return subprocess.CompletedProcess(args,0,'10, 20, 610, 420\n','')
+                self.assertEqual(json.loads(args[-1]),[10,20,600,400]);return subprocess.CompletedProcess(args,0,json.dumps({'windowID':'88'}),'')
+            env={'ATTICUS_ASK':scratch,'ATTICUS_AGENT':'agent','ATTICUS_HANDS_STATE':str(Path(scratch,'hands.json'))}
+            with patch.dict(os.environ,env),patch.object(atticus.subprocess,'run',side_effect=native),patch.object(atticus.subprocess,'Popen',return_value=process) as popen, \
+                 patch.object(atticus.select,'select',return_value=([1],[],[])):
+                atticus.hands_call(['see','Browser Fixture']);atticus.hands_action(['click','Search'],lambda target:True)
+            self.assertEqual([c.kwargs['env']['ATTICUS_HANDS_WINDOW'] for c in popen.call_args_list],['88','88'])
+            with patch.dict(os.environ,env),patch.object(atticus.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','no such window')),patch.object(atticus.subprocess,'Popen') as popen:
+                self.assertEqual(atticus.hands_call(['see','Browser Fixture']).stdout,atticus.GONE)
+                self.assertEqual(atticus.hands_action(['click','Search'],lambda target:True)[1].stdout,atticus.GONE)
+            popen.assert_not_called()
+
+    def test_agent_look_maps_afresh_after_its_last_window_closed_and_other_apps_are_unpinned(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            Path(scratch,'hands.json').write_text(json.dumps({'app':'Notes','pid':9,'windowID':'31'}))
+            def process(code,out):
+                p=Mock(returncode=code,args=[]);p.communicate.return_value=(out,'');p.poll.return_value=code;return p
+            env={'ATTICUS_ASK':scratch,'ATTICUS_AGENT':'agent','ATTICUS_HANDS_STATE':str(Path(scratch,'hands.json'))}
+            closed="This task's Notes window closed or changed. Nothing was done; run see again."
+            with patch.dict(os.environ,env),patch.object(atticus.subprocess,'Popen',side_effect=[process(1,closed),process(0,'App: Notes'),process(0,'App: Safari'),process(1,closed)]) as popen:
+                self.assertEqual(atticus.hands_call(['see','Notes']).stdout,'App: Notes')
+                self.assertEqual(atticus.hands_call(['see','Safari']).stdout,'App: Safari')
+                self.assertEqual(atticus.hands_call(['click','Done']).stdout,closed)   # an action never drifts to another window
+            pins=[c.kwargs['env'].get('ATTICUS_HANDS_WINDOW') for c in popen.call_args_list]
+            self.assertEqual(pins,['31',None,None,'31'])
+
+    def test_agent_page_actions_stay_out_of_the_users_window(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            Path(scratch,'web.json').write_text(json.dumps({'app':'Browser Fixture','adapter':'webkit','window':10,'tab':2,'target':None}))
+            with patch.dict(os.environ,{'ATTICUS_ASK':scratch,'ATTICUS_AGENT':'agent'}),patch.object(atticus,'browser_adapter',return_value='webkit'), \
+                 patch.object(atticus.subprocess,'run') as run:
+                for cmd in ('click','fill','type-after'):
+                    self.assertIn("user's own window",atticus.web(cmd,'1','text'))
+            run.assert_not_called()
+
     def test_readiness_failure_after_a_click_keeps_success_without_repeating(self):
         with tempfile.TemporaryDirectory() as scratch:
             def run(args,**kwargs):
