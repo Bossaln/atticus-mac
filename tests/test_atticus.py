@@ -1291,6 +1291,7 @@ class WatchAndBudgetTests(unittest.TestCase):
         self.assertFalse(atticus.replacement_reply('[replace] Draft', False)[0])
         self.assertEqual(atticus.replacement_reply('[replace] ', True)[0], 'delete')
         self.assertEqual(atticus.replacement_reply('[draft] Hi Dana,\n\nThanks!', False), ('draft', 'Hi Dana,\n\nThanks!'))
+        self.assertEqual(atticus.replacement_reply('[insert] ### Kinds\n- **Osmosis:** water moves', False), ('insert', 'Kinds\n- Osmosis: water moves'))
         self.assertFalse(atticus.replacement_reply('[draft]', True)[0])
         self.assertEqual(atticus.replacement_reply('[insert] Thanks!', False), ('insert', 'Thanks!'))
         self.assertIn('[insert] then only the text (an earlier draft word for word)', atticus.SYSTEM)

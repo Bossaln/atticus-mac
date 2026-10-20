@@ -4800,6 +4800,8 @@ def replacement_reply(reply, selected):
     draft = reply[m.end():].strip() if m else ''
     if not m or (m[1] == 'replace' and not selected) or (m[1] != 'replace' and not draft):
         return '', reply
+    # pasted text lands as plain text: Markdown bold/heading marks would show up as literal ** and #
+    draft = re.sub(r'(?m)^#{1,6}\s+', '', re.sub(r'\*\*([^*\s](?:[^*\n]*[^*\s])?)\*\*', r'\1', draft))
     return ('delete', 'Delete the selected text?') if not draft else (m[1], draft)
 
 

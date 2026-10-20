@@ -632,7 +632,11 @@ struct TextSelection {
         }
         let fallback = {
             if preserveFocus { paste() }
-            else { app.activate(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { paste() } }
+            else {   // Atticus may be front (the user clicked its box): wait up to 1 s for the target app to come back
+                app.activate()
+                func ready(_ tries: Int) { NSWorkspace.shared.frontmostApplication == app || tries >= 20 ? paste() : DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { ready(tries + 1) } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { ready(0) }
+            }
         }
         // A successful AX call can update slowly. Retry only after proving it changed nothing; an unverifiable retry can insert twice.
         guard editable, before != nil, replace(draft) else { fallback(); return }
@@ -1858,7 +1862,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 let p = e.locationInWindow
                 if let ed = edges(p), !(overX(p) && !ed.r && !ed.t) { sizing = (NSEvent.mouseLocation, panel.frame, ed); fromTop = ed.t; pinned = true; dragging = true }
                 else if overX(p) { close(clear: true) }
-                else if p.y < compH { if !panel.isKeyWindow { selection = TextSelection.capture() }; pinned = true; panel.makeKey(); panel.makeFirstResponder(web); return e }   // the typing box: a normal click
+                else if p.y < compH { if !panel.isKeyWindow && replacement == nil { selection = TextSelection.capture() }; pinned = true; panel.makeKey(); panel.makeFirstResponder(web); return e }   // the typing box: a normal click; a waiting Insert/Replace keeps its target
                 else { pinned = true; grab = (NSEvent.mouseLocation, panel.frame.origin); moved = false; dragging = true }
             case .leftMouseDragged:
                 if let z = sizing {   // width from the side edges, height from the top/bottom; a corner does both
