@@ -314,7 +314,7 @@ print(json.dumps({{"type": "result", "result": answer, "total_cost_usd": 0}}))
                          'can you write out a similar equation and work it out on the screen')
 
     def test_on_screen_results_require_fresh_context_and_draw(self):
-        self.assertIn("On-screen result: after --look", atticus.DRAWING)
+        self.assertIn("Where/how/on-screen asks: show, not tell (pointer/arrow on target): after --look", atticus.DRAWING)
         self.assertIn("use " + atticus.DRAW + " once on Request screen", atticus.DRAWING)
 
     def test_installed_tool_help_is_attached_cached_and_system_tools_are_not(self):

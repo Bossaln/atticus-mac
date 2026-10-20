@@ -1036,7 +1036,9 @@ final class ScreenDrawing {
         let keep = marks.map { $0.insetBy(dx:-12,dy:-12) }
         func clear(_ r: CGRect) -> Bool { !keep.contains { $0.intersects(r) } }
         if clear(box) { return box.origin }
-        var best: CGPoint?, distance = CGFloat.infinity
+        // no fully clear spot: the one covering the least drawing, nearest first
+        func covered(_ r: CGRect) -> CGFloat { keep.reduce(0) { let i = $1.intersection(r); return $0 + (i.isNull ? 0 : i.width*i.height) } }
+        var best: CGPoint?, distance = CGFloat.infinity, least = covered(box)
         for screen in screens {
             let a = screen.insetBy(dx:8,dy:8)
             guard a.width >= box.width, a.height >= box.height else { continue }
@@ -1044,8 +1046,8 @@ final class ScreenDrawing {
             let ys = [box.minY, a.minY, a.maxY-box.height] + keep.flatMap { [$0.maxY, $0.minY-box.height] }
             for x in xs where x >= a.minX && x <= a.maxX-box.width {
                 for y in ys where y >= a.minY && y <= a.maxY-box.height {
-                    let d = hypot(x-box.minX, y-box.minY)
-                    if d < distance, clear(CGRect(x:x,y:y,width:box.width,height:box.height)) { best = CGPoint(x:x,y:y); distance = d }
+                    let d = hypot(x-box.minX, y-box.minY), c = covered(CGRect(x:x,y:y,width:box.width,height:box.height))
+                    if c < least || c == least && best != nil && d < distance { best = CGPoint(x:x,y:y); distance = d; least = c }
                 }
             }
         }

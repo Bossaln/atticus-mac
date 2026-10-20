@@ -89,7 +89,7 @@ This is how you show Atticus something; [Draw on screen](#draw-on-screen) is how
 
 ## Draw on screen
 
-Ask how to do something and Atticus can show you: it draws boxes, circles, arrows and labels over your screen, with a pointer that moves to each spot. It goes one step at a time and moves on when you click the highlighted spot, change that value, or say "next".
+Ask where to click or how to do something and Atticus shows you instead of only telling you: it draws boxes, circles, arrows and labels over your screen, with a pointer that moves to each spot. It goes one step at a time and moves on when you click the highlighted spot, change that value, or say "next".
 
 Ask it to explain something and draw it ("explain the Pythagorean theorem and draw it on my screen") and the drawing builds up like a whiteboard: each step adds to the last, and a card in the opposite corner keeps every caption so far. It moves through the steps by itself. It works from what you have open: with a video, page or problem on screen, it marks up that figure and uses its numbers, unless you ask for a fresh example. Drawings go on the screen where you asked (the one with the Atticus box) unless you name another. Worked examples and practice problems are written line by line in large text on one panel, readable from your chair on a laptop or a monitor.
 

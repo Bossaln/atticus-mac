@@ -620,6 +620,7 @@ let moved = CGRect(origin:spot,size:box.size)
 precondition(!moved.intersects(covering) && screenA.insetBy(dx:8,dy:8).contains(moved) && hypot(spot.x-box.minX,spot.y-box.minY) < 200,"The box did not take the nearest clear spot: \(spot)")
 precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA],in:[screenA,screenB]).map { screenB.contains(CGRect(origin:$0,size:box.size)) } == true,"A covered display did not send the box to the other one")
 precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA,screenB],in:[screenA,screenB]) == nil,"With no room the box must stay")
+precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA,screenB.insetBy(dx:0,dy:100)],in:[screenA,screenB]).map { covered in screenB.contains(CGRect(origin:covered,size:box.size)) } == true,"With no clear room the box must cover the least drawing")
 print("Guide geometry: rings outside targets, arrows and labels beside them, callouts beside their marks, Back/Next/Done, selectable marks, text board, box placement")
 '''
 
