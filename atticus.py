@@ -3396,11 +3396,17 @@ AGENT_SYSTEM += (f'If missing setup would help (macOS blocks a permission or Aut
                  f'It asks the user and waits; follow its answer.\n')
 
 
-def parse_handoff(text):
-    match = re.fullmatch(r'\[(agent|steer|agent-profile) (\{[^\n]+\})\]\s*', (text.strip().splitlines() or [''])[0])
-    if not match: return None
-    try: data = json.loads(match[2])
+def tag_json(text, start):
+    """The JSON object opening a [tag {...}] at start, closed by ']': pretty-printed JSON and text after it are fine."""
+    try: data, end = json.JSONDecoder().raw_decode(text, start)
     except ValueError: return None
+    return data if isinstance(data, dict) and text[end:].lstrip().startswith(']') else None
+
+
+def parse_handoff(text):
+    match = re.match(r'\s*(?:```\w*\s*)?\[(agent|steer|agent-profile)\s+(?=\{)', text)
+    data = tag_json(text, match.end()) if match else None
+    if data is None: return None
     if match[1] == 'agent-profile':
         if not isinstance(data, dict) or data.get('action') not in ('save', 'list', 'rename', 'delete', 'run'): return None
         return {'namedAction': data}
@@ -3916,11 +3922,14 @@ class Agents:
         with self.lock:
             existing = next((row for row in self.rows.values() if brief.get('handoffId') and row.get('handoffId') == brief['handoffId']), None)
             if existing: return existing
-            if brief.get('steer'):
+            if brief.get('steer') in self.rows:
                 row = self.steer(brief)
-                if row and brief.get('handoffId'):
+                if brief.get('handoffId'):
                     row['handoffId'] = brief['handoffId']; self.save(row)
                 return row
+            if brief.get('steer'):   # its agent is gone: the user's words become a new task to offer, never dropped
+                words = brief.get('request') or brief['brief']
+                brief = {**brief, 'title': agent_title(words), 'brief': words[:1000]}
             for identifier in list(self.offers): self.command({'action': 'cancel', 'id': identifier})
             old = self.rows.get(brief.get('resume', ''))
             if old:
@@ -3960,8 +3969,7 @@ class Agents:
 
     def steer(self, brief):
         """The user spoke to a listed agent from the main box: a running one gets the words on its stdin now; an ended one resumes."""
-        row = self.rows.get(brief['steer'])
-        if not row: return self.emit({'event': 'steered', 'missing': True})
+        row = self.rows[brief['steer']]
         words = brief.get('context') or brief['brief']
         text = brief['brief'] + ('\nThe user said (data): ' + words if words != brief['brief'] else '')
         row.setdefault('timeline', []).append({'user': words})
@@ -4044,14 +4052,13 @@ class Agents:
     def finish(self, row, status, result=''):
         row.update(status=status, step=result[:180] if status == 'failed' else 'Done', ended=time.time(), result=result, question=None)
         if status == 'done':
-            match = re.search(r'\[agent-result (\{.*\})\]\s*$', result, re.S)
-            try: data = json.loads(match[1]) if match else {}
-            except ValueError: data = {}
-            if not isinstance(data, dict): data = {}
-            row.update(summary=str(data.get('summary') or result)[:2000], changes=str(data.get('changes', ''))[:2000],
+            match = re.search(r'.*\[agent-result\s+(?=\{)', result, re.S)   # the last one
+            data = (tag_json(result, match.end()) if match else None) or {}
+            answer = agent_visible_text(result)
+            row.update(summary=str(data.get('summary') or answer or 'Done')[:2000], changes=str(data.get('changes', ''))[:2000],
                        links=[str(link) for link in data.get('links', []) if isinstance(link, str)][:20] if isinstance(data.get('links', []), list) else [],
                        missingConnector=str(data.get('missingConnector', ''))[:160], meetingEvent=data.get('meetingEvent', {}) if isinstance(data.get('meetingEvent', {}), dict) else {},
-                       preparedBrief=str(data.get('preparedBrief') or (result[:match.start()] if match else result))[:MEETING_BRIEF_LIMIT])
+                       preparedBrief=str(data.get('preparedBrief') or answer)[:MEETING_BRIEF_LIMIT])
             if row['missingConnector']:   # its chip asks to connect it; once connected, the agent carries on by itself
                 name = row['missingConnector']
                 row.update(status='needs-you', step='Needs ' + name, question={'need': 'connector', 'app': name, 'q': f'Connect {name} in Claude',

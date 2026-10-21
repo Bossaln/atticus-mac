@@ -3179,7 +3179,6 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
                 if !quiet { shelf?.orderFrontRegardless() }
                 app.js("agentSteered",row)
             }
-        } else if kind == "steered" { app.js("agentSteered","That agent is gone")
         } else if kind == "text" { js("view","text",event) }
         app.js("agentCount",badge); tick()
     }

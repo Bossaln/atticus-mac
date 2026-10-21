@@ -91,9 +91,11 @@ class AgentTests(unittest.TestCase):
         row=atticus.parse_handoff(marker)
         self.assertEqual(row['title'],'Fill the document');self.assertEqual(row['connectors'],['mcp__fixture__inspect'])
         self.assertEqual(row['destination'],'meeting')
-        self.assertEqual(atticus.parse_handoff(marker+'\nMore words')['title'],row['title'])
+        pretty='[agent '+json.dumps({'title':'Fill the document','brief':'Complete the requested fields'},indent=2)+']'
+        for good in (marker+'\nMore words',marker+' I handed it off.','  \n'+pretty,'```json\n'+marker+'\n```',marker+'\n'+marker):
+            self.assertEqual(atticus.parse_handoff(good)['title'],row['title'],good)
         self.assertEqual(atticus.parse_handoff('[agent {"title":"One two three four five","brief":"Task"}]')['title'],'One two three four')
-        for bad in ('hello\n'+marker,marker+' More words','[agent {}]','[agent {"title":3,"brief":"x"}]','[agent broken]'):
+        for bad in ('hello\n'+marker,marker[:-1],'[agent {}]','[agent {"title":3,"brief":"x"}]','[agent broken]','[agent ["x"]]'):
             self.assertIsNone(atticus.parse_handoff(bad),bad)
 
     def test_named_agent_is_saved_model_selected_used_deleted_and_unknown_asks(self):
@@ -550,7 +552,12 @@ class AgentTests(unittest.TestCase):
         done=self.prepare('DONE fixture');self.manager.start(done['id']);self.until(lambda:done['status']=='done')
         self.manager.prepare({'steer':done['id'],'brief':'WAIT also check Home Depot','title':'','ack':'Got it'})
         self.assertEqual(done['status'],'running');self.assertTrue(done['session'])
-        self.manager.prepare({'steer':'gone','brief':'x','title':''});self.assertEqual(self.events[-1],{'event':'steered','missing':True})
+        gone={'steer':'gone','brief':'WAIT x','title':'','request':'WAIT also check Home Depot for the filter'}
+        atticus.persist_handoff(gone,0);count=len(self.manager.rows)
+        for _ in range(2): self.manager.recover_handoffs()   # its agent is gone: one offer of the user's words, and the retry record clears
+        offers=[e for e in self.events if e.get('event')=='offer' and e['agent'].get('handoffId')==gone['handoffId']]
+        self.assertEqual(len(offers),1);self.assertEqual(offers[0]['agent']['brief'],gone['request']);self.assertFalse(offers[0]['start'])
+        self.assertEqual(len(self.manager.rows),count+1);self.assertFalse(list((Path(self.root.name)/'pending-handoffs').glob('*.json')))
 
     def test_steered_result_after_rate_limit_finishes_and_pings_once(self):
         row=self.prepare('RATE original');self.manager.start(row['id'])
@@ -903,6 +910,13 @@ class AgentTests(unittest.TestCase):
         self.assertTrue(row['question']['waiting']);self.assertFalse(os.path.exists(answer));self.assertEqual(row['status'],'needs-you')
         self.manager.command({'action':'granted','id':row['id']})
         self.assertEqual(Path(answer).read_text(),'y');self.assertEqual(row['status'],'running')
+
+    def test_agent_result_tag_never_reaches_summary_raw(self):
+        row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')
+        for result,summary,links in (('Found three. [agent-result {"summary":"Compared three.",\n "links":["https://a.example"]}]\nAnything else?','Compared three.',['https://a.example']),
+                                     ('Found three.\n[agent-result {"summary": broken}]','Found three.',[]),('[agent-result {"summary"','Done',[])):
+            self.manager.finish(row,'done',result)
+            self.assertEqual((row['summary'],row['links']),(summary,links),result);self.assertNotIn('[agent-',row['preparedBrief'])
 
     def test_missing_connector_asks_on_the_chip_and_resumes_once_connected(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')
