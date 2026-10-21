@@ -703,7 +703,7 @@
       else { c.first = units.length; boxes.push(c); walk(c); }   // a block's marker, background or border fades in with its first word
     });
     walk(t);
-    const trim = n => { for (let c; (c = n.childNodes.at(-1))?.nodeType === 1 && !leaf(c);) { if (c.textContent.trim()) return trim(c); c.remove(); } };
+    const trim = n => { for (let c; (c = n.lastChild)?.nodeType === 1 && !leaf(c);) { if (c.textContent.trim()) return trim(c); c.remove(); } };
     trim(t);   // a block still without words (a list item, heading or code block just opened) waits for them
     const gone = [], was = [], take = n => n.at === undefined ? n.childNodes.forEach(take) : was.push(n), bare = u => u.textContent.replace(/[*_`]/g, '');
     if (keep) merge(a, t, gone); else a.replaceChildren(...t.childNodes);

@@ -162,9 +162,10 @@ class StreamTests(unittest.TestCase):
         script = r'''
 class C{constructor(n){this.n=n}has(){return this.n.className.split(' ').filter(Boolean)}contains(c){return this.has().includes(c)}
   add(c){if(!this.contains(c))this.n.className=[...this.has(),c].join(' ')}remove(...c){this.n.className=this.has().filter(x=>!c.includes(x)).join(' ')}}
-class N{constructor(name,type=1,ns){this.nodeName=name;this.nodeType=type;this.namespaceURI=ns;this.childNodes=[];this.parentNode=null;this.className='';this.style={};this.dataset={};this.classList=new C(this)}
+class N{constructor(name,type=1,ns){this.nodeName=name;this.nodeType=type;this.namespaceURI=ns;this.childNodes=[];this.childNodes.at=undefined;this.parentNode=null;this.className='';this.style={};this.dataset={};this.classList=new C(this)}
   append(...k){for(let c of k){if(typeof c==='string')c=new T(c);if(c.nodeName==='#frag'){this.append(...c.childNodes);continue}c.remove();c.parentNode=this;this.childNodes.push(c)}}
   appendChild(c){this.append(c);return c}setAttribute(k,v){this[k]=v}
+  get lastChild(){return this.childNodes[this.childNodes.length-1]||null}
   remove(){const p=this.parentNode;if(p){p.childNodes.splice(p.childNodes.indexOf(this),1);this.parentNode=null}}
   replaceWith(...k){const p=this.parentNode,i=p.childNodes.indexOf(this);this.remove();k=k.map(c=>typeof c==='string'?new T(c):c);k.forEach(c=>{c.remove();c.parentNode=p});p.childNodes.splice(i,0,...k)}
   replaceChildren(...k){[...this.childNodes].forEach(c=>c.remove());this.append(...k)}
