@@ -53,8 +53,8 @@ exec /usr/bin/osascript "$@"
 
 
 def _auto_allow(directory, stop):
-    q = Path(directory) / 'q'
-    a = Path(directory) / 'a'
+    import atticus
+    q = Path(atticus.question_path(directory))
     while not stop.is_set():
         if q.exists():
             try:
@@ -62,6 +62,7 @@ def _auto_allow(directory, stop):
             except (OSError, ValueError):
                 j = {}
             q.unlink(missing_ok=True)
+            a = Path(atticus.question_answer_path(directory, j))
             if 'pick' in j:
                 a.write_text('1')
             else:

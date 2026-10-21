@@ -224,7 +224,7 @@ class MeetingTests(unittest.TestCase):
             with self.subTest(client=selected), patch.object(atticus, 'client', return_value=selected), \
                  patch.object(atticus.subprocess, 'Popen') as start:
                 with self.assertRaisesRegex(RuntimeError, 'stays on this Mac'):
-                    atticus.meeting_call('Stable prefix', 'A question', 'private screenshot')
+                    atticus.meeting_call('Stable prefix', 'A question')
                 result = atticus.meeting_gather({'event': {'title': 'Pilot'}, 'text': 'Private notes'})
                 start.assert_not_called()
                 self.assertIn('stays on this Mac', result['notice'])

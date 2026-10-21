@@ -209,7 +209,7 @@ final class DrawingStub { var active = false; func next() {} }
 func transcriptKey(_ s: String) -> String { s.lowercased() }
 final class Harness {
  var drawingReply = false; let drawing = DrawingStub(); var proc: Process?
- func cancel() {}; func hush() {}; func typed(_ s: String, heard: Bool = false) {}
+ func cancel() {}; func hush() {}; func hush(keepReply: Bool, keepWarm: Bool = false) {}; func typed(_ s: String, heard: Bool = false) {}
  var selectionID = 0, selectionPending = false, selection: TextSelection?, messages: [String] = []
  var warm: Int? = 1, warmSel = "", respawns = 0
  var busy = true, fastBusy = false, stops = 0, finished = 0

@@ -50,11 +50,16 @@
   body.dictate #card { flex-direction: row; align-items: center; gap: 6px; padding: 4px 14px 4px 4px; }
   body.dictate #head { height: auto; } body.dictate #head > :not(#orb), body.dictate #comp, body.dictate .e, body.dictate #grip { display: none; }
   body.dictate #orb { width: 28px; height: 28px; margin: 0; }
+  #dictwave { display: none; }
+  body.dictate.hearing:not(.has-words) #dictwave { display: flex; align-items: center; gap: 2px; width: 43px; height: 28px; flex: none; }
+  #dictwave i { display: block; width: 3px; height: 3px; border-radius: 3px; background: var(--accent); transition: height .1s var(--ease); }
   body.dictate #thread { flex: 1; min-width: 0; padding: 0; -webkit-mask-image: none; }
   body.dictate .turn { padding: 0; }
   body.dictate .turn.old { display: none; }
-  body.dictate .q { position: relative; display: flex; justify-content: flex-end; overflow: hidden; white-space: nowrap; width: fit-content; max-width: 100%; box-sizing: border-box;
-    margin: 0; padding: 4px 2px; border-radius: 6px; background: none; box-shadow: none; font-size: 14px; line-height: 20px; color: #fff; transition: opacity .3s var(--ease); }
+  body.dictate .q.empty { display: none; }
+  body.dictate .q { position: relative; display: flex; align-items: center; justify-content: flex-end; overflow: hidden; white-space: nowrap; width: fit-content; max-width: 100%; height: 28px; box-sizing: border-box;
+    margin: 0; padding: 0 2px; border-radius: 6px; background: none; box-shadow: none; font-size: 14px; line-height: 20px; color: #fff; transition: opacity .3s var(--ease); }
+  body.dictate .q.live::after { content: none; }
   body.dictate .q.long { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px); }
   body.dictate.fold :is(.q, .dn) { opacity: 0; }
   #lock { display: none; flex: none; width: 10px; height: 13px; color: var(--fg2); fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
@@ -78,7 +83,7 @@
   .steps { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
   .steps:empty { display: none; }
   .steps[data-more]::before { content: "+" attr(data-more) " earlier"; font-size: 11px; color: var(--fg2); padding-left: 12px; }
-  .step { font-size: 12px; color: var(--fg2); display: flex; gap: 7px; align-items: center; white-space: nowrap;
+  .step { font-size: 12px; line-height: 16px; color: var(--fg2); display: flex; gap: 7px; align-items: center; white-space: nowrap;
     overflow: hidden; animation: in .35s var(--ease) both; }
   .step::before { content: ""; flex: none; width: 5px; height: 5px; border-radius: 50%; background: #636366;
     transition: background .3s; }
@@ -149,8 +154,9 @@
   .agent-ack span { min-width:0; flex:1; }
   .a .w { display: inline-block; animation: word .5s var(--ease) both; }
   .a.cancel { color: var(--fg2); font-size: 12.5px; }
-  .a.stopped { display: flex; align-items: center; gap: 8px; color: var(--fg2); font-size: 12.5px; letter-spacing: .1px; }
-  .a.stopped i { width: 7px; height: 7px; border-radius: 2px; background: #ff453a; box-shadow: 0 0 8px rgba(255,69,58,.6);
+  .a.stopped { display: flex; align-items: center; gap: 8px; color: var(--fg2); font-size: 12.5px; line-height: 16px; letter-spacing: .1px; }
+  .a:is(.stopped, .agent-ack) > :not(.w) + :not(.w) { margin-top: 0; }   /* the answer spacing rule pushed the label below its dot or orb */
+  .a.stopped i { flex: none; width: 7px; height: 7px; border-radius: 2px; background: #ff453a; box-shadow: 0 0 8px rgba(255,69,58,.6);
     animation: in .35s var(--spring) both; }
   .step.cut { color: var(--fg2); text-decoration: line-through; text-decoration-color: rgba(255,255,255,.2); }
 
@@ -231,6 +237,7 @@
     background: rgba(255,159,10,.13); box-shadow: inset 0 0 0 .5px rgba(255,159,10,.32); transition: transform .3s var(--spring), background .2s; }
   #mode::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #ff9f0a; }
   #mode.on { display: flex; animation: in .35s var(--ease) both; } #mode:hover { transform: scale(1.05); background: rgba(255,159,10,.16); }
+  #mode:focus-visible { outline: 2px solid #64d2ff; outline-offset: 3px; }
 
   /* tip: once in a while, one quiet line under the answer */
   .tip { display: flex; align-items: baseline; gap: 7px; width: fit-content; max-width: 100%; margin-top: 14px; padding: 7px 12px 7px 10px; box-sizing: border-box;
@@ -339,12 +346,12 @@
   @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
   button:focus-visible { outline: 2px solid #64d2ff; outline-offset: 3px; }
   /* agents: a quiet badge in the header, count + live dot; it opens the Agent view */
-  #agents-pill { flex:0 1 auto; min-width:22px; max-width:72px; display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px 0 8px; border:0; border-radius:11px;
+  #agents-pill { flex:none; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 9px 0 8px; border:0; border-radius:11px;
     background:rgba(255,255,255,.07); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.12); color:#d1d1d6; font:500 11px -apple-system, system-ui, sans-serif;
     font-variant-numeric:tabular-nums; cursor:pointer; overflow:hidden; animation:in .35s var(--spring) both; transition:background .2s, transform .3s var(--spring); }
-  #agents-pill span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #agents-pill span { white-space:nowrap; }   /* "1 agent" stays on one line; #status beside it gives up the room */
   #agents-pill[hidden] { display:none; } #agents-pill:hover { background:rgba(255,255,255,.12); color:#fff; } #agents-pill:active { transform:scale(.95); }
-  #agents-pill i { width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 6px rgba(10,132,255,.8); animation:pulse 1.8s ease-in-out infinite; }
+  #agents-pill i { flex:none; width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 6px rgba(10,132,255,.8); animation:pulse 1.8s ease-in-out infinite; }
   #agents-pill.attention i { background:#ff9f0a; box-shadow:0 0 6px rgba(255,159,10,.8); }
   /* keycap actions (Raycast-style): label + the key that does it; one blue main action */
   .keys, .ok .keys { display:flex; justify-content:flex-end; align-items:center; gap:6px; margin-top:14px; }
@@ -357,8 +364,8 @@
     color:#f5f5f7; background:rgba(255,255,255,.1); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.16), 0 1px 0 rgba(0,0,0,.3); }
   .go kbd { color:#fff; background:rgba(0,0,0,.12); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.3); }
   .agent-card .usage { color:var(--fg2); font-size:10px; margin-top:9px; font-variant-numeric:tabular-nums; }
-  .agent-card .eyebrow { display:flex; align-items:center; gap:6px; margin:0 0 5px; font-size:10.5px; font-weight:600; letter-spacing:.2px; color:var(--fg2); }
-  .agent-card .eyebrow i { width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 8px rgba(10,132,255,.7); animation:pulse 1.8s ease-in-out infinite; }
+  .agent-card .eyebrow { display:flex; align-items:center; gap:6px; margin:0 0 5px; font-size:10.5px; line-height:14px; font-weight:600; letter-spacing:.2px; color:var(--fg2); }
+  .agent-card .eyebrow i { flex:none; width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 8px rgba(10,132,255,.7); animation:pulse 1.8s ease-in-out infinite; }
   .agent-card.done .eyebrow i { background:#30d158; box-shadow:0 0 8px rgba(48,209,88,.5); animation:none; }
   .agent-card .made { display:grid; grid-template-columns:minmax(0,1fr); gap:6px; margin-top:10px; }
   .agent-card .made button { flex:none; display:flex; align-items:center; gap:10px; box-sizing:border-box; min-width:0; width:100%; height:auto; padding:7px 9px 7px 7px; border-radius:10px; text-align:left;
@@ -368,6 +375,14 @@
   .agent-card .made svg { width:14px; height:14px; fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .agent-card .made span { min-width:0; flex:1; } .agent-card .made b, .agent-card .made small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .agent-card .made b { font-size:12.5px; font-weight:600; } .agent-card .made small { margin-top:1px; font-size:10.5px; color:var(--fg2); }
+  .agent-card .keys button:not(:has(kbd)) { padding:0 11px; }
+  .agent-card .made .out { width:12px; height:12px; flex:none; stroke:var(--fg2); } .agent-card .made button:hover .out { stroke:#fff; }
+  /* the agent's answer leads the done card, read like any answer; long ones scroll inside so its actions stay in view */
+  .agent-card { max-height:900px; }   /* not none: a card folding away (.gone) can only animate from a length */
+  .agent-card .a { display:block; margin-top:8px; max-height:min(260px, calc(var(--screen-height, 10000px) - 300px)); overflow-y:auto; font-size:13.5px; line-height:1.55; cursor:default; }
+  .agent-card .a::-webkit-scrollbar { width:0; } .agent-card .a.more { -webkit-mask-image:linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+  .agent-card .a :is(div, p) { display:block; margin-top:0; font-size:inherit; line-height:inherit; color:inherit; }
+  .agent-card .a code { display:inline; max-height:none; margin:0; white-space:normal; font:12.5px ui-monospace, Menlo, monospace; color:inherit; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
     #status.live span { background: none; color: #f5f5f7; }
@@ -378,7 +393,8 @@
 </style></head>
 <body>
 <div id="card">
-  <div id="head"><canvas id="orb"></canvas><div id="status"></div><button id="agents-pill" hidden><i></i><span></span></button><div id="mode" title="Safe mode is off. Click to turn it on.">Full access</div><div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div></div>
+  <div id="head"><canvas id="orb"></canvas><div id="status"></div><button id="agents-pill" hidden><i></i><span></span></button><div id="mode" role="button" tabindex="0" title="Safe mode is off. Click to turn it on.">Full access</div><div id="x"><svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9"/></svg></div></div>
+  <span id="dictwave" role="img" aria-label="Listening"></span>
   <div id="thread"></div>
   <svg id="lock" viewBox="0 0 10 13" role="img" aria-label="Locked. Press the shortcut to finish."><path d="M2.5 6V4a2.5 2.5 0 0 1 5 0v2"/><rect x="0" y="5.5" width="10" height="7.5" rx="2"/></svg>
   <div id="pointbar" role="group" aria-label="Point at your screen"><span class="chip"><img alt="What you marked" hidden><i></i><span>Marked</span><button class="rm" title="Remove mark" aria-label="Remove mark"><svg viewBox="0 0 10 10"><path d="M2 2l6 6M8 2L2 8"/></svg></button></span>
@@ -421,6 +437,7 @@
     let n = part('dn'); if (!n) { n = document.createElement('div'); n.setAttribute('role', 'status'); const q = part('q'); q ? q.after(n) : t.append(n); }
     n.className = ok ? 'dn ok' : 'dn'; n.textContent = s || ''; fit();
   };
+  for (let i = 0; i < 9; i++) $('dictwave').append(document.createElement('i'));
   const post = m => webkit.messageHandlers.c.postMessage(m);
   let atBottom = true;   // the user scrolled up to read: new steps must not yank them back down
   // only the user's own wheel/trackpad decides (our scrolls and growing steps must not): up = stay put, back to the bottom = follow again
@@ -452,7 +469,7 @@
   };
   // Clicking in or typing (not the cursor landing there from the shortcut): typing wins, so the mic stops and what was heard goes
   const drop = () => {
-    if (listening) { listening = false; turn()?.remove(); setState('breathing'); status(''); boost = 1; $('orb').style.transform = ''; fit(); }
+    if (listening) { listening = false; document.body.classList.remove('hearing'); turn()?.remove(); setState('breathing'); status(''); boost = 1; $('orb').style.transform = ''; fit(); }
     post({ type: 1 });
   };
   $('ask').onmousedown = drop; $('ask').oninput = () => { drop(); if (miniEnd) { post({miniClear:true});miniClear(); follow(440); } fit(false); };   // typing the next ask: the finished view goes
@@ -463,6 +480,9 @@
   document.addEventListener('compositionstart',()=>{defaultComposing=true;fit(false);});document.addEventListener('compositionend',()=>{defaultComposing=false;fit(false);});
   $('ask').onkeydown = e => {
     if (!e.isComposing && !e.target.value && e.key === 'ArrowDown') { const c = $('thread').querySelector('.pk:not(.gone) .c'); if (c) { e.preventDefault(); c.focus(); } }   // into a choices card
+    if (!e.isComposing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.target.value && /^[1-9]$/.test(e.key)) {
+      const c = $('thread').querySelectorAll('.pk:not(.gone) .c')[+e.key - 1]; if (c) { e.preventDefault(); (c.choose || (() => c.click()))(); return; }
+    }
     if (!e.isComposing && !listening && !working && !e.target.value && e.key === 'ArrowUp') {
       const q = part('q'); if (q && !q.classList.contains('empty')) { e.preventDefault(); e.target.value = q.textContent; }
     }
@@ -511,6 +531,9 @@
     $('status').className = live ? 'live' : '';
     $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
   };
+  const enableSafeMode = () => { status('Safe mode on · Settings turns it off'); post({ safe: true }); };
+  $('mode').onclick = enableSafeMode;
+  $('mode').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enableSafeMode(); } };
   let followFrame=0;
   const follow = ms => { cancelAnimationFrame(followFrame); const end = performance.now() + ms; (function f() { fit(); if (performance.now() < end) followFrame=requestAnimationFrame(f); })(); };   // interrupt a prior transition instead of stacking geometry loops
   // ✎ [{c, label, t, add}]: what this ask remembered (✓) or forgot (struck through), as one row; Settings opens on the item
@@ -627,7 +650,7 @@
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const INLINE = /((?<!\\)\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$(?=\S)(?:\\.|[^$\\\n])+?(?<=\S)\$(?!\d)|\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:|mailto:)[^\s)]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]|\*[^*\s][^*]*\*|(?<![\w\\])_[^_\s][^_]*_(?!\w))/g;
   const inline = (parent, text) => {
-    const plain = s => parent.append(s.replace(/\\\$/g, '$'));
+    const plain = s => s.replace(/\\\$/g, '$').split('\n').forEach((l, k) => { if (k) parent.append(el('br')); if (l) parent.append(l); });   // a line break the model wrote stays one
     let at = 0;
     for (const m of text.matchAll(INLINE)) {
       plain(text.slice(at, m.index)); const s = m[0]; at = m.index + s.length;
@@ -664,7 +687,7 @@
         out.append(list); continue;
       }
       const para = []; while (i < lines.length && lines[i].trim() && !(para.length && (item.test(lines[i]) || /^\s*(#{1,4}\s|```)/.test(lines[i]) || isTable(i)))) para.push(lines[i++].trim());
-      out.append(inline(el('p'), para.join(' ')));
+      out.append(inline(el('p'), para.join('\n')));
     }
     return out;
   };
@@ -766,35 +789,44 @@
     turn().append(clock); clockStart = performance.now(); clockTick();
   };
 
-  let agentLine='';   // the agent this box just started: its live step stays in the status line until the next ask
-  const agentStatus=r=>{if(r.id!==agentLine||working||listening)return;const s=r.status==='failed'?'Couldn’t finish':r.step||'Working…',live=r.status==='running';
-    if($('status').textContent!==s||$('status').classList.contains('live')!==live)status(s,live);if(['done','failed','stopped'].includes(r.status))agentLine='';};
+  // One line from Atticus beside the agent's own orb (the chip's hue), in place of this turn's answer.
+  const agentAck=(a,row,text)=>{a.className='a agent-ack';a.replaceChildren();a.dataset.answer=text;
+    if(row?.id){const c=document.createElement('canvas'),p=E.r('breathing',32);c.width=c.height=64;c.dataset.agent=row.id;c.style.filter='hue-rotate('+(parseInt(row.id.slice(0,4),16)%90-45)+'deg)';const ctx=c.getContext('2d');ctx.scale(2,2);E.p(ctx,E.M[p.mode](32,0,p.opts),true,null);a.append(c);}
+    a.append(el('span','',text));};
+  const agentAnswer=row=>(row.result||'').replace(/\[agent-result\b[\s\S]*$/,'').trim()||row.summary||'Done';   // as agents.html reads it
   // What an agent made, as it says: Google types by mimeType, files by extension, the rest by host.
   const AGENT_KINDS=[[/spreadsheet|\.(csv|xlsx?|numbers)$/i,'Spreadsheet','<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M2 10h12M6 2v12"/>'],[/presentation|\.(pptx?|key)$/i,'Presentation','<rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M8 11.5v2.5M5.5 14h5"/>'],
     [/document|\.(docx?|md|txt|pages|rtf)$/i,'Document','<path d="M4 1.5h5l3 3v10H4z"/><path d="M6 8h4M6 10.5h4"/>'],[/calendar|event/i,'Event','<rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/>'],
     [/mail|draft/i,'Message','<rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="m2 4 6 5 6-5"/>'],[/^\//,'File','<path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/>']];
-  const agentMade=row=>(row.made?.length?row.made:(row.links||[]).map(url=>({url,title:''}))).slice(0,3).map(m=>{
+  const agentMade=row=>{const said=agentAnswer(row);return (row.made?.length?row.made:(row.links||[]).map(url=>({url,title:''}))).flatMap(m=>{
     const k=AGENT_KINDS.find(k=>k[0].test((m.type||'')+' '+m.url.split(/[?#]/)[0]))||[0,'Link','<path d="M7 9a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/>'];
+    if(!k[0]&&!m.title&&said.includes(m.url))return [];   // an untitled page the answer already links to is a source; a titled one came from a tool that made it
     let host='';try{host=new URL(m.url).hostname.replace(/^www\./,'');}catch{}const file=m.url.startsWith('/');
-    return {url:m.url,title:m.title||(file?m.url.split('/').pop():host)||m.url,sub:k[1]+' · '+(file?'In its folder':host),svg:k[2]};});
+    return [{url:m.url,title:m.title||(file?m.url.split('/').pop():host)||m.url,sub:k[1]+' · '+(file?'In its folder':host),svg:k[2]}];}).slice(0,3);};
   const keyButton=(text,key,go)=>{const b=document.createElement('button');if(go)b.className='go';const label=document.createElement('span');label.textContent=text;const cap=document.createElement('kbd');cap.textContent=key;cap.setAttribute('aria-hidden','true');b.append(label,cap);b.setAttribute('aria-keyshortcuts',key==='↩'?'Enter':'Escape');return b;};
   const apiCost=u=>'≈'+(u<1?(u*100).toFixed(u<.1?2:1)+'¢':'$'+u.toFixed(2))+' at API prices';   // as Settings → Usage shows it
-  const agentCard=row=>{   // an agent finished: what it made, Later / Open
+  const agentCard=row=>{   // an agent finished: its answer first, then what it made; Open ↩ opens the main thing, Details the full report
     $('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());
     const d=document.createElement('div');d.className='ok offer agent-card done';d.dataset.agent=row.id;
-    d.innerHTML='<div class="eyebrow"><i></i><span></span></div><b></b><p></p><div class="made"></div><div class="agent-actions keys"></div>';
+    d.innerHTML='<div class="eyebrow"><i></i><span></span></div><b></b><div class="a"></div><div class="made"></div><div class="agent-actions keys"></div>';
     d.querySelector('.eyebrow span').textContent=row.missingConnector?'Agent needs a connector':'Agent done';
     d.querySelector('b').textContent=row.title;
-    inline(d.querySelector('p'),row.summary||row.result||'Done');
+    const answer=d.querySelector('.a');answer.append(markdown(agentAnswer(row)));answer.tabIndex=0;   // a scroller: the keyboard must reach it
+    answer.onscroll=()=>answer.classList.toggle('more',answer.scrollHeight-answer.scrollTop-answer.clientHeight>4);
     const actions=d.querySelector('.agent-actions'),add=(text,data,go=false)=>{const b=keyButton(text,go?'↩':'esc',go);if(!go)b.dataset.esc='';b.onclick=()=>{post(data);d.remove();fit();};actions.append(b);return b;};
-    const made=d.querySelector('.made');
-    for(const m of agentMade(row)){const b=document.createElement('button');b.title=m.url;b.innerHTML='<i><svg viewBox="0 0 16 16">'+m.svg+'</svg></i><span><b></b><small></small></span>';b.querySelector('b').textContent=m.title;b.querySelector('small').textContent=m.sub;
-      b.onclick=()=>{post({agentOpen:row.id,target:m.url});d.remove();fit();};made.append(b);}
+    const made=d.querySelector('.made'),things=agentMade(row);
+    for(const m of things){const b=document.createElement('button');b.title=m.url;b.innerHTML='<i><svg viewBox="0 0 16 16">'+m.svg+'</svg></i><span><b></b><small></small></span><svg class="out" viewBox="0 0 16 16"><path d="M6 3H3v10h10v-3M9 2.5h4.5V7M13.5 2.5 7.5 8.5"/></svg>';b.querySelector('b').textContent=m.title;b.querySelector('small').textContent=m.sub;
+      b.setAttribute('aria-label','Open '+m.title);b.onclick=()=>{post({agentOpen:row.id,target:m.url});d.remove();fit();};made.append(b);}
     if(!made.children.length)made.remove();
-    add('Later',{agentLater:row.id});if(row.missingConnector)add('Connect in Claude',{agentConnect:row.id},true);else add('Open',{agentOpen:row.id},true);
+    if(things.length&&!row.missingConnector){const b=document.createElement('button');b.textContent='Details';b.onclick=()=>{post({agentOpen:row.id});d.remove();fit();};actions.append(b);}
+    add('Later',{agentLater:row.id});
+    if(row.missingConnector)add('Connect in Claude',{agentConnect:row.id},true);else if(things.length)add('Open',{agentOpen:row.id,target:things[0].url},true);else add('Details',{agentOpen:row.id},true);
     if(row.cost>0){const cost=document.createElement('div');cost.className='usage';cost.textContent=apiCost(row.cost);d.append(cost);}
     turn()?.querySelector('.elapsed')?.remove();   // the work moves to the agent; this box's timer has nothing to say
-    (turn()||$('thread')).append(d);working=false;clockStop();setState('breathing');status('Done');fit();
+    (turn()||$('thread')).append(d);
+    const over=d.offsetHeight+14-parseFloat(getComputedStyle($('thread')).maxHeight);   // a short box (14: the card's margin): the answer gives up room so its title and actions stay in view
+    if(over>0)answer.style.maxHeight=Math.max(60,answer.clientHeight-over)+'px';
+    answer.onscroll();working=false;clockStop();setState('breathing');status('Done');fit();
   };
   $('agents-pill').onclick=()=>post({agents:true});
   document.addEventListener('click', e => { const a = e.target.closest?.('a[href]'); if (a) { e.preventDefault(); e.stopPropagation(); post({ link: a.href }); } }, true);   // links open in the browser, never in the box
@@ -812,17 +844,20 @@
     },
     workerFailed(){
       working=false;clockStop();settle();status('Couldn’t start');
-      const d=document.createElement('div');d.className='ok offer retry';d.innerHTML='<b>Atticus’s helper couldn’t start</b><p>Retry, or open Setup & Permissions to repair it.</p><div><button>Open Setup</button><button class="go">Retry</button></div>';
+      const d=document.createElement('div');d.className='ok offer worker';d.innerHTML='<b>Atticus’s helper couldn’t start</b><p>Retry, or open Setup & Permissions to repair it.</p><div><button>Open Setup</button><button class="go">Retry</button></div>';
       const [setup,retry]=d.querySelectorAll('button');setup.onclick=()=>post({setup:true});retry.onclick=()=>{retry.disabled=true;status('Starting…',true);post({workerRetry:true})};
       (turn()||$('thread')).append(d);fit();
     },
     agentDone(row){agentCard(row);},
-    agentStep(row){agentStatus(row);},
     agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());status('Ready');clockStop();fit();},
-    agentStarted(row){$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;setState('breathing');agentLine=row?.id||'';row?agentStatus(row):status('Agent started');clockStop();fit();},   // the box stays; the card folds while its orb swims to the shelf
+    // The box says plainly that an agent took the ask (its orb swims to the chip meanwhile), then fades; the chip shows its steps.
+    agentStarted(row){$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');clockStop();
+      const queued=row?.status==='queued',a=part('a');status(queued?'Agent queued':'Agent started');
+      if(row?.title&&visible&&a&&!a.textContent.trim())agentAck(a,row,queued?'Queued an agent for “'+row.title+'”. It starts when another one finishes.':'I started an agent on “'+row.title+'”. I’ll ping you when it’s done.');
+      if(!$('ask').value)comp(false);   // a sent typed ask leaves the empty composer focused, which would block the hand-off fade
+      fit();},
     agentSteered(row){working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');status('');clockStop();
-      const a=part('a');if(a){a.className='a agent-ack';a.replaceChildren();const text=document.createElement('span');text.textContent=typeof row==='string'?row:'Told the '+row.title+' agent: '+(row.steer?.text||row.steer?.ack||'Got it');a.dataset.answer=text.textContent;
-        if(row.id){const c=document.createElement('canvas'),p=E.r('breathing',32);c.width=c.height=64;c.dataset.agent=row.id;c.style.filter='hue-rotate('+(parseInt(row.id.slice(0,4),16)%90-45)+'deg)';const ctx=c.getContext('2d');ctx.scale(2,2);E.p(ctx,E.M[p.mode](32,0,p.opts),true,null);a.append(c);}a.append(text);}fit();},
+      const a=part('a');if(a)agentAck(a,row,typeof row==='string'?row:'Told the '+row.title+' agent: '+(row.steer?.text||row.steer?.ack||'Got it'));fit();},
     agentCount(value){const count=typeof value==='number'?value:value.count,pill=$('agents-pill'),label=count+' agent'+(count===1?'':'s');pill.hidden=!count;pill.classList.toggle('attention',!!value.attention);
       pill.lastChild.textContent=label;pill.title=value.attention?'An agent needs you':'Open Agents';pill.setAttribute('aria-label',label+(value.attention?', one needs you':' running')+'. Open Agents');fit();},
     agentEscape(){const b=$('thread').querySelector('.agent-card [data-esc]');if(b)b.click();else post({agentGone:true});},   // Esc is a native hotkey: it picks the card's quiet choice
@@ -872,7 +907,7 @@
     },
     pointCoach() { coachPending = true; if ($('comp').classList.contains('open')) coachShow(); },
     finished() { clockStop(); miniFinish(false); },
-    dictate(on) { document.body.classList.toggle('dictate', !!on); document.body.classList.remove('locked', 'fold'); fit(false); },
+    dictate(on) { document.body.classList.toggle('dictate', !!on); document.body.classList.remove('locked', 'fold'); document.body.classList.remove('hearing', 'has-words'); for (const b of $('dictwave').children) b.style.height = ''; fit(false); },   // the last dictation's wave must not show on the next
     fold() { document.body.classList.add('fold'); },   // the words landed: the line fades while the pill shrinks into its orb
     locked(on) { document.body.classList.toggle('locked', !!on); },   // a double tap: hands-free until the next press
     visible(on) { visible = on; if (!on) { clockStop(); miniClear(); } fit(false); },
@@ -883,12 +918,13 @@
       if ($('card').classList.contains('held')) $('card').style.minHeight = Math.min(h, parseFloat($('card').style.minHeight) || 0) + 'px';
       fit(false);
     },
-    reset() { agentLine = ''; miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
+    reset() { miniClear(); clockStop(); $('thread').innerHTML = ''; $('thread').style.maxHeight = ''; $('card').classList.remove('held'); $('card').style.minHeight = ''; $('card').classList.remove('again'); void $('card').offsetWidth; },
     listen(keep) {   // keep: a typed ask; the box stays for the next one
-      agentLine = ''; miniClear(); clockStop();
-      $('thread').querySelectorAll('.rewrite, .paused').forEach(e => e.remove());   // resumed from the menu bar or Settings: the paused card never heard
+      miniClear(); clockStop();
+      $('thread').querySelectorAll('.rewrite, .paused, .worker').forEach(e => e.remove());   // a new ask: a paused card (resumed elsewhere) or a helper failure no longer applies
       hover = false;
       listening = !keep;
+      document.body.classList.toggle('hearing', listening);
       working = false;
       if (keep) $('ask').value = ''; else comp(false);
       if ($('thread').children.length) $('card').classList.add('again');
@@ -907,9 +943,15 @@
       $('thread').append(d); atBottom = true;   // a new ask: back to following the newest
       setState('listening'); boost = 1; status('Listening…', true); fit();
     },
-    level(v) { boost = 0.5 + Math.min(1, v) * 2.5; $('orb').style.transform = `scale(${1 + Math.min(1, v) * .1})`; },
+    level(v) {
+      v = Math.min(1, Math.max(0, v));
+      boost = 0.5 + v * 2.5; $('orb').style.transform = `scale(${1 + v * .1})`;
+      const bars = [...$('dictwave').children], heights = bars.map(b => b.style.height || '3px');
+      bars.forEach((b, i) => b.style.height = i === bars.length - 1 ? `${3 + v * 23}px` : heights[i + 1]);
+    },
     words(w) {
       const q = part('q'); if (!q) return;
+      document.body.classList.toggle('has-words', document.body.classList.contains('dictate') && !!w.trim());
       q.classList.toggle('empty', !w.trim()); q.textContent = w;
       const r = document.createRange(); r.selectNodeContents(q); q.classList.toggle('long', r.getBoundingClientRect().width > q.clientWidth);   // the pill's line overflows: fade its start
       fit();
@@ -917,18 +959,19 @@
     think() {
       clockBegin();
       listening = false;
+      document.body.classList.remove('hearing');
       working = true;
       boost = 1; $('orb').style.transform = ''; setState('solving');
       part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); fit();
     },
     finishing(label) {   // dictation released: the caret stops now; without a label (Verbatim) the shimmer waits 150 ms so a fast insert never flashes it
-      listening = false; boost = 1; $('orb').style.transform = ''; document.body.classList.remove('locked');
+      listening = false; boost = 1; $('orb').style.transform = ''; document.body.classList.remove('locked', 'hearing');
       const q = part('q'); q?.classList.remove('live'); clearTimeout(finishTimer);
       const on = () => { if (!q || q !== part('q')) return; q.classList.add('finishing'); setState('solving'); note(label); };
       if (label) on(); else finishTimer = setTimeout(on, 150);
     },
     dictated({ text, ok, words }) {   // landed: no text, the pill just folds away; otherwise one short line (ok: a checkmark); words: unsaved, so they can be copied
-      clearTimeout(finishTimer); listening = false; boost = 1; $('orb').style.transform = '';
+      clearTimeout(finishTimer); listening = false; boost = 1; $('orb').style.transform = ''; document.body?.classList.remove('hearing');
       part('q')?.classList.remove('live', 'hear', 'finishing'); setState('breathing'); note(text, ok);
       if (words) {
         const button = document.createElement('button'); button.className = 'btn'; button.textContent = 'Copy';
@@ -995,6 +1038,7 @@
     stopped(s) {   // Esc or the hotkey cut it off
       miniClear(); clockStop();
       listening = false;
+      document.body.classList.remove('hearing');
       working = false;
       $('thread').querySelectorAll('.ok, .pk, .rewrite').forEach(e => e.remove());
       turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('cut'); });
@@ -1017,7 +1061,7 @@
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
-      if (el?.closest('#mode')) { status('Safe mode on · Settings turns it off'); return post({ safe: true }); }
+      if (el?.closest('#mode')) return enableSafeMode();
       if ($('comp').classList.contains('pick')) pickRow(false);   // a click anywhere else closes the model row
       if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); status('Tips off · The menu bar turns them back on'); return fit(); }   // its own "Turn off": no more tips
       if (el?.closest('.tip.kofi')) post({ kofi: true });   // the support line opens Ko-fi, then goes like any tip
@@ -1028,13 +1072,15 @@
       else { if (q) $('ask').value = q.textContent; comp(true, true); }
     },   // typing mode's shortcut: open and put the cursor in it
     size(h) { $('thread').style.maxHeight = h + 'px'; fit(); },
-    hold(h) {   // the user dragged an edge: the box is h tall until the next conversation
-      const c = $('card'), o = $('comp').classList.contains('open') ? $('comp').offsetHeight : 0;
+    hold(h) {   // pin the panel to the pointer while an edge is being dragged
+      const c = $('card'), t = $('thread');
       h = Math.min(h, parseFloat(c.style.getPropertyValue('--screen-height')) || h);
-      c.classList.add('held'); c.style.minHeight = h + 'px';
-      const t = Math.max(60, h - 26 - $('head').offsetHeight - o - 12);   // 26: card padding; 12: gap under the thread
-      $('thread').style.maxHeight = t + 'px'; post({ boxH: t }); fit(false);
+      c.classList.add('held'); c.style.minHeight = '';
+      const chrome = c.offsetHeight - t.offsetHeight;   // header, current composer and live CSS spacing
+      t.style.maxHeight = Math.max(60, h - chrome) + 'px';
+      c.style.minHeight = h + 'px'; post({ boxH: parseFloat(t.style.maxHeight) }); fit(false);
     },
+    resizeDone() { const c = $('card'); c.classList.remove('held'); c.style.minHeight = ''; fit(); },
     respond(text) {
       const o = $('thread').querySelector('.pk:not(.gone) .other');   // a choices card: the main box works like its "Something else" field
       if (o) { $('ask').value = ''; o.value = text; o.onkeydown({ key: 'Enter', preventDefault() {} }); return true; }
@@ -1118,6 +1164,7 @@
         else if (pics) c.firstChild.textContent = o.kind || '';   // no preview: its file type
         c.querySelector('.n').textContent = o.label; c.querySelector('.s').textContent = o.sub; c.querySelector('.p').textContent = o.path || '';
         c.title = o.path ? o.path + '/' + o.label : o.label; if (i < 9) c.setAttribute('aria-keyshortcuts', String(i + 1));   // long titles clip to two lines; hover shows all
+        c.choose = () => done(i);
         c.onclick = e => { e.stopPropagation(); if (!pics) done(i); else view(on === c ? null : c); };
         g.append(c);
       });
@@ -1125,7 +1172,7 @@
       d.onkeydown = e => {   // 1-9 picks, arrows move between choices, Return presses the focused one
         if (e.target.matches('input') || e.metaKey || e.ctrlKey || e.altKey) return;
         const cs = [...g.children], at = cs.indexOf(document.activeElement);
-        if (/^[1-9]$/.test(e.key) && cs[e.key - 1]) { e.preventDefault(); cs[e.key - 1].click(); }
+        if (/^[1-9]$/.test(e.key) && cs[e.key - 1]) { e.preventDefault(); cs[e.key - 1].choose(); }
         else if (e.key === 'Enter' && on && !e.isComposing && !e.target.closest('button,textarea,select,a,[contenteditable=true]')) { e.preventDefault(); go.click(); }   // a file grown big: Return uses it
         else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); cs[Math.max(0, Math.min(cs.length - 1, at < 0 ? 0 : at + (e.key === 'ArrowDown' ? 1 : -1)))].focus(); }
       };

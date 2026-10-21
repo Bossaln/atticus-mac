@@ -42,6 +42,20 @@ class TelemetryTests(unittest.TestCase):
                 self.assertEqual(send.call_count, 2)
                 self.assertEqual((root / 'id').read_text(), identity)
 
+    def test_failure_reports_drop_text_applescript_types_or_writes(self):
+        steps = ['osascript -e \'tell application "System Events" to keystroke "hunter2"\'',
+                 'osascript -e \'tell application "Notes" to make new note with properties {name:"Diary", body:"private words"}\'',
+                 'osascript -e \'tell application "Notes" to set body of note 1 to "private words"\'']
+        cleaned = ' '.join(map(atticus.clean, steps))
+        self.assertFalse(any(word in cleaned for word in ('hunter2', 'Diary', 'private')))
+        self.assertIn('tell application "Notes"', cleaned)
+
+    def test_the_ask_log_and_its_folder_are_private_even_on_older_installs(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root):
+            os.chmod(root, 0o755); log = Path(root, 'log.jsonl'); log.write_text(''); log.chmod(0o644)
+            atticus.append_log({'task': 'Summarize my inbox'})
+            self.assertEqual((os.stat(root).st_mode & 0o777, log.stat().st_mode & 0o777), (0o700, 0o600))
+
     def test_disabled_does_not_send(self):
         with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
              patch.object(atticus.subprocess, 'Popen') as send:

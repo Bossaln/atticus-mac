@@ -48,7 +48,7 @@ print("microphone policy ok")
         self.assertIn("cfg.microphoneCaptureDeviceID = microphoneID", source)
         self.assertIn("microphoneID: demo ? nil : listenMic()?.uid", source)
 
-    def test_quiet_audio_restores_release_cancel_and_crash(self):
+    def test_quiet_audio_restores_release_and_cancel(self):
         source = (ROOT / "Atticus.swift").read_text()
         model = source[source.index("struct AudioVolumeSnapshot"):source.index("struct CoreAudioVolume")]
         quiet = source[source.index("final class AudioQuiet"):source.index("enum AudioRecovery")]
@@ -88,12 +88,6 @@ precondition(layer.volume == 0.8, "cancel did not restore the exact volume")
 
 quiet.begin(true); layer.failAt = layer.writes.count + 6; quiet.end()
 precondition(layer.volume == 0.8 && marker == nil, "a missing output device did not retry the restore")
-
-quiet.begin(true)
-let crashMarker = marker!
-let recovery = AudioQuiet(layer: layer, changed: { if $0 == nil { marker = nil } }, later: now)
-recovery.recover(crashMarker)
-precondition(layer.volume == 0.8 && marker == nil && layer.mediaPaused, "crash recovery changed playback or missed the volume")
 print("quiet audio policy ok")
 """
         )

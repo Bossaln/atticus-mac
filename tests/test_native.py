@@ -319,7 +319,7 @@ final class Panel { func makeKey() {}; func makeFirstResponder(_ v: Int) {} }
 final class DrawingStub { var active = false, advances = 0; func next() { advances += 1 } }
 final class Harness {
     var drawingReply = false; let drawing = DrawingStub()
-    func typed(_ text: String) { request = text }
+    func typed(_ text: String, heard: Bool = false) { request = text }
     var busy = true, selectionPending = false, fastBusy = false, liveRevised = false, pinned = false
     var offerText: String?, text = "Fixture left, Other right", ahead = "", answer = ""
     var did = ["Fixture: left."], consumed = 2, stops = 0, web = 0
@@ -329,7 +329,7 @@ final class Harness {
     func rest() -> String { text.split(separator:" ").dropFirst(consumed).joined(separator:" ") }
     func run(_ t: String, remaining: String? = nil) { request = t; self.remaining = remaining }
     func dropAhead() { ahead = "" }
-    func unwarm() {}; func hush() {}; func cancel() {}; func hide(after: Double) {}
+    func unwarm() {}; func hush() {}; func hush(keepReply: Bool, keepWarm: Bool = false) {}; func cancel() {}; func hide(after: Double) {}
     func js(_ name: String, _ value: Any = "") {}; func cue(_ name: String) {}
     func linger(_ n: Double) -> Double { n }
     func deliver(_ text: String) { delivered = text }
@@ -514,7 +514,6 @@ print("calendar/update safety ok")
 struct Prefs { static var paused = false, toggle = false; static func bool(_ k: String) -> Bool { paused } }
 final class MeetingStub { var running = false, focuses = 0; func focus() { focuses += 1 } }
 let meeting = MeetingStub()
-final class Node { var removed=false; func removeTap(onBus: Int) {removed=true} }
 final class Engine { var isRunning = false, stopped = false; func stop() {isRunning=false; stopped=true} }
 final class Input { var cancelled=false; func finish() {cancelled=true}; func cancel() {cancelled=true} }
 final class Analyzer { func cancelAndFinishNow() async {} }
@@ -530,7 +529,7 @@ final class Harness {
     var nextFeed:Input?,nextReading:Input?,nextAnalyzer:Analyzer?,nextSpeechInputID:Int?,nextSpeechSegment=0
     var shortcutDown = false, toggleTalk = false, clickTalk = false, busy = false, speaking = false
     var dictateShortcutDown = false, dictating = false, dictatePressed = Date.distantPast, dictateTap: DispatchWorkItem?
-    var events: [String] = [], text = "hello", began = Date(), wasUp = false, fresh = false, web = 0
+    var events: [String] = [], text = "hello", began = Date(), wasUp = false, web = 0
     func start() { events.append("start"); engine.isRunning = true; toggleTalk = Prefs.toggle }
     func startDictation() { events.append("dictate"); engine.isRunning = true; dictating = true; toggleTalk = false }
     func dictationDeliveryFailed(_ value: String) { events.append("copied"); busy = false }

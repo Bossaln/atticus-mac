@@ -131,6 +131,11 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(out['result'], [True, 0, True, 'account'])
         self.assertIn({'do': 'apps'}, out['posts'])
 
+    def test_nix_install_shows_its_real_update_path(self):
+        out = self.page("""st.load({prefs:{hotkeyLabel:'⌃⌥Space'},managedUpdates:true,update:'Run nix profile upgrade or nix run again.',version:'1.3.3 · Nix'});
+            return [$('autoUpdateRow').hidden,$('checkUpdate').hidden,$('updateTitle').textContent,$('upstatus').textContent,$('aboutver').textContent];""")
+        self.assertEqual(out['result'], [True, True, 'Updates are managed by Nix', 'Run nix profile upgrade or nix run again.', 'Version 1.3.3 · Nix'])
+
     def test_retired_settings_are_hidden_and_keep_saved_values(self):
         sys.path.insert(0, str(ROOT)); import atticus
         source, page = (ROOT / 'Atticus.swift').read_text(), (ROOT / 'ui/settings.html').read_text()

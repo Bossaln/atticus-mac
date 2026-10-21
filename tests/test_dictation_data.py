@@ -110,6 +110,8 @@ print("correction bounds ok")
         self.assertLess(session.index('if secureField'), session.index('dictateSelectionPending = false'))
         self.assertIn('hush(); js("dictated"', session)
         self.assertIn('guard let selected else', session)
+        self.assertIn('dictateSelection = selected', session)
+        self.assertNotIn('selected.text.count <= 6000', session)
         self.assertIn('Click an editable text field, then try dictation again', session)
         start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
         self.assertLess(start.index('if dictate && !AXIsProcessTrusted()'), start.index('captureDictationSelection()'))

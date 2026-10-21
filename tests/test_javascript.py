@@ -40,6 +40,26 @@ if(!old.removed||button.disabled||button.textContent!=='Try again'||sent.id!=='q
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_dictation_text_is_centered_without_the_voice_caret(self):
+        source = (Path(__file__).resolve().parents[1] / 'ui' / 'ui.html').read_text()
+        native = (Path(__file__).resolve().parents[1] / 'Atticus.swift').read_text()
+        rule = re.search(r'body\.dictate \.q \{.*?\}', source, re.S).group(0)
+        self.assertIn('align-items: center', rule)
+        self.assertIn('height: 28px', rule)
+        self.assertIn('body.dictate .q.live::after { content: none; }', source)
+        self.assertIn('<span id="dictwave" role="img" aria-label="Listening"></span>', source)
+        dictate = source[source.index('    dictate(on) {'):source.index('    fold() {')]
+        script = '''const bars=[{style:{height:'21px'}},{style:{height:'9px'}}],$=()=>({children:bars}),fit=()=>{};
+const document={body:{classList:{toggle(){},remove(){}}}};
+const ui={''' + dictate + '''};ui.dictate(true);if(bars.some(b=>b.style.height))process.exit(1);'''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, "a new dictation shows the last one's wave " + result.stderr)
+        self.assertIn('body.dictate.hearing:not(.has-words) #dictwave', source)
+        self.assertIn("classList.toggle('hearing', listening)", source)
+        self.assertIn("classList.toggle('has-words'", source)
+        self.assertIn("for (let i = 0; i < 9; i++) $('dictwave').append", source)
+        self.assertIn('if dictating { js("words", text); return }', native)
+
     def test_onboarding_finish_names_missing_voice_requirements(self):
         source = (Path(__file__).resolve().parents[1] / 'ui' / 'onboarding.html').read_text()
         helper = source[source.index('  const paintDone='):source.index('\n  window.ob', source.index('  const paintDone='))]
@@ -78,10 +98,27 @@ expect(md('It costs $5 or $10, and \\$3 more.'),'<p>It costs $5 or $10, and $3 m
 expect(md('**Bold** *it* `code` [OpenTable](https://www.opentable.com) see https://example.com/a.'),'<p><strong>Bold</strong> <em>it</em> <code>code</code> <a title=https://www.opentable.com href=https://www.opentable.com>OpenTable</a> see <a href=https://example.com/a>https://example.com/a</a>.</p>','Inline Markdown');
 expect(md('[x](javascript:alert(1)) <img src=x onerror=alert(1)>'),'<p>[x](javascript:alert(1)) <img src=x onerror=alert(1)></p>','No script links and no HTML: only text');
 expect(md('## Steps\n3. one\n4. **two**\n\n- a\n- b'),'<div.h>Steps</div><ol start=3><li>one</li><li><strong>two</strong></li></ol><ul><li>a</li><li>b</li></ul>','Headings and lists');
-expect(md('one line\nnext line\n\nnew para'),'<p>one line next line</p><p>new para</p>','Paragraphs');
+expect(md('one line\nnext line\n\nnew para'),'<p>one line<br></br>next line</p><p>new para</p>','Paragraphs keep the line breaks the answer has');
+expect(md('**Branch:** r2\n**Commit:** 3c14f84'),'<p><strong>Branch:</strong> r2<br></br><strong>Commit:</strong> 3c14f84</p>','Label lines stay on their own lines');
+expect(md('$$\na^2\n$$'),'<math display=block><msup><mi>a</mi><mn>2</mn></msup></math>','Display math may span lines');
 expect(md('Desks:\n| Desk | Price |\n|---|:-:|\n| **E7** | $300 |'),'<p>Desks:</p><div.table><table><tr><th>Desk</th><th>Price</th></tr><tr><td><strong>E7</strong></td><td>$300</td></tr></table></div>','Tables');
 expect(md('See:\n```\n  /|\n\n /_|  **b**\n```\nDone.'),'<p>See:</p><pre>  /|\n\n /_|  **b**</pre><p>Done.</p>','Fenced blocks keep their lines as plain text');
 expect(md('snake_case_name and _em_'),'<p>snake_case_name and <em>em</em></p>','Underscores inside words stay');
+'''
+        result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_agent_view_markdown_keeps_fences_and_line_breaks(self):
+        source = (Path(__file__).resolve().parents[1] / 'ui' / 'agents.html').read_text()
+        helper = source[source.index('function inline(parent,text,r)'):source.index('// ── shelf ──')]
+        script = r'''
+class N{constructor(tag){this.tag=tag;this.kids=[];this.className=''}append(...k){this.kids.push(...k)}set textContent(s){this.kids=[String(s)]}}
+const document={createElement:t=>new N(t)},el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;},host=()=>'',command=()=>{};
+const html=n=>typeof n==='string'?n:'<'+n.tag+'>'+n.kids.map(html).join('')+'</'+n.tag+'>';
+''' + helper + r'''
+const got=html(markdown('Run:\n```\nnpm  install\n  npm test\n```\n**Branch:** r2\n**Commit:** abc',{}));
+const want='<div><p>Run:</p><pre>npm  install\n  npm test</pre><p><strong>Branch:</strong> r2<br></br><strong>Commit:</strong> abc</p></div>';
+if(got!==want){console.error(got);process.exit(1);}
 '''
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -95,6 +132,9 @@ expect(md('snake_case_name and _em_'),'<p>snake_case_name and <em>em</em></p>','
         self.assertIn("post({setup:true})", page)
         self.assertIn('pinned = true; js("workerFailed"); show()', native)
         self.assertIn('if b["workerRetry"] != nil, !busy', native)
+        failed = page[page.index('    workerFailed(){'):page.index('    agentDone(row)')]
+        self.assertNotIn('retry', re.search(r"className='([^']*)'", failed).group(1), 'typed asks are not answers to this card')
+        self.assertIn("'.rewrite, .paused, .worker'", page)
 
     def test_paused_shortcut_offers_rate_limited_resume(self):
         root = Path(__file__).resolve().parents[1]

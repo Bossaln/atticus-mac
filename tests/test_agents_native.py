@@ -36,7 +36,7 @@ enum Prefs {
 }
 final class KeyPanel:NSPanel{override var canBecomeKey:Bool{true}}
 final class MiniScreen {
- let clip=NSView();var forcePreview=false;var target:[String:Any]?,timer:Timer?,publish:(([String:Any])->Void)?,screen:(()->NSScreen?)?
+ let clip=NSView();var forcePreview=false;var target:[String:Any]?,timer:Timer?,publish:(([String:Any])->Void)?
  func reset(){target=nil};func receive(_ value:[String:Any]){target=value};func stopCapture(clear:Bool){};func finish(){};func open(){};func layout(_ value:[String:Any]){}
 }
 enum MeetingFrame {
@@ -164,6 +164,10 @@ Timer.scheduledTimer(withTimeInterval:0.05,repeats:true){_ in
    for saved in [nil,[9000.0,-9000.0],[Double.nan,0]] as [[Double]?]{let f=AgentPanels.shelfFrame(NSRect(x:9000,y:9000,width:260,height:0),bounds,saved);guard bounds.contains(f),f.height==52 else{fail("Two-display saved geometry escaped its display")}}
   }
   for screen in NSScreen.screens{agentsUI.placeShelf(screen);guard screen.visibleFrame.contains(agentsUI.shelf!.frame),agentsUI.shelf!.frame.height>=52 else{fail("Shelf placement escaped display bounds")}}
+  let wide=NSRect(x:0,y:0,width:1512,height:945),boxAt=NSRect(x:14,y:500,width:500,height:200)
+  guard AgentPanels.doneFrame(boxAt,shelf:NSRect(x:1240,y:800,width:260,height:120),shelfShown:true,bounds:wide)==NSRect(x:1000,y:592,width:500,height:200),
+        AgentPanels.doneFrame(boxAt,shelf:NSRect(x:12,y:800,width:260,height:52),shelfShown:false,bounds:wide)==NSRect(x:12,y:652,width:500,height:200),
+        AgentPanels.doneFrame(boxAt,shelf:NSRect(x:1240,y:8,width:260,height:52),shelfShown:true,bounds:wide)==NSRect(x:1000,y:68,width:500,height:200) else{fail("The done card did not open where its agent was")}
   guard agentsUI.shelf!.collectionBehavior.contains(.canJoinAllSpaces),agentsUI.shelf!.collectionBehavior.contains(.fullScreenAuxiliary) else{fail("Shelf cannot join full-screen Spaces")}
   print("Placement checked on \\(NSScreen.screens.count) VM display(s)");stage=1;at=Date()
   agentsUI.moveFrom=[10,10,30,30]

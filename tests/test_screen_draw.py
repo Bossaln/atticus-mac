@@ -54,7 +54,7 @@ class DrawingTests(unittest.TestCase):
         context = atticus.drawing_context(drawn)
         self.assertIn('still on screen, step 1 of 1',context)
         self.assertIn('"rect":[600,170,60,60]',context)
-        self.assertIn('replaces it',context)
+        self.assertIn('visual explanation, run --look, then --draw',context)
         for bad in (None,{},{'steps':[]},{'steps':'x'},'steps'):
             self.assertEqual(atticus.drawing_context(bad),'')
         many = {'steps':[{'say':f'Step {i}','shapes':[{'kind':'path','points':[[j,j] for j in range(256)]}]} for i in range(12)]}
@@ -69,6 +69,17 @@ class DrawingTests(unittest.TestCase):
         self.assertIn('selected this mark',shots[0][1])
         self.assertEqual(atticus.point_context({**value,'image':'/etc/hosts','mark':'circle'})[0][:30],'User selected a mark of your d')   # text alone still counts
         self.assertEqual(atticus.point_context({**value,'image':'/etc/hosts','mark':7})[0],'')
+
+    def test_pointer_rejects_stale_or_off_picture_coordinates(self):
+        displays = [('Laptop',0,0,1440,900,True),('Monitor',-1920,-180,1920,1080,False)]
+        with patch.object(atticus,'screens',return_value=displays), patch.object(atticus,'say') as say:
+            self.assertEqual(atticus.point('Here. [point 2 640 360]'),'Here.')
+            say.assert_called_once_with('@','-960 360 answer')
+            say.reset_mock()
+            for tag in ('[point 3 20 30]','[point 2 1281 30]','[point 2 20 721]','[point 2 -1 20]','[point nope]'):
+                with self.subTest(tag=tag):
+                    self.assertEqual(atticus.point('Here. ' + tag),'Here.')
+            say.assert_not_called()
 
     def test_bad_coordinates_and_unbounded_payloads_are_rejected(self):
         good = {'steps':[{'shapes':[{'kind':'rect','rect':[1,2,3,4]}]}]}
@@ -147,6 +158,21 @@ class DrawingTests(unittest.TestCase):
             self.assertEqual(atticus.look(cleanup=False),[])
         self.assertFalse(snapshot.exists())
 
+    def test_look_finds_the_drawing_target_while_it_captures(self):
+        import threading
+        asked = threading.Event()
+        def target(): asked.set(); return {'windowID': '7'}
+        def run(args, **_):
+            if args[1:2] == ['--look']:
+                assert asked.wait(2), 'the target lookup waited for the capture'
+                Path(args[-1]).write_bytes(b'x'); return subprocess.CompletedProcess(args, 0)
+            return subprocess.CompletedProcess(args, 0, stdout='pixelWidth: 1280\npixelHeight: 800\n')
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(self.root)},clear=False), patch.object(atticus,'screens',return_value=[('Laptop',0,0,1440,900,True)]), \
+             patch.object(atticus,'draw_target',target), patch.object(atticus.subprocess,'run',run):
+            self.assertEqual(len(atticus.look(cleanup=False)), 1)
+        snapshot = json.loads((self.root/'draw-screens.json').read_text())
+        self.assertEqual((snapshot['target'], snapshot['screens']['1']['pixels']), ({'windowID': '7'}, [1280, 800]))
+
     def test_ax_draw_refreshes_the_map_in_the_look_target(self):
         target={'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
         (self.root/'draw-screens.json').write_text(json.dumps({
@@ -190,6 +216,7 @@ class DrawingTests(unittest.TestCase):
         app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
         section = lambda start, end: app.split(start,1)[1].split(end,1)[0]
         self.assertIn('drawing.clear()',section('func close(clear: Bool)','\n    }'))   # the box's ✕ takes the drawing with it
+        self.assertIn('unpoint(false)',section('func start(dictate: Bool)','func heard('))   # a voice ask clears the old answer ring at key-down
         for start,end in [('func hush()', 'func stopOfferInput()'),('func run(_ t:', '// MARK: - Agent panels'),('func typed(', 'func finish()')]:
             self.assertNotIn('drawing.clear()',section(start,end),start)   # a follow-up keeps the drawing; only a new one replaces it
         self.assertIn('drawing.clearInput(); drawing.deselect()',section('func run(_ t:', '// MARK: - Agent panels'))
@@ -201,6 +228,18 @@ class DrawingTests(unittest.TestCase):
         self.assertIn('!mini.holds, !drawing.active',app)
         ask_finish = app.split('func spawn()',1)[1].split('func unwarm()',1)[0]
         self.assertNotIn('drawing.clear()',ask_finish)
+
+    def test_follow_ups_keep_the_guide_display_and_voice_prewarms(self):
+        source = (ROOT/'Atticus.swift').read_text()
+        app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
+        start = app.split('func start(dictate: Bool)',1)[1].split('func heard(',1)[0]
+        typed = app.split('func typed(',1)[1].split('func finish()',1)[0]
+        finish = app.split('func finish()',1)[1].split('func spawn()',1)[0]
+        self.assertIn('if !dictate && !drawingReply { targetScreen = currentRequestScreen(panel) }',start)
+        self.assertIn('if !dictate && (!replying || drawingReply) { unwarm(); warm = spawn() }',start)
+        self.assertIn('if !drawing.active { targetScreen = currentRequestScreen(panel) }',typed)
+        self.assertIn('hush(keepReply: false, keepWarm: true); typed(response, heard: true)',finish)
+        self.assertIn('if transcriptKey(response) == "next" { unwarm(); drawing.next()',finish)
 
     def test_guide_steps_callouts_and_voice_policy(self):
         source = (ROOT/'Atticus.swift').read_text()
@@ -540,6 +579,9 @@ let tip = ScreenDrawing.arrowTip(from:CGPoint(x:300,y:110),to:CGPoint(x:140,y:11
 precondition(!t.insetBy(dx:-gap,dy:-gap).contains(tip) && tip.x > t.maxX && tip.x < t.maxX+gap+4,"An arrow head landed on its target: \(tip)")
 precondition(ScreenDrawing.arrowTip(from:.zero,to:CGPoint(x:50,y:50),avoiding:[t]) == CGPoint(x:50,y:50),"An arrow to open space moved")
 precondition(!t.contains(ScreenDrawing.beside(CGPoint(x:t.midX,y:t.midY),[t])) && ScreenDrawing.beside(CGPoint(x:5,y:5),[t]) == CGPoint(x:5,y:5))
+let lead = ScreenDrawing.leader(from:CGRect(x:600,y:80,width:340,height:120),to:t)!
+precondition(lead.0 == CGPoint(x:600,y:110) && !t.insetBy(dx:-gap,dy:-gap).contains(lead.1) && lead.1.x > t.maxX && lead.1.x < t.maxX+gap+4,"The leader line does not run from the box edge to just outside its target: \(lead)")
+precondition(ScreenDrawing.leader(from:CGRect(x:190,y:90,width:340,height:120),to:t) == nil,"A target beside the box got a leader line")
 let area = CGRect(x:0,y:0,width:1000,height:800), keep = [t.insetBy(dx:-gap,dy:-gap)], tag = CGSize(width:60,height:26)
 let onTarget = ScreenDrawing.labelBox(tag,at:CGPoint(x:t.midX,y:t.midY),keepOff:keep,in:area)
 precondition(!keep[0].intersects(onTarget) && area.contains(onTarget),"A label covered the thing it names")

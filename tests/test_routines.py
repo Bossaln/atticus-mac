@@ -1,4 +1,5 @@
 """Scheduled routines: scratch files, fake clock and fake agent process."""
+import json
 import os
 import plistlib
 from pathlib import Path
@@ -75,6 +76,16 @@ class RoutineTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, 'Could not start'):
                 atticus.routine_add('interval', 3600, 'Never saved')
         self.assertEqual(atticus.routines(), [])
+
+    def test_malformed_saved_rows_cannot_break_routine_list_or_fire(self):
+        row = atticus.routine_add('interval', 3600, 'Still valid', now=self.monday(8, 0))
+        malformed = [None, 'bad', {'id': 1}, {'id': 'f' * 12},
+                     {'id': 'e' * 12, 'kind': 'interval', 'every': 0, 'ask': 'Bad interval',
+                      'mode': 'cheapest', 'created': self.monday(8, 0)}]
+        Path(self.root.name, 'routines.json').write_text(json.dumps(malformed + [row]))
+        self.assertEqual(atticus.routines(), [row])
+        self.assertIn(row['id'], atticus.routine_command(['list']))
+        self.assertFalse(atticus.routine_fire('f' * 12, self.monday(9, 0)))
 
     def test_due_routine_starts_an_ordinary_cheapest_agent(self):
         routine = atticus.routine_add('interval', 3600, 'Fake agent work', now=self.monday(8, 0))

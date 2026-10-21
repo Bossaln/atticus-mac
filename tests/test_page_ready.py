@@ -114,6 +114,10 @@ class PageReadyTests(unittest.TestCase):
         for tail in ('', ' && sleep 3 && '+atticus.WEB+' read', '; '+atticus.WEB+' read'):
             self.assertEqual(atticus.label('Bash',{'command':atticus.SHOW+' --bg "https://www.amazon.com/s?k=epsom+salt"'+tail}),'Opening amazon.com')
         self.assertEqual(atticus.label('Bash',{'command':atticus.SHOW+' --bg "/tmp/Fixture Notes.md" && echo ok'}),'Opening Fixture Notes.md')
+        # real log chains: the label names this command's target, never a later helper or its quoted words
+        self.assertEqual(atticus.label('Bash',{'command':f'A={atticus.ME}; $A --front Orca && $A --hands click "atticus"'}),'Bringing Orca forward')
+        self.assertEqual(atticus.label('Bash',{'command':'open -g -a Spotify && '+atticus.ME+' --queue "violet"'}),'Opening Spotify')
+        self.assertEqual(atticus.label('Bash',{'command':'open "x-apple.systempreferences:sound" && '+atticus.HANDS+' see "System Settings"'}),'Opening x-apple.systempreferences:sound')
 
     def test_poll_waits_for_ready_and_stable_dom_with_a_five_second_cap(self):
         now=[0];seen=[]

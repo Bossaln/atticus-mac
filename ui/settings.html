@@ -105,6 +105,7 @@
   .seg button { all: unset; padding: 4px 11px; border-radius: 6px; font-size: 12px; color: var(--fg); transition: background .2s, box-shadow .2s; }
   .seg button.on { background: var(--on); box-shadow: 0 1px 3px rgba(0,0,0,.15), inset 0 0 0 .5px var(--line); }
   .seg button:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+  .seg button:disabled { opacity: .4; pointer-events: none; }
   .shortcut + .group { margin-top: 12px; }
 
   select { font: 13px system-ui; color: var(--fg); background: var(--ctl); border: 0; border-radius: 6px; padding: 3px 6px;
@@ -149,7 +150,8 @@
   .btn:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
 
   /* usage */
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .stat { grid-column: span 2; } .stat:nth-child(n+4) { grid-column: span 3; }   /* three totals, then the two averages fill the row */
   .stat { background: var(--card); border-radius: 11px; padding: 14px; box-shadow: inset 0 0 0 .5px var(--line); }
   .stat small, .dstats small { color: var(--fg3); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
   .stat b, .dstats b { display: block; font: 600 24px system-ui; letter-spacing: -.02em; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
@@ -269,7 +271,7 @@
   <div class="me"><img id="icon" alt=""><div><b>Atticus</b><span>Just ask.</span></div></div>
   <button id="agentsnav" aria-label="Open Agents"><i class="ni" style="background:#30b0c7"><svg viewBox="0 0 24 24"><rect x="4" y="8" width="13" height="12" rx="2.5"/><path d="M8 4.5h9.5A2.5 2.5 0 0 1 20 7v9"/></svg></i>Agents<span class="count" id="agentcount"></span></button>
   <button data-s="dictation" id="dictationnav"><i class="ni" style="background:#ff375f"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M8 21h8"/></svg></i>Dictation</button>
-  <button data-s="general" class="on"><i class="ni" style="background:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></i>General</button>
+  <button data-s="general" class="on" aria-current="page"><i class="ni" style="background:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></i>General</button>
   <button data-s="brain"><i class="ni" style="background:#d97757"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg></i>Intelligence</button>
   <button data-s="memory"><i class="ni" style="background:#ff9f0a"><svg viewBox="0 0 24 24"><path d="M6 4h12v16l-6-4-6 4z"/></svg></i>Memory</button>
   <button data-s="meetings"><i class="ni" style="background:#5e5ce6"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M8 17h7"/></svg></i>Meetings</button>
@@ -401,7 +403,7 @@
     <button class="btn" id="appsback" onclick="st.tab('account')">← Account &amp; Access</button>
     <h1><i class="ni" style="background:#ff453a" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></svg></i>Apps</h1>
     <p class="lede">Tick the apps Atticus can control. Allow them now so it won’t stop to ask.</p>
-    <div class="appbar"><div class="seg" id="appview"><button data-v="key" class="on">Key Apps</button><button data-v="all">All Apps</button></div>
+    <div class="appbar"><div class="seg" id="appview" role="group" aria-label="App list"><button data-v="key" class="on" aria-pressed="true">Key Apps</button><button data-v="all" aria-pressed="false">All Apps</button></div>
       <input id="appq" class="search" placeholder="Search all apps" aria-label="Search all apps"><button class="btn blue" id="allow" disabled>Allow</button></div>
     <div id="applist"><div class="group"><div class="empty">Finding your apps…</div></div></div>
     <p class="note">Click OK on each macOS box. To take access away: System Settings → Privacy &amp; Security → Automation. <a data-do="automation">Open it</a></p>
@@ -474,8 +476,8 @@
     <div class="about"><img id="bigicon" alt=""><h1>Atticus</h1><p id="aboutver"></p></div>
     <h3>Updates</h3>
     <div class="group">
-      <div class="row"><div class="t"><b>Update automatically</b><span>Restarts when you’re not using it.</span></div><label class="sw"><input type="checkbox" data-k="autoUpdate"></label></div>
-      <div class="row"><div class="t"><b>Check for updates</b><span id="upstatus">Never checked this session.</span></div><button class="btn" data-do="checkUpdate">Check Now</button></div>
+      <div class="row" id="autoUpdateRow"><div class="t"><b>Update automatically</b><span>Restarts when you’re not using it.</span></div><label class="sw"><input type="checkbox" data-k="autoUpdate"></label></div>
+      <div class="row"><div class="t"><b id="updateTitle">Check for updates</b><span id="upstatus">Never checked this session.</span></div><button class="btn" data-do="checkUpdate" id="checkUpdate">Check Now</button></div>
     </div>
     <h3>Atticus</h3>
     <div class="group">
@@ -569,7 +571,9 @@
   function openSection(s) {
     cancelRecord();
     document.querySelectorAll('nav button, section').forEach(e => e.classList.remove('on'));
-    (document.querySelector(`nav button[data-s="${s}"]`) || document.querySelector('nav button[data-s="account"]')).classList.add('on');   // Apps opens from Account & Access
+    const nav = document.querySelector(`nav button[data-s="${s}"]`) || document.querySelector('nav button[data-s="account"]');   // Apps opens from Account & Access
+    nav.classList.add('on');
+    document.querySelectorAll('nav button[data-s]').forEach(b => b.toggleAttribute('aria-current', b === nav));
     $(s).classList.add('on'); document.querySelector('main').scrollTop = 0;
     if (s === 'meetings') { meetingBack(false); requestMeetings(); }
     if (s === 'feedback') { $('feedbackinclude').checked=false; feedbackPreview(); }
@@ -811,7 +815,7 @@
     const title = q ? 'Matches' : view === 'key' ? 'Key apps' : `All apps · ${APPS.length}`;
     $('applist').innerHTML = shown.length ? `<h3>${title}${sel}</h3><div class="group">${shown.map(appRow).join('')}</div>`
       : '<div class="group"><div class="empty">No app matches.</div></div>';
-    document.querySelectorAll('#appview button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
+    document.querySelectorAll('#appview button').forEach(b => { const on = b.dataset.v === view; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     document.querySelectorAll('.ck').forEach(c => c.onchange = () => { c.checked ? pick.add(c.dataset.id) : pick.delete(c.dataset.id); count(); });
     $('applist').querySelectorAll('h3 .all').forEach(b => b.onclick = () => { shown.filter(a => a.status === 'new').forEach(a => pick.add(a.id)); paintApps(); });
     document.querySelectorAll('#applist [data-do]').forEach(b => b.onclick = e => { e.preventDefault(); post({ do: b.dataset.do }); });
@@ -958,7 +962,9 @@
       hotkeyTaken = !!d.hotkeyTaken; dictateHotkeyTaken = !!d.dictateHotkeyTaken; if ($('schint').className !== 'warn') $('schint').className = hotkeyTaken ? 'taken' : '';
       if (d.icon) $('icon').src = $('bigicon').src = d.icon;
       $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
-      if (d.update) $('upstatus').textContent = d.update;
+      $('autoUpdateRow').hidden = $('checkUpdate').hidden = !!d.managedUpdates;
+      $('updateTitle').textContent = d.managedUpdates ? 'Updates are managed by Nix' : 'Check for updates';
+      $('upstatus').textContent = d.update || 'Never checked this session.';
       if (d.mics) this.mics(d.mics);
       this.globe(d.globeTaken);
       paint(); if (!P.apiBase) post({do:'localServers'}); if (d.state) state(d.state);

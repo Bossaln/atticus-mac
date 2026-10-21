@@ -36,6 +36,7 @@ class UIReviewFixTests(unittest.TestCase):
         self.settings = (ROOT / 'ui/settings.html').read_text()
         self.onboarding = (ROOT / 'ui/onboarding.html').read_text()
         self.agents = (ROOT / 'ui/agents.html').read_text()
+        self.meeting = (ROOT / 'ui/meeting.html').read_text()
 
     def test_native_clicks_reach_try_again_the_agents_pill_and_pill_buttons(self):
         tap = self.box[self.box.index('    tap([x, y])'):self.box.index('    size(h)')]
@@ -46,6 +47,28 @@ const $ = () => ({ classList: { contains: () => false }, value: '' }), drop = ()
 const ui = {''' + tap + r'''};
 for (const key of ['.redo', '#agents-pill', '.dn button']) { current = make(key); clicked = ''; ui.tap([0, 0]); if (clicked !== key) { console.error(key + ' opened the ' + clicked); process.exit(1); } }
 ''')
+
+    def test_choice_number_shortcuts_work_from_the_empty_composer(self):
+        handler = self.box[self.box.index("  $('ask').onkeydown = e => {"):self.box.index('  // the model row:')]
+        node(self, r'''let picked = 0, clicked = 0, prevented = false;
+const choices = Array.from({length: 3}, (_, i) => ({choose() { picked = i + 1; }, click() { clicked++; }, focus() {}}));
+const ask = {value: ''}, thread = {querySelector: () => null, querySelectorAll: () => choices};
+const $ = id => id === 'ask' ? ask : thread, part = () => null, status = () => {}, post = () => {};
+const window = {ui: {respond: () => false}}; let listening = false, working = false;
+''' + handler + r'''
+const key = value => ask.onkeydown({key: value, target: ask, isComposing: false, metaKey: false, ctrlKey: false, altKey: false, preventDefault() { prevented = true; }});
+key('2'); if (picked !== 2 || clicked || !prevented) process.exit(1);
+picked = 0; prevented = false; ask.value = 'version '; key('2'); if (picked || prevented) process.exit(2);
+''')
+        self.assertIn('c.choose = () => done(i)', self.box)
+        self.assertIn('cs[e.key - 1].choose()', self.box)
+
+    def test_full_access_badge_is_a_keyboard_control(self):
+        self.assertIn('id="mode" role="button" tabindex="0"', self.box)
+        self.assertIn('#mode:focus-visible', self.box)
+        self.assertIn("$('mode').onclick = enableSafeMode", self.box)
+        self.assertIn("if (e.key === 'Enter' || e.key === ' ')", self.box)
+        self.assertIn("if (el?.closest('#mode')) return enableSafeMode()", self.box)
 
     def test_failed_dictation_offers_its_words_to_copy(self):
         dictated = self.box[self.box.index('    dictated({'):self.box.index('    learned(word)')]
@@ -59,12 +82,37 @@ ui.dictated({ text: 'Couldn’t insert. Your words are still here.', ok: false, 
 if (sent?.copy !== 'my words' || button.textContent !== 'Copied') process.exit(1);
 ''')
 
+    def test_agent_start_releases_an_empty_typed_composer_for_the_fade(self):
+        started = self.box[self.box.index('    agentStarted(row)'):self.box.index('    agentSteered(row)')]
+        self.assertIn("if(!$('ask').value)comp(false)", started)
+
     def test_learned_word_shows_in_the_pill_after_it_folded(self):
         self.assertIn('learnedWord = word; pill(true); show(); js("learned", word)', self.swift)
 
     def test_reduce_motion_stops_onboarding_loops(self):
         rule = re.search(r'@media \(prefers-reduced-motion: reduce\) \{ \*, \*::before, \*::after \{(.*?)\}', self.onboarding).group(1)
         self.assertIn('animation-iteration-count: 1 !important', rule)
+        self.assertIn("const reduced = matchMedia('(prefers-reduced-motion: reduce)')", self.onboarding)
+        self.assertIn("reduced.addEventListener('change'", self.onboarding)
+        self.assertIn('welcomeGeneration++; previewGeneration++;', self.onboarding)
+        self.assertIn('Object.keys(loops).forEach(id => finals[id]())', self.onboarding)
+        self.assertIn('if (reduced.matches) { finals[id](); await motionChange(); }', self.onboarding)
+        self.assertNotIn("const still = matchMedia('(prefers-reduced-motion: reduce)').matches", self.onboarding)
+
+    def test_onboarding_welcome_orb_keeps_animating(self):
+        start = self.onboarding.index("    const cv = $('orb')")
+        loop = self.onboarding[start:self.onboarding.index('})(prev);', start) + len('})(prev);')]
+        node(self, r'''const run = (isReduced, page) => { let frames = 0, timers = 0, painted = 0;
+const canvas2d = { setTransform() {}, clearRect() {} }, $ = () => ({ getContext: () => canvas2d }), E = { r: () => ({ mode: 'm', speed: 1, opts: {} }), M: { m: () => ({}) }, p: () => painted++ };
+globalThis.requestAnimationFrame = () => frames++; globalThis.setTimeout = () => timers++;
+let reduced = { matches: isReduced }, cur = page, orbWake = null;
+''' + loop + r'''
+return {frames, timers, painted, waiting: typeof orbWake === 'function'}; };
+const active = run(false, 'welcome'), still = run(true, 'welcome'), away = run(false, 'text');
+if (active.painted !== 1 || active.frames !== 1 || active.timers || active.waiting) process.exit(1);
+if (still.painted !== 1 || still.frames || still.timers || !still.waiting) process.exit(2);
+if (away.frames || away.timers || !away.waiting) process.exit(3);
+''')
 
     def test_settings_and_agents_text_colours_are_readable(self):
         light = re.search(r':root \{(.*?)\}', self.settings, re.S).group(1)
@@ -78,6 +126,17 @@ if (sent?.copy !== 'my words' || button.textContent !== 'Copied') process.exit(1
         self.assertGreaterEqual(contrast(var(light, 'warn'), tint('#ff9f0a', .14)), 4.5)
         self.assertNotRegex(self.settings, r'\{[^}]*\bcolor: #ff(9f0a|453a)')   # text uses the tokens; fills may keep the bright colours
         self.assertGreaterEqual(contrast(re.search(r'--fg3:(#[0-9a-f]{6})', self.agents).group(1), '#1e1e22'), 4.5)
+        setup_light = re.search(r':root \{(.*?)\}', self.onboarding, re.S).group(1)
+        setup_dark = re.search(r'prefers-color-scheme: dark\) \{ :root \{(.*?)\}', self.onboarding, re.S).group(1)
+        self.assertGreaterEqual(contrast(var(setup_light, 'fg3'), '#fbfbfd'), 4.5)
+        self.assertGreaterEqual(contrast(var(setup_dark, 'fg3'), '#2a2a2c'), 4.5)
+        self.assertGreaterEqual(contrast(re.search(r'--fg3:(#[0-9a-f]{6})', self.meeting).group(1), '#1e1e20'), 4.5)
+
+    def test_settings_exposes_the_current_page_and_app_list_choice(self):
+        self.assertIn('class="on" aria-current="page"', self.settings)
+        self.assertIn("b.toggleAttribute('aria-current', b === nav)", self.settings)
+        self.assertIn('id="appview" role="group" aria-label="App list"', self.settings)
+        self.assertIn("b.setAttribute('aria-pressed', on)", self.settings)
 
     def test_meetings_row_offers_turn_on_instead_of_dead_buttons(self):
         self.assertIn("$('meetingDemo').hidden = $('meetingPrepOpen').hidden = !P.meeting; $('meetingOn').hidden = !!P.meeting;", self.settings)
@@ -116,11 +175,38 @@ if (apiCost(.0412) !== '≈4.12¢ at API prices' || apiCost(.1861) !== '≈18.6�
 
     def test_a_new_ask_drops_a_paused_card_left_by_resuming_elsewhere(self):
         listen = self.box[self.box.index('    listen(keep)'):self.box.index('    level(v)')]
-        self.assertIn("querySelectorAll('.rewrite, .paused').forEach(e => e.remove())", listen)
+        self.assertIn("querySelectorAll('.rewrite, .paused, .worker').forEach(e => e.remove())", listen)
 
     def test_rewrite_buttons_answer_hover_and_press_like_card_buttons(self):
         self.assertIn('.rewrite button:not(:disabled):hover { transform: scale(1.03); }', self.box)
         self.assertIn('.rewrite button:not(:disabled):active { transform: scale(.96); }', self.box)
+
+    def test_box_status_markers_share_compact_centered_rows(self):
+        self.assertRegex(self.box, r'\.a\.stopped \{[^}]*align-items: center;[^}]*line-height: 16px;')
+        self.assertRegex(self.box, r'\.a\.stopped i \{ flex: none; width: 7px; height: 7px;')
+        self.assertRegex(self.box, r'\.step \{[^}]*line-height: 16px;[^}]*align-items: center;')
+        self.assertIn('#agents-pill i { flex:none;', self.box)
+        self.assertRegex(self.box, r'\.agent-card \.eyebrow \{[^}]*align-items:center;[^}]*line-height:14px;')
+        self.assertIn('.agent-card .eyebrow i { flex:none;', self.box)
+
+    def test_agent_start_line_sits_beside_its_orb(self):
+        self.assertIn('.a:is(.stopped, .agent-ack) > :not(.w) + :not(.w) { margin-top: 0; }', self.box)
+
+    def test_agent_card_can_fold_away(self):
+        self.assertIn('.agent-card { max-height:900px; }', self.box)
+        self.assertNotIn('.agent-card { max-height:none; }', self.box)
+
+    def test_agent_card_fits_a_short_box(self):
+        card = self.box[self.box.index('  const agentCard=row=>'):self.box.index("  $('agents-pill').onclick")]
+        fit = card[card.index('    const over='):card.index('    answer.onscroll();')]
+        self.assertIn('answer.tabIndex=0', card)
+        node(self, r'''const getComputedStyle = () => ({maxHeight: '420px'}), $ = () => ({});
+for (const [cardH, want] of [[540, '126px'], [300, undefined], [900, '60px']]) {
+  const d = {offsetHeight: cardH}, answer = {clientHeight: 260, style: {}};
+''' + fit + r'''
+  if (answer.style.maxHeight !== want) { console.error(cardH, answer.style.maxHeight); process.exit(1); }
+}
+''')
 
     def test_rewrite_actions_sit_above_the_timer_with_one_try_again(self):
         self.assertIn('.turn:has(.rewrite) .redo { display: none; }', self.box)
@@ -132,6 +218,29 @@ const document = { createElement: () => ({ dataset: {}, append() {}, setAttribut
 const ui = {''' + rewrite + r'''};
 ui.rewrite(['Hi Dana,', 'draft', true]); if (placed !== 'above the timer') { console.error(placed); process.exit(1); }
 ''')
+
+    def test_resize_releases_fixed_height_and_uses_live_box_spacing(self):
+        methods = self.box[self.box.index('    hold(h)'):self.box.index('    respond(text)')]
+        self.assertIn('const chrome = c.offsetHeight - t.offsetHeight', methods)
+        self.assertNotIn('h - 26', methods)
+        node(self, r'''const classes = new Set(), card = {offsetHeight: 246, style: {minHeight: '', getPropertyValue: () => '700'}, classList: {add: x => classes.add(x), remove: x => classes.delete(x)}};
+const thread = {offsetHeight: 120, style: {}}, nodes = {card, thread}, $ = id => nodes[id], sent = [], post = x => sent.push(x);
+let fitted = 0; const fit = () => fitted++;
+const ui = {''' + methods + r'''};
+ui.hold(500);
+if (!classes.has('held') || card.style.minHeight !== '500px' || thread.style.maxHeight !== '374px' || sent[0].boxH !== 374) process.exit(1);
+ui.resizeDone();
+if (classes.has('held') || card.style.minHeight || fitted !== 2) process.exit(2);
+''')
+        mouse_up = self.swift[self.swift.index('            default:', self.swift.index('var sizing:')):self.swift.index('            return nil', self.swift.index('            default:', self.swift.index('var sizing:')))]
+        self.assertIn('js("resizeDone")', mouse_up)
+
+    def test_settings_disabled_segment_looks_off_and_usage_cards_fill_rows(self):
+        self.assertIn("[data-k=dictateMode] [data-v=cleanup]').disabled = other", self.settings)
+        self.assertIn('.seg button:disabled { opacity: .4; pointer-events: none; }', self.settings)
+        self.assertIn('.seg button:disabled { opacity: .4; pointer-events: none; }', self.onboarding)
+        self.assertIn('grid-template-columns: repeat(6, 1fr)', self.settings)
+        self.assertIn('.stat { grid-column: span 2; } .stat:nth-child(n+4) { grid-column: span 3; }', self.settings)
 
     def test_small_leftovers(self):
         self.assertIn("moveFailed(){status('Could not move');", self.box)   # a failure, not live work

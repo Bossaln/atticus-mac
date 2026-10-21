@@ -209,7 +209,8 @@ class UniversalTests(unittest.TestCase):
         self.assertTrue(atticus.run.ok)
 
     def test_presenting_an_allow_card_resets_the_idle_deadline(self):
-        (self.root / 'q').write_text(json.dumps({'q': 'Allow?', 'cmd': 'Fixture action'}))
+        card = Path(atticus.question_path(self.root)); card.parent.mkdir(parents=True, exist_ok=True)
+        card.write_text(json.dumps({'q': 'Allow?', 'cmd': 'Fixture action'}))
         p = Mock(); p.poll.side_effect = [None, 0]; p.progress = Mock()
         with patch.object(atticus, 'osa', return_value="Don't Allow"), patch.object(atticus.time, 'sleep'):
             atticus.relay(p, str(self.root))

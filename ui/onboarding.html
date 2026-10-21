@@ -4,12 +4,12 @@
      with which permissions are on, and gets {do:'grant', id} / {do:'done'} back. -->
 <style>
   :root {
-    --fg: #1d1d1f; --fg2: #6e6e73; --fg3: #86868b; --card: rgba(255,255,255,.62); --line: rgba(0,0,0,.08);
+    --fg: #1d1d1f; --fg2: #6e6e73; --fg3: #6e6e73; --card: rgba(255,255,255,.62); --line: rgba(0,0,0,.08);
     --key-top: #fdfdfd; --key-bot: #e8e8ed; --key-edge: rgba(0,0,0,.16); --accent: #0a84ff; --green: #28c840;
     --glow: rgba(120,140,255,.28); --sheet: #fbfbfd; --field: #fff; --track: rgba(120,120,128,.18); --on: #fff; --ease: cubic-bezier(.4,0,.2,1); --out: cubic-bezier(.16,1,.3,1); --spring: cubic-bezier(.34,1.56,.64,1);
   }
   @media (prefers-color-scheme: dark) { :root {
-    --fg: #f5f5f7; --fg2: #a1a1a6; --fg3: #8e8e93; --card: rgba(255,255,255,.06); --line: rgba(255,255,255,.08);
+    --fg: #f5f5f7; --fg2: #a1a1a6; --fg3: #98989d; --card: rgba(255,255,255,.06); --line: rgba(255,255,255,.08);
     --key-top: #3a3a3c; --key-bot: #2c2c2e; --key-edge: rgba(0,0,0,.55); --glow: rgba(110,130,255,.22); --sheet: #2a2a2c; --field: rgba(255,255,255,.07); --track: rgba(120,120,128,.32); --on: #636366;
   } }
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; -webkit-user-select: none; cursor: default;
@@ -203,6 +203,7 @@
   .seg button { all: unset; padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--fg); cursor: pointer; transition: background .2s, box-shadow .2s; }
   .seg button.on { background: var(--on); box-shadow: 0 1px 3px rgba(0,0,0,.15), inset 0 0 0 .5px var(--line); }
   .seg button:not(.on):hover { background: rgba(127,127,127,.12); } .seg button:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
+  .seg button:disabled { opacity: .4; pointer-events: none; }
   .page.on .r.dim { opacity: .45; }   /* greyed until it applies, as in Settings */
   .keyfield { position: relative; flex: none; }
   .kf { all: unset; box-sizing: border-box; min-width: 140px; height: 28px; padding: 0 10px; border-radius: 7px; display: flex; gap: 4px; align-items: center; justify-content: center;
@@ -547,13 +548,13 @@
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
   const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'dictate', 'point', 'pointer', 'work', 'meeting', 'improve', 'tip', 'done'];
-  let cur = '';
+  let cur = '', orbWake = null;
   const skip = id => ['devin', 'pi'].includes(provider) && ['agents', 'work'].includes(id);   // their CLIs run no Atticus agents
   const go = id => {
     while (skip(id)) id = pages[pages.indexOf(id) + 1];
     if (recording) post({ do: 'cancelRecord' });
     if (cur) { $(cur).classList.remove('on'); $(cur).classList.add('gone'); const c = cur; setTimeout(() => $(c).classList.remove('gone'), 600); }
-    cur = id; $(id).classList.add('on');
+    cur = id; orbWake?.(); orbWake = null; $(id).classList.add('on');
     for (const page of pages) { $(page).inert = page !== id; $(page).setAttribute('aria-hidden', String(page !== id)); }
     [...$('dots').children].forEach((d, i) => { d.classList.toggle('on', pages[i] === id); d.hidden = skip(pages[i]); });
     $('back').hidden = pages.indexOf(id) < 1;
@@ -800,17 +801,25 @@
   // Welcome keys press in, hold, let go: the gesture itself.
   const KEYS = { try: ['t1', 't2', 't3'] };   // only the try page reacts; the welcome keys are a demo
   const keys = ['k1', 'k2', 'k3'].map($);   // the welcome demo keys
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const motionChange = () => new Promise(resolve => reduced.addEventListener('change', resolve, { once: true }));
+  let welcomeGeneration = 0;
   const press = () => {
+    if (reduced.matches) return;
     if (cur !== 'welcome') return setTimeout(press, 1500);
-    keys.forEach((k, i) => setTimeout(() => k.classList.add('down'), i * 130));
-    setTimeout(() => keys.forEach(k => k.classList.remove('down')), 2100);
-    setTimeout(press, 3600);
+    const generation = welcomeGeneration;
+    keys.forEach((k, i) => setTimeout(() => generation === welcomeGeneration && k.classList.add('down'), i * 130));
+    setTimeout(() => generation === welcomeGeneration && keys.forEach(k => k.classList.remove('down')), 2100);
+    setTimeout(() => generation === welcomeGeneration && press(), 3600);
   };
-  if (!still) setTimeout(press, 1200);
+  if (!reduced.matches) setTimeout(press, 1200);
 
   // Feature previews: short scripted loops, run only while their page shows (the final frame under Reduce Motion).
-  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const MOTION_CHANGED = {}; let previewGeneration = 0;
+  const wait = ms => {
+    const generation = previewGeneration;
+    return new Promise(r => setTimeout(r, ms)).then(() => { if (generation !== previewGeneration) throw MOTION_CHANGED; });
+  };
   // Dictate's examples: what you say, then what Clean up types. [Brackets] mark the words that go.
   const DC = [['Fillers', '[Um,] I was, [like, you know,] thinking we could leave.', 'I was thinking we could leave.'],
     ['Scratch that', '[Table for six, scratch that,] table for eight.', 'Table for eight.'],
@@ -827,7 +836,7 @@
   };
   $('dc-ex').replaceChildren(...DC.map(([name, s, out], i) => Object.assign(document.createElement('button'), {
     textContent: name, ariaLabel: `${name}: you say “${s.replace(/[[\]]/g, '')}”, Clean up types “${out.replace(/\n/g, ' ')}”`,
-    onclick() { dcAt = i; dcPaint(i); if (still) dcShow(i); else { dcGen++; dcWake?.(); } } })));
+    onclick() { dcAt = i; dcPaint(i); if (reduced.matches) dcShow(i); else { dcGen++; dcWake?.(); } } })));
   const wb = k => {   // whiteboard step k: every layer and caption up to k stays
     document.querySelectorAll('#ptstage [data-s]').forEach(e => e.classList.toggle('on', +e.dataset.s <= k));
     $('wb-n').textContent = Math.max(k, 1);
@@ -850,7 +859,7 @@
     },
     async dictate() {   // one example per pass; picking an example wakes the current wait so it starts at once
       const gen = dcGen, i = dcAt, pill = $('dc-pill'), heard = $('dc-said'), words = $('dc-words'), key = $('dc-key');
-      const ok = ms => new Promise(r => { dcWake = r; setTimeout(r, ms); }).then(() => gen === dcGen && cur === 'dictate');
+      const ok = ms => new Promise(r => { dcWake = r; setTimeout(r, ms); }).then(() => !reduced.matches && gen === dcGen && cur === 'dictate');
       dcPaint(i); words.textContent = ''; heard.replaceChildren(); pill.classList.remove('done'); pill.classList.add('gone2'); key.classList.remove('down');
       if (!await ok(600)) return; key.classList.add('down'); pill.classList.remove('gone2');   // held: the pill listens
       for (const t of said(DC[i][1])) { heard.append(word(t), ' '); if (!await ok(210)) return; }
@@ -894,10 +903,22 @@
                    work() { $('wk-box').classList.remove('gone2'); $('wk-chip').classList.remove('gone2'); },
                    mac() { $('macstage').classList.add('snapped'); $('mac-play').classList.remove('gone2'); $('mac-box').classList.remove('gone2'); }, point() { $('ptstage').classList.add('wb'); wb(3); }, text() { $('tx-box').classList.remove('gone2'); $('tx-line').classList.add('sel'); },
                    meeting() { $('mt-q').classList.remove('gone2'); $('mt-think').hidden = true; $('mt-ans').classList.add('on'); } };
-  for (const id of Object.keys(loops)) {
-    if (still) { finals[id](); continue; }
-    (async () => { for (;;) { if (cur === id) await loops[id](); else await wait(300); } })();
-  }
+  for (const id of Object.keys(loops)) (async () => {
+    for (;;) {
+      try {
+        if (reduced.matches) { finals[id](); await motionChange(); }
+        else if (cur === id) await loops[id]();
+        else await wait(300);
+      } catch (error) { if (error !== MOTION_CHANGED) throw error; }
+    }
+  })();
+  reduced.addEventListener('change', () => {
+    welcomeGeneration++; previewGeneration++;
+    orbWake?.(); orbWake = null;
+    keys.forEach(k => k.classList.remove('down'));
+    if (reduced.matches) { dcGen++; dcWake?.(); Object.keys(loops).forEach(id => finals[id]()); }
+    else setTimeout(press, 1200);
+  });
 
   paintPrefs(); go('welcome');
 
@@ -908,10 +929,11 @@
     cv.width = cv.height = S * dpr;
     let t = 0, prev = performance.now();
     (function frame(now) {
-      t += (now - prev) / 1000 * preset.speed; prev = now;
+      const idle = reduced.matches || cur !== 'welcome';   // still under Reduce Motion; the orb only shows on the welcome page
+      if (!idle) t += (now - prev) / 1000 * preset.speed; prev = now;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, S, S);
       E.p(ctx, E.M[preset.mode](S, t, preset.opts), true, null);
-      if (!still) requestAnimationFrame(frame);
+      if (idle) orbWake = () => requestAnimationFrame(frame); else requestAnimationFrame(frame);
     })(prev);
   } catch (e) {}
 </script>

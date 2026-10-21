@@ -1,5 +1,6 @@
 """Dictation routing and delivery with fake model, focus, and selection targets."""
 import io
+import json
 from pathlib import Path
 import re
 import shutil
@@ -20,7 +21,8 @@ class DictationCleanupTests(unittest.TestCase):
         with patch.object(atticus, 'relevant_rules', return_value='Spell my name Saarth.'), \
              patch.object(atticus, 'meeting_call', return_value=('<cleaned>Clean text.</cleaned>', {})) as call:
             cleaned = atticus.dictate_cleanup('um Clean text. ' + 'x' * 7000)
-        self.assertTrue(cleaned.startswith('Clean text.\n'))
+        self.assertTrue(cleaned.startswith('Clean text. '))
+        self.assertNotIn('\n', cleaned)
         self.assertTrue(cleaned.endswith('x' * 1000))
         self.assertEqual(call.call_count, 2)
         for args, kwargs in call.call_args_list:
@@ -28,6 +30,9 @@ class DictationCleanupTests(unittest.TestCase):
             self.assertEqual(kwargs['label'], 'Dictation cleanup')
             self.assertIn('Spell my name Saarth.', args[1])
             self.assertLessEqual(len(args[1]), 7100)
+        paragraph = 'a ' * 3000 + '\n\n' + 'b ' * 3000
+        with patch.object(atticus, 'client', return_value='pi'):
+            self.assertEqual(atticus.dictate_cleanup(paragraph), paragraph.replace(' \n\n', '\n\n').strip())
         with patch.object(atticus, 'meeting_call') as empty:
             self.assertEqual(atticus.dictate_cleanup('   '), '')
             empty.assert_not_called()
@@ -49,6 +54,26 @@ class DictationCleanupTests(unittest.TestCase):
         with patch.object(atticus, 'relevant_rules', return_value='Spell my name Saarth.'), \
              patch.object(atticus, 'meeting_call', return_value=('<cleaned>My name is Saarth.</cleaned>', {})):
             self.assertEqual(atticus.dictate_cleanup('My name is Sarth.'), 'My name is Saarth.')
+
+    def test_cleanup_rejects_scattered_extracts_but_keeps_one_restart(self):
+        import atticus
+        source = 'We should send the complete release report to everyone on the team before lunch today.'
+        extract = '<cleaned>Send the report to the team.</cleaned>'
+        self.assertEqual(atticus.dictate_result(source, extract), source)
+        restart = 'Book the table for six, scratch that, book it for eight.'
+        self.assertEqual(atticus.dictate_result(restart, '<cleaned>Book the table for eight.</cleaned>'),
+                         'Book the table for eight.')
+
+    def test_warmed_cleanup_ignores_malformed_stream_frames(self):
+        import atticus
+        result = json.dumps({'type': 'result', 'result': '<cleaned>I need this.</cleaned>'})
+        process = type('Process', (), {
+            'stdin': io.StringIO(),
+            'stdout': iter(['not json\n', '[]\n', '{"type":"stream_event","event":null}\n',
+                            '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"text":null}}}\n',
+                            result + '\n'])
+        })()
+        self.assertEqual(atticus.dictate_warmed(process, 'I um need this.', ''), 'I need this.')
 
     def test_non_claude_cleanup_falls_back_without_starting_claude(self):
         import atticus
@@ -112,7 +137,7 @@ print("dictation stitching ok")
     def test_verbatim_skips_ai_cleanup_uses_one_call_and_cancel_drops_result(self):
         source = (ROOT / 'Atticus.swift').read_text()
         start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
-        self.assertIn('if !dictate && !replying { unwarm(); warm = spawn() }', start)
+        self.assertIn('if !dictate && (!replying || drawingReply) { unwarm(); warm = spawn() }', start)
         self.assertIn('if dictateCleanup { warmDictationCleanup() }', start)
         method = source[source.index('    func stopDictationCleanup()'):source.index('    func dictationDeliveryFailed(')]
         swift = r'''import Foundation
@@ -348,6 +373,8 @@ print("clipboard borrow ok")
         source = (ROOT / 'Atticus.swift').read_text()
         at = source.index('    func stop()', source.index('final class App'))
         release = next(l for l in source[at:source.index('    func applyReplacement(')].splitlines() if 'js("finishing"' in l)
+        level = next(l for l in source[source.index('        let onBuffer:'):at].splitlines() if 'js("level"' in l)
+        self.assertIn('engine.isRunning == true', level)
         escape = source[source.index('    func escape()'):source.index('    func hush()')]
         self.assertLess(escape.index('if dictating { return cancel() }'), escape.index('if engine.isRunning'))
         delivery = source[source.index('    func dictationDeliveryFailed('):source.index('    func typed(')]

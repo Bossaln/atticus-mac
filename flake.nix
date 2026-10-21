@@ -68,7 +68,7 @@
               atticus --help       Show this help
 
             Building requires macOS 26 or later and Apple's command line tools.
-            Full use also requires a paid Claude plan and Claude Code.
+            Full use also requires Claude Code (with Claude or a custom server), Devin, or Pi.
             EOF
                 ;;
               *)

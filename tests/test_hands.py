@@ -61,7 +61,8 @@ class HandsTests(unittest.TestCase):
         with patch.object(atticus, 'ask_user', return_value='y') as ask:
             self.assertIn('on now', atticus.need('screen'))
             self.assertEqual(ask.call_args.args[0]['need'], 'screen')
-        Path(self.root.name, 'q').write_text(json.dumps({'need': 'screen', 'q': 'Turn on Screen Recording', 'cmd': 'To see the chart.'}))
+        card = Path(atticus.question_path(self.root.name)); card.parent.mkdir(parents=True, exist_ok=True)
+        card.write_text(json.dumps({'need': 'screen', 'q': 'Turn on Screen Recording', 'cmd': 'To see the chart.'}))
         worker = Mock(ask=self.root.name); worker.poll.side_effect = [None, 0]
         with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch('sys.stdout', new_callable=io.StringIO) as out, patch.object(atticus.time, 'sleep'):
             atticus.relay(worker)
@@ -156,6 +157,8 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
             for args in [('click','Send','--yes'),('click','Send','--force'),('label','Send'),('approve','12'),('type','Name','text','--append')]:
                 self.assertFalse(atticus.hands(*args)[1])
             call.assert_not_called()
+        self.assertIn('menu <app> "<path>"', atticus.SYSTEM)
+        self.assertIn('see|menu|click', atticus.hands()[0])
         resolved,_,_ = self.result(['click','Export'],['Export'],False)
         with patch.object(atticus,'hands_action',side_effect=self.session((resolved,Mock(returncode=0,stdout='Clicked')))) as call:
             self.assertFalse(atticus.hands('click','Send')[1]); self.assertEqual(call.call_count,1)
@@ -170,7 +173,7 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
         args = ['type','Password','private']; resolved,acted,_ = self.result(args,['Password'],False,True)
         with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call, patch.object(atticus,'pref',return_value=False):
             self.assertFalse(atticus.hands(*args)[1]); self.assertEqual(call.call_count,1)
-        Path(self.root.name,'request').write_text('Type my password into Password')
+        atticus.save_request(self.root.name, 'Type my password into Password')
         with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))), patch.object(atticus,'pref',return_value=False):
             self.assertTrue(atticus.hands(*args)[1])
 
@@ -426,10 +429,10 @@ print("Clicked Export")
         p.ask = self.root.name; p.returncode = 0
         with patch.object(atticus.threading,'Thread'), patch.object(atticus.threading,'Timer'):
             atticus.run('Context: Password from page.\nRequest: type my password into Password',p,request='type my password into Password')
-        self.assertEqual(Path(self.root.name,'request').read_text(),'type my password into Password')
+        self.assertEqual(Path(atticus.request_file(self.root.name)).read_text(),'type my password into Password')
         resolved,acted,_ = self.result(['type','Password','x'],['Password'],False,True)
         for request in ("what is my password", "don't type my password", "never paste my password"):
-            Path(self.root.name,'request').write_text(request)
+            atticus.save_request(self.root.name, request)
             with patch.object(atticus,'hands_action',side_effect=self.session((resolved,acted))) as call:
                 self.assertFalse(atticus.hands('type','Password','x')[1]); self.assertEqual(call.call_count,1)
 

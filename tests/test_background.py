@@ -33,6 +33,7 @@ class BackgroundTests(unittest.TestCase):
         self.assertEqual(self.gate(f'env -u ATTICUS_ASK -u CLAUDECODE python3 {atticus.ME} ask again'), 'deny')
         self.assertEqual(self.gate(f'python3 {atticus.ME} --wait'), 'deny')
         self.assertEqual(self.gate(f'env -u ATTICUS_ASK {atticus.ME} ask again'), 'deny')
+        self.assertEqual(self.gate(f'cd {os.path.dirname(atticus.ME)} && env -u ATTICUS_ASK sh atticus.py ask again'), 'deny')   # the sh header makes sh a launcher
         self.assertEqual(self.gate(f'xargs {atticus.ME} ask again'), 'deny')
         self.assertEqual(self.gate(f'printf again | xargs {atticus.ME} ask'), 'deny')
         self.assertEqual(self.gate(f'echo ready && env {atticus.ME} ask again'), 'deny')
@@ -58,7 +59,7 @@ class BackgroundTests(unittest.TestCase):
         self.assertFalse(atticus.wants_focus('Do not open Notes; add a note'))
         self.assertFalse(atticus.wants_focus("Don't focus Notes"))
         self.assertFalse(atticus.wants_focus('Open Notes in the background'))
-        Path(os.environ['ATTICUS_ASK'], 'request').write_text('Show Notes')
+        atticus.save_request(os.environ['ATTICUS_ASK'], 'Show Notes')
         self.assertEqual(self.gate('osascript -e \'tell application "Notes" to activate\''), 'allow')
         self.assertEqual(self.gate('printf Notes | xargs open -a'), 'allow')
 
@@ -117,6 +118,14 @@ class BackgroundTests(unittest.TestCase):
         with patch.object(atticus, 'osa', return_value='Editor') as osa:
             atticus.restore_focus('Finder', 'make a note', ['tell application "Notes" to make new note'])
             self.assertEqual(osa.call_count, 1)
+
+    def test_restore_ignores_a_window_an_earlier_task_worked_in(self):
+        Path(atticus.WORKED).write_text(json.dumps({'app': 'Editor', 'window': 'Draft'}))
+        started = os.path.getmtime(atticus.WORKED)
+        for start, calls in ((started + 1, 1), (started, 2)):   # written before this ask began: the user switched there themselves
+            with self.subTest(start=start), patch.dict(atticus.TURN, {'_started': start}), patch.object(atticus, 'osa', return_value='Editor') as osa:
+                atticus.restore_focus('Finder', 'what time is it', [])
+                self.assertEqual(osa.call_count, calls)
 
     def test_work_mode_covers_non_browser_apps(self):
         for mode in ('back', 'front'):
@@ -182,7 +191,7 @@ class BackgroundTests(unittest.TestCase):
             show.assert_called_once_with(url, bg=True)
             self.assertTrue(atticus.wants_focus(sites=True))
             self.assertFalse(atticus.wants_focus('Show this browser'))
-            Path(os.environ['ATTICUS_ASK'], 'request').write_text('Research in the background')
+            atticus.save_request(os.environ['ATTICUS_ASK'], 'Research in the background')
             show.reset_mock()
             atticus.web('read', url, app='Unseen Browser')
             show.assert_not_called()
@@ -214,7 +223,7 @@ class BackgroundTests(unittest.TestCase):
             preview.assert_called_once()
         with patch.object(atticus, 'show') as show, patch('sys.stdout', new_callable=io.StringIO), patch('sys.argv', ['atticus.py', '--show', 'Notes']):
             atticus.main(); show.assert_called_with('Notes', True)
-            Path(os.environ['ATTICUS_ASK'], 'request').write_text('Open Notes')
+            atticus.save_request(os.environ['ATTICUS_ASK'], 'Open Notes')
             atticus.main(); show.assert_called_with('Notes', False)
 
     def test_agent_front_work_follows_only_the_users_words_and_uses_the_real_path(self):
@@ -239,7 +248,7 @@ class BackgroundTests(unittest.TestCase):
                 osa.assert_any_call('tell application "Keynote" to activate')
             marker.unlink(); Path(row['directory'], 'focus-requested').touch()   # the agent's own folder is writable by the agent: it does not count
             self.assertFalse(atticus.wants_focus())
-        Path(os.environ['ATTICUS_ASK'], 'request').write_text('open Keynote and build three slides')
+        atticus.save_request(os.environ['ATTICUS_ASK'], 'open Keynote and build three slides')
         move = atticus.MainMove('Request: open Keynote and build three slides', type('Worker', (), {'ask': os.environ['ATTICUS_ASK']})())
         self.assertTrue(move.handoff()['focus'])
 
@@ -255,7 +264,7 @@ class BackgroundTests(unittest.TestCase):
         for request in ('메모 앱 열어줘', '打开微信'):
             with self.subTest(request=request):
                 marker.unlink(missing_ok=True)
-                Path(os.environ['ATTICUS_ASK'], 'request').write_text(request)
+                atticus.save_request(os.environ['ATTICUS_ASK'], request)
                 self.assertFalse(atticus.wants_focus())
                 with patch.object(atticus, 'osa') as osa, patch.object(atticus, 'free_focus') as free, \
                      patch.object(atticus, 'look', return_value=[('/fake.jpg', 'Screen')]), \

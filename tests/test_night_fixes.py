@@ -9,6 +9,8 @@ from unittest.mock import Mock, patch
 import atticus
 from tests import scratch_dir
 
+RAN_PROGRAMS = atticus.ran_programs
+
 
 class NightTests(unittest.TestCase):
     def setUp(self):
@@ -18,6 +20,20 @@ class NightTests(unittest.TestCase):
                      ('ME_FILE', 'me.json'), ('WORKED', 'worked.json'), ('MEMORY', 'memory.md')]],
                   patch.dict(os.environ, {'ATTICUS_DIR': str(self.root), 'ATTICUS_SCREEN': 'Request display'}, clear=True)]:
             p.start(); self.addCleanup(p.stop)
+        p = patch.object(atticus, 'ran_programs', return_value={'fixturetool', 'fixtureone', 'fixturetwo', 'orca'}); p.start(); self.addCleanup(p.stop)
+
+    def test_help_only_for_clis_ran_before(self):
+        rows = [{'task': 'a', 'ran': ['cd /tmp && /opt/bin/fixtureone send x  => ok (0.1s)', 'osascript -e \'tell app "x" to fixturetwo\'']}]
+        (self.root / 'log.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
+        with patch.object(atticus, 'ran_programs', RAN_PROGRAMS):   # the real log reader, not the setUp stub
+            self.assertEqual(atticus.ran_programs() & {'fixtureone', 'fixturetwo'}, {'fixtureone'})   # a quoted word was never run
+            with patch.object(atticus.shutil, 'which', side_effect=lambda w: '/' + w if w in ('fixtureone', 'fixturetwo') else None), \
+                 patch.object(atticus.os.path, 'getmtime', return_value=1), \
+                 patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'usage: tool')) as run:
+                got = atticus.tool_help('fixtureone and fixturetwo')
+        run.assert_called_once_with(['/fixtureone', '--help'], capture_output=True, text=True, timeout=2, stdin=subprocess.DEVNULL)
+        self.assertIn('`fixtureone --help`', got)
+        self.assertIn('not used before (run `<name> --help` if one is meant): fixturetwo', got)
 
     def test_help_discovers_advertised_goal_subtree_and_readback_cached(self):
         root = ('Usage: fixturetool <command>\n' + 'padding\n' * 600 +

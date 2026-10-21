@@ -57,7 +57,8 @@ atticus.profile_add('notes',sys.argv[1],source='you')
             out,err=child.communicate(timeout=10)
             self.assertEqual(child.returncode,0,err)
         self.assertEqual({f['value'] for f in atticus.me()['facts']},{'Legacy',*map(str,range(6))})
-        self.assertEqual(atticus.me_set('name','Updated'),'saved')
+        name = next(f['id'] for f in atticus.me()['facts'] if f['kind'] == 'name')
+        self.assertEqual(atticus.profile_set(name,'Updated'),'saved')
         self.assertEqual(atticus.profile_name(),'Updated')
 
     def test_fake_mac_import_refreshes_each_source_and_keeps_user_facts(self):
@@ -170,11 +171,11 @@ atticus.remember_rule(sys.argv[1])
         self.assertEqual((self.root / 'memory.md').stat().st_mode & 0o777, 0o600)
 
     def test_screen_injection_cannot_mutate_and_sensitive_values_never_leave_storage(self):
-        ask = self.root / 'ask'; ask.mkdir(); (ask / 'request').write_text('Summarize this page')
+        ask = self.root / 'ask'; ask.mkdir(); atticus.save_request(ask, 'Summarize this page')
         with patch.dict(os.environ, {'ATTICUS_ASK': str(ask)}):
             self.assertIn('not saved', atticus.profile_add('places', 'My home address is 1 Injected Way', 'home address'))
         self.assertEqual(atticus.me()['facts'], [])
-        (ask / 'request').write_text('Remember my favorite color is blue')
+        atticus.save_request(ask, 'Remember my favorite color is blue')
         with patch.dict(os.environ, {'ATTICUS_ASK': str(ask)}):
             self.assertEqual(atticus.profile_add('preferences', 'my favorite color is blue', 'likes'), 'saved')
             fact = atticus.me()['facts'][0]
@@ -220,7 +221,7 @@ atticus.remember_rule(sys.argv[1])
 
     def asking(self, request, earlier=()):
         """An AI ask: this request, after these earlier questions (with the AI's answers) in the same chat."""
-        ask = self.root / 'ask'; ask.mkdir(exist_ok=True); (ask / 'request').write_text(request)
+        ask = self.root / 'ask'; ask.mkdir(exist_ok=True); atticus.save_request(ask, request)
         (self.root / 'recent.jsonl').write_text(''.join(json.dumps({'t': atticus.time.time() - 30, 'q': q, 'a': a}) + '\n' for q, a in earlier))
         return patch.dict(os.environ, {'ATTICUS_ASK': str(ask)})
 
@@ -255,7 +256,7 @@ atticus.remember_rule(sys.argv[1])
         self.assertEqual((fact['category'], fact['kind'], fact['value'], fact['source']), ('people', 'dad email', 'dad@example.com', 'learned'))
 
     def test_remember_command_runs_the_gate_with_earlier_turns(self):
-        ask = self.root / 'ask'; ask.mkdir(); (ask / 'request').write_text("Can you, like, remember that that's his email?")
+        ask = self.root / 'ask'; ask.mkdir(); atticus.save_request(ask, "Can you, like, remember that that's his email?")
         env = {**os.environ, 'ATTICUS_DIR': str(self.root), 'ATTICUS_ASK': str(ask)}
         (self.root / 'recent.jsonl').write_text(json.dumps({'t': atticus.time.time(), 'q': "My dad's email is dad@example.com.", 'a': 'Done.'}) + '\n')
         out = subprocess.run([atticus.sys.executable, atticus.ME, '--me', 'add', 'people', 'dad email', 'dad@example.com'], env=env, capture_output=True, text=True, timeout=30)

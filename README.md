@@ -172,7 +172,7 @@ On macOS with Nix flakes enabled:
 nix run github:SaarthurR/atticus-mac
 ```
 
-The flake runs the standard installer, which keeps the writable clone Atticus uses for updates, so macOS 26+ and Apple's command line tools are still required. `nix profile add github:SaarthurR/atticus-mac` installs an `atticus` launcher; run it to install or update the app.
+The flake installs its packaged Atticus version, so macOS 26+ and Apple's command line tools are still required. Run that command again to update. `nix profile add github:SaarthurR/atticus-mac` installs an `atticus` launcher; update it with `nix profile upgrade atticus`, then run `atticus`. Nix installations show this update path in Settings instead of using Atticus's Git updater.
 
 Working on the code instead? Clone the repo anywhere and run `./build.sh` after each change. A Devbox environment is included for Python regression tests; run `devbox shell`, then `devbox run test`.
 
@@ -199,7 +199,7 @@ Atticus has to stay fast and nearly free, so new features must fit under these l
 
 - Instant commands: no AI, $0.
 - AI asks: median under $0.002 and 6 s over the last 50 (Oct 10, 2026: $0.00095, 5.0 s). Check with `python3 atticus.py --budget`.
-- System prompt: under 10,000 characters with every option on. Every ask pays for it, and a test enforces it.
+- System prompt: under 10,000 characters in source and at most 10,050 with the installed helper path. Every ask pays for it, and tests enforce both limits.
 - Anything that waits or runs in the background: $0 while it waits. AI only to set it up and to act at the end.
 
 ## Usage count

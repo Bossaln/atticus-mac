@@ -26,6 +26,25 @@ class CrossReviewTests(unittest.TestCase):
                     + start + '        started=true\n    }\n}\n'
                     + 'let f=Fixture(); f.accept("late"); precondition(!f.started)\n')
 
+    def test_start_guess_counts_agents_waiting_on_the_user_like_the_supervisor(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        start = source.index('        let full = rows.values')
+        guess = source[start:source.index('rows[id] = row', start) + len('rows[id] = row')]
+        swift_check(self, 'var rows:[String:[String:Any]] = ["a":["status":"running"],"b":["status":"running"],"c":["status":"needs-you"],"new":["status":"offered"]]\n'
+                    + 'let id="new"; var row=rows[id]!\n' + guess + '\nprecondition(rows["new"]?["status"] as? String == "queued")\n')
+
+    def test_an_agent_question_sounds_once_per_new_question(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        start = source.index('            let question = { (r:[String:Any]?)')
+        check = source[start:source.index('\n', source.index('let asks =', start))]
+        swift_check(self, 'func asks(_ kind:String, _ old:[String:Any]?, _ row:[String:Any]) -> Bool { let id="a"; let rows:[String:[String:Any]] = old.map { ["a":$0] } ?? [:]\n'
+                    + check + '\n return asks }\n'
+                    + 'let q:[String:Any] = ["status":"needs-you","question":["_a":"1"]]\n'
+                    + 'precondition(asks("state", ["status":"running"], q))\n'
+                    + 'precondition(!asks("state", q, q) && !asks("list", ["status":"running"], q))\n'
+                    + 'precondition(asks("state", q, ["status":"needs-you","question":["_a":"2"]]))\n'
+                    + 'precondition(!asks("state", ["status":"running"], ["status":"needs-you"]))\n')
+
     def test_speculative_launch_failure_keeps_listening_until_confirmed(self):
         source = (ROOT / 'Atticus.swift').read_text()
         failure = source[source.index('        guard let w = warm ?? spawn()'):source.index('        warm = nil; proc = w.p')]

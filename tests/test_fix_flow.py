@@ -31,7 +31,7 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(move.handoff()['request'], request)
         row = self.manager.prepare({'title': 'Note', 'brief': 'WAIT note', 'request': request})
         self.manager.start(row['id'])
-        self.assertEqual((Path(row['directory'])/'request').read_text(), request)
+        self.assertEqual(Path(atticus.request_file(Path(row['directory']))).read_text(), request)
 
     def test_ambiguous_shell_programs_never_reuse_an_approval(self):
         with patch.object(atticus, 'preview_commands'):
@@ -110,8 +110,7 @@ class FlowTests(unittest.TestCase):
         self.assertFalse(list((Path(self.root.name)/'pending-handoffs').glob('*.json')))
 
     def test_main_window_features_never_advertise_a_move_control(self):
-        for prefs, env in [({'draw': True}, {}), ({'pointer': True}, {}), ({}, {'ATTICUS_SELECTION': 'Selected paragraph'}),
-                           ({}, {'ATTICUS_CARET': '1'})]:
+        for prefs, env in [({}, {'ATTICUS_SELECTION': 'Selected paragraph'}), ({}, {'ATTICUS_CARET': '1'})]:
             with self.subTest(prefs=prefs, env=env):
                 self.prefs.update(prefs)
                 p = Mock(ask=self.root.name, returncode=0, stdin=Mock(), stdout=[json.dumps({'type': 'result', 'result': '[draft] Full answer', 'total_cost_usd': 0})])
@@ -122,6 +121,25 @@ class FlowTests(unittest.TestCase):
                 self.assertEqual(reply, '[draft] Full answer')
                 self.prefs.update(draw=False, pointer=False)
 
+    def test_drawing_settings_alone_never_block_agents(self):
+        self.prefs.update(draw=True, pointer=True)
+        self.addCleanup(self.prefs.update, draw=False, pointer=False)
+        with patch.dict(os.environ, {'ATTICUS_SELECTION': '', 'ATTICUS_CARET': ''}), patch.object(atticus, 'selection_context', return_value=''):
+            self.assertFalse(atticus.main_delivery_required())
+
+    def test_a_text_cursor_alone_lets_the_model_hand_off_but_never_moves(self):
+        marker = '[agent {"title":"Desk research","brief":"Compare standing desks"}]'
+        p = Mock(ask=self.root.name, returncode=0, stdin=Mock(), stdout=[json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': marker}]}}),
+                                                                          json.dumps({'type': 'result', 'result': marker, 'total_cost_usd': .001})])
+        with patch.dict(os.environ, {'ATTICUS_UI': '1', 'ATTICUS_CARET': '1', 'ATTICUS_SELECTION': ''}), patch.object(atticus, 'selection_context', return_value=''), \
+             patch.object(atticus, 'MainMove') as moving, patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'relay'), \
+             patch.object(atticus.threading, 'Timer'), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertFalse(atticus.main_delivery_required())
+            atticus.run('Context', p, request='Find 3 standing desks under $600')
+        moving.assert_not_called()
+        self.assertNotIn('main-window delivery', p.stdin.write.call_args.args[0])
+        self.assertEqual(output.getvalue().count('⤴ '), 1); self.assertEqual(atticus.run.handoff['title'], 'Desk research')
+
     def test_long_writing_only_ask_stays_main_before_its_result_mode_arrives(self):
         move = atticus.MainMove('Write a long draft', Mock(ask=self.root.name, waiting=threading.Event()))
         self.addCleanup(move.close)
@@ -130,6 +148,15 @@ class FlowTests(unittest.TestCase):
             move.poll()
         self.assertFalse(move.moved)
         stop.assert_not_called()
+
+    def test_move_tracking_ignores_malformed_message_frames(self):
+        move = atticus.MainMove('Keep working', Mock(ask=self.root.name, waiting=threading.Event()))
+        self.addCleanup(move.close)
+        move.record({'message': None})
+        move.record({'message': {'content': [None, {'type': 'text', 'text': None},
+                                                     {'type': 'tool_use', 'id': None, 'name': None, 'input': None}]}})
+        self.assertEqual(move.trace, {})
+        self.assertFalse(move.local_delivery)
 
     def test_protected_handoff_retries_in_main_instead_of_losing_draft_delivery(self):
         marker = '[agent {"title":"Long draft","brief":"Write the draft"}]'
@@ -184,6 +211,43 @@ class FlowTests(unittest.TestCase):
         self.assertIn('Audio report', atticus.agent_context('Expand that result'))
         context = json.loads((Path(row['directory'])/'context.json').read_text())
         self.assertNotIn('result', context)
+
+    def test_an_ask_begun_on_a_done_card_brings_that_agent_without_matching_words(self):
+        row = self.manager.new()
+        row.update(title='Audio report', brief='Compare budget microphones', status='done', summary='Verified summary')
+        self.manager.rows[row['id']] = row
+        self.manager.save(row)
+        self.assertNotIn('Audio report', atticus.agent_context('Make the table shorter'))
+        context = atticus.agent_context('Make the table shorter', row['id'])
+        self.assertIn('Audio report', context)
+        self.assertIn(f'done card of task {row["id"]} was on screen', context)
+        self.assertNotIn('was on screen', atticus.agent_context('Make the table shorter', 'f' * 32))
+
+    def test_a_main_ask_shows_a_tasks_card_read_only_and_learns_of_it_only_with_task_rows(self):
+        row = self.manager.new()
+        row.update(title='Standing desks', brief='Find a standing desk', status='done', summary='Picked one',
+                   made=[{'title': 'Desk picks', 'url': 'https://docs.google.com/document/d/x/edit', 'type': ''}])
+        self.manager.rows[row['id']] = row
+        self.manager.save(row)
+        context = atticus.agent_context('Did the standing desk agent finish?')
+        self.assertIn('--agent-show <ID>', context)
+        self.assertIn('https://docs.google.com/document/d/x/edit', context)   # made things reach the reply as links
+        self.assertNotIn('--agent-show', atticus.agent_context('Explain differential equations'))
+        ask = Path(self.root.name, 'ask'); ask.mkdir()
+        with patch.dict(os.environ, {'ATTICUS_ASK': str(ask), 'ATTICUS_UI': '1'}):
+            self.assertIn('No such task', atticus.agent_show('f' * 32))
+            replies = []
+            showing = threading.Thread(target=lambda: replies.append(atticus.agent_show(row['id']))); showing.start()
+            worker = Mock(ask=str(ask)); worker.poll.side_effect = lambda: None if showing.is_alive() else 0
+            with patch('sys.stdout', new_callable=io.StringIO) as out:
+                atticus.relay(worker)
+            showing.join()
+        self.assertEqual(out.getvalue().splitlines(), ['▤ ' + row['id']])
+        self.assertIn('card shows under your reply', replies[0])
+        with patch.object(atticus, 'preview_commands'):
+            allowed, asked = self.gate('Bash', {'command': f'{atticus.ME} --agent-show {row["id"]}'})
+        asked.assert_not_called()   # Safe mode: showing is read-only, no Allow card
+        self.assertNotEqual(allowed.get('permissionDecision'), 'deny')
 
     def test_python_selftest_uses_current_settings_rows(self):
         env = {**{k: v for k, v in os.environ.items() if not k.startswith('ATTICUS_')}, 'ATTICUS_DIR': self.root.name}   # earlier tests leave ATTICUS_* set
