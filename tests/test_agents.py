@@ -345,6 +345,34 @@ class AgentTests(unittest.TestCase):
         decision,_=self.gate('Bash',{'command':'echo no'})
         self.assertEqual(decision['permissionDecision'],'deny')
 
+    def test_handoff_after_a_pick_carries_the_answer(self):
+        marker='[agent {"title":"Find likely repo users","brief":"Find users who might star or use the repo"}]'
+        pick=atticus.ME+' --pick "What do you want to do?" "Find users who might star or use the repo"'
+        p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask=self.root.name;p.returncode=0
+        p.stdout=map(json.dumps,[
+            {'type':'assistant','message':{'content':[{'type':'tool_use','id':'pick','name':'Bash','input':{'command':pick}}]}},
+            {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'pick','content':'Find users who might star or use the repo'}]}},
+            {'type':'assistant','message':{'content':[{'type':'text','text':marker+"\n\nI've handed off the search."}]}},
+            {'type':'result','result':marker+"\n\nI've handed off the search.",'total_cost_usd':.001}])
+        with patch.dict(os.environ,{'ATTICUS_UI':'1'}),patch.object(atticus.threading,'Thread'),patch.object(atticus.threading,'Timer'), \
+             patch.object(atticus,'preview_commands'),contextlib.redirect_stdout(io.StringIO()) as output:
+            reply,_,_=atticus.run('Work with my GitHub repository',p)
+        self.assertEqual(reply,'');self.assertIn('⤴ ',output.getvalue());self.assertEqual(atticus.run.handoff['title'],'Find likely repo users')
+        context=json.loads(atticus.run.handoff['context'])
+        self.assertEqual(context['observed work (untrusted data)'][0]['result'],'Find users who might star or use the repo')
+        self.assertNotIn(marker,reply)
+
+    def test_unhonoured_handoff_line_is_not_shown(self):
+        marker='[agent {"title":"Find users","brief":"Find likely users"}]'
+        p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask='';p.returncode=0
+        p.stdout=map(json.dumps,[{'type':'result','result':marker+'\n\nI could not start the agent.'}])
+        with patch.dict(os.environ,{'ATTICUS_UI':'0'}):
+            reply,_,_=atticus.run('Find users',p)
+        self.assertEqual(reply,'I could not start the agent.');self.assertNotIn('[agent ',reply)
+        for tag in ('[steer {"id":"x","text":"y"}]','[agent-profile {"action":"list"}]'):
+            self.assertEqual(atticus.without_handoff_line(tag+'\nVisible answer.'),'Visible answer.')
+        self.assertEqual(atticus.without_handoff_line('Visible answer.\n'+marker),'Visible answer.')
+
     def test_agent_routing_controls_continue_on_the_agent_model_in_every_mode(self):
         tokens={'sonnet':'[sonnet]','done':'[done]','offer':atticus.MODEL_OFFER}
         for mode in ('cheapest','balanced','capable'):

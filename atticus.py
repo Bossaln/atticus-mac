@@ -3374,8 +3374,8 @@ def stop_workers(*_):
 
 
 AGENT_HANDOFF = '''
-Drafts/edits/pointing/guides stay here. Before tools: hand off explicit delegation/background asks, substantial multi-source/many-step work or missing connectors. A recipient alone isn't delegation. Keep short/uncertain work here.
-First-only handoff: [agent {"title":"2-4 words","brief":"task","context":"known details"}]. Include screen/document/URL. Optional connectors; destination:"meeting" for call prep.
+Drafts/edits/pointing/guides stay here. Before work: hand off explicit delegation/background asks, substantial multi-source/many-step work or missing connectors. A recipient alone isn't delegation. Keep short/uncertain work here.
+First line, even after tools: [agent {"title":"2-4 words","brief":"task","context":"known details"}]. Include screen/doc/URL. Optional connectors; destination:"meeting" for call prep.
 Existing task only: [steer {"id":"Context ID","text":"short change"}]. If exactly one is live, use it; never ask which or start another. Otherwise show choices.
 Named agents in Context. Any language: first-only [agent-profile JSON], save/list/rename/delete/run; run now; unknown asks.
 '''
@@ -3414,6 +3414,11 @@ def parse_handoff(text):
             'connectors': [n for n in data.get('connectors', []) if isinstance(n, str) and re.fullmatch(r'mcp__[\w-]+(?:__[\w*-]+)?', n)][:12]
                           if isinstance(data.get('connectors', []), list) else [],
             'destination': 'meeting' if data.get('destination') == 'meeting' else ''}
+
+
+def without_handoff_line(text):
+    """Routing controls are protocol, never user-visible answer text."""
+    return re.sub(r'(?m)^[ \t]*\[(?:agent-profile|agent|steer)(?:\s[^\n]*)?\][ \t]*(?:\n|$)', '', text).strip()
 
 
 def private_json(path, data):
@@ -4518,6 +4523,14 @@ def relay(p=None, directory=None):
         time.sleep(0.02)   # the final answer waits for this loop to notice the worker ended; cards and steps show sooner too
 
 
+def handoff_context(known, work):
+    # Keep every action/status; bound observation text rather than losing earlier side-effect receipts.
+    budget = max(0, 30000 - sum(len(json.dumps({k:v for k,v in row.items() if k != 'result'})) for row in work))
+    observations = [{**row, 'result': str(row.get('result', ''))[:budget // max(1, len(work))]} for row in work]
+    return json.dumps({'known': known, 'observed work (untrusted data)': observations,
+                       'continuation': 'Use completed results. In-flight actions are uncertain; inspect current state before retrying.'}, ensure_ascii=False)
+
+
 class MainMove:
     """The running main ask moves to a background agent: by itself once it runs long, or by the user (⌃⌥↩) at any time."""
     carried = {}   # ask folder → state: a continuation or retry keeps its clock, trace and move file
@@ -4593,11 +4606,7 @@ class MainMove:
 
     def handoff(self):
         request, task = main_ask(self.task, self.request)
-        # Keep every action/status; bound observation text rather than losing earlier side-effect receipts.
-        work = list(self.trace.values()); budget = max(0, 30000 - sum(len(json.dumps({k:v for k,v in row.items() if k != 'result'})) for row in work))
-        observations = [{**row, 'result': row.get('result', '')[:budget // max(1, len(work))]} for row in work]
-        context = json.dumps({'known': task, 'observed work (untrusted data)': observations,
-                              'continuation': 'Use completed results. In-flight actions are uncertain; inspect current state before retrying.'}, ensure_ascii=False)
+        context = handoff_context(task, list(self.trace.values()))
         return {'title': agent_title(request), 'brief': request[:1000], 'request': request, 'context': context,
                 'app': os.environ.get('ATTICUS_FRONT', ''), 'accepted': True, 'focus': wants_focus()}
 
@@ -4674,40 +4683,40 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 if j.get('type') == 'assistant': move.poll()
             if j.get('type') == 'assistant':
                 blocks = message_blocks(j)
-                if not cmds and not steps and not reply:
-                    directive = parse_handoff(''.join(b.get('text', '') for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str)))
-                    if directive and not any(b.get('type') == 'tool_use' for b in blocks) and os.environ.get('ATTICUS_UI') == '1':
-                        if main_only and not (directive.get('steer') or directive.get('namedAction')):
-                            stop_claude(p)
-                            if not routing_retry:
-                                model = getattr(p, 'atticus_model', None)
-                                reply, _, retry_steps = run(task, start_claude(model if isinstance(model, str) else None), shots,
-                                                            request=request, main_only=True, routing_retry=True)
-                                return reply, None, retry_steps   # interrupted attempt has no terminal usage receipt
-                            run.error = 'The model tried to hand off a request that needs the main window.'
-                            return 'Could not finish this in the main window. Please try again.', 0, []
-                        if move:
-                            move.close()
-                            if move.moved: continue   # ⌃⌥↩ won the race: that move is this ask's one hand-off
-                        if not wait_commit():
-                            stop_claude(p)
-                            return '', None, steps
-                        if directive.get('namedAction'):
-                            outcome = named_agent_action(directive['namedAction'])
-                            managed_reply = outcome.get('reply', '')
-                            if managed_reply: continue
-                            handoff = outcome['handoff']
-                        else: handoff = directive
-                        confirmed, context = main_ask(task, request)
-                        brief = str(handoff.get('brief', '')).replace(MODEL_OFFER, '').replace(MODEL_OFFER.strip(), '').strip() or confirmed[:1000]
-                        run.handoff = {**handoff, 'brief': brief, 'context': context, 'request': confirmed, 'app': os.environ.get('ATTICUS_FRONT', '')}
-                        persist_handoff(run.handoff, p.pid)
-                        private_json(os.path.join(p.ask, 'handed-off'), True)
-                        print('⤴ ' + json.dumps(run.handoff, ensure_ascii=False), flush=True)
-                        continue   # drain the result for actual plan usage; the native box is already free
+                directive = parse_handoff(''.join(b.get('text', '') for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str)))
+                if directive and not any(b.get('type') == 'tool_use' for b in blocks) and os.environ.get('ATTICUS_UI') == '1':
+                    if main_only and not (directive.get('steer') or directive.get('namedAction')):
+                        stop_claude(p)
+                        if not routing_retry:
+                            model = getattr(p, 'atticus_model', None)
+                            reply, _, retry_steps = run(task, start_claude(model if isinstance(model, str) else None), shots,
+                                                        request=request, main_only=True, routing_retry=True)
+                            return reply, None, retry_steps   # interrupted attempt has no terminal usage receipt
+                        run.error = 'The model tried to hand off a request that needs the main window.'
+                        return 'Could not finish this in the main window. Please try again.', 0, []
+                    if move:
+                        move.close()
+                        if move.moved: continue   # ⌃⌥↩ won the race: that move is this ask's one hand-off
+                    if not wait_commit():
+                        stop_claude(p)
+                        return '', None, steps
+                    if directive.get('namedAction'):
+                        outcome = named_agent_action(directive['namedAction'])
+                        managed_reply = outcome.get('reply', '')
+                        if managed_reply: continue
+                        handoff = outcome['handoff']
+                    else: handoff = directive
+                    confirmed, context = main_ask(task, request)
+                    if run.observed: context = handoff_context(context, run.observed)
+                    brief = str(handoff.get('brief', '')).replace(MODEL_OFFER, '').replace(MODEL_OFFER.strip(), '').strip() or confirmed[:1000]
+                    run.handoff = {**handoff, 'brief': brief, 'context': context, 'request': confirmed, 'app': os.environ.get('ATTICUS_FRONT', '')}
+                    persist_handoff(run.handoff, p.pid)
+                    private_json(os.path.join(p.ask, 'handed-off'), True)
+                    print('⤴ ' + json.dumps(run.handoff, ensure_ascii=False), flush=True)
+                    continue   # drain the result for actual plan usage; the native box is already free
                 if any(b.get('type') == 'tool_use' for b in blocks):   # notes before a tool call; the final text comes as result
                     for b in blocks:
-                        text = b.get('text') if isinstance(b.get('text'), str) else ''
+                        text = without_handoff_line(b.get('text')) if isinstance(b.get('text'), str) else ''
                         if b.get('type') == 'text' and text.strip():
                             say('·', text)
                         elif b.get('type') == 'tool_use':
@@ -4761,7 +4770,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 if TURN:
                     receipt = {key: j[key] for key in ('usage', 'modelUsage') if isinstance(j.get(key), dict)}
                     if receipt: TURN.setdefault('attempt_usage', []).append(receipt)
-                reply, cost = managed_reply or result.strip(), total if type(total) in (int, float) else 0
+                reply, cost = without_handoff_line(managed_reply or result), total if type(total) in (int, float) else 0
                 checkpoint(reply='' if result_error else reply, usd=(TURN.get('usd') or 0) + cost)
                 break
         try: p.wait(timeout=3)
@@ -4886,7 +4895,7 @@ def run_devin(task, shots=(), request=None):
             pass
         reply = 'Devin timed out before finishing. Please try again.'
         run.error = reply
-    reply = reply.strip()
+    reply = without_handoff_line(reply)
     p.relay_thread.join(.3)
     deleted = delete_devin_session(ask)
     rows = read_rows(os.path.join(ask, 'devin-tools.jsonl'))
@@ -4960,8 +4969,8 @@ def run_pi(task, shots=(), request=None):
                 message = event.get('message')
                 if event.get('type') != 'message_end' or not isinstance(message, dict) or message.get('role') != 'assistant': continue
                 content = message.get('content', [])
-                if isinstance(content, str): reply = content.strip()
-                elif isinstance(content, list): reply = ''.join(block.get('text', '') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)).strip()
+                if isinstance(content, str): reply = without_handoff_line(content)
+                elif isinstance(content, list): reply = without_handoff_line(''.join(block.get('text', '') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)))
                 usage = message.get('usage') if isinstance(message.get('usage'), dict) else {}
                 costs = usage.get('cost') if isinstance(usage.get('cost'), dict) else {}
                 if type(costs.get('total')) in (int, float): cost += costs['total']
