@@ -233,7 +233,8 @@ print("dictation target safety ok")
         self.assertIn('case .unchanged: fallback()', apply)
         self.assertIn('case .unknown: done(false)', apply)
         self.assertEqual(apply.count('.post(tap: .cghidEventTap)'), 1)
-        self.assertNotIn('postToPid', apply)
+        self.assertEqual(apply.count('postToPid'), 1)   # one send, never both: per-process only while Atticus holds the keyboard
+        self.assertIn('if NSApp.keyWindow == nil { e.post(tap: .cghidEventTap) } else { e.postToPid(', apply)
         self.assertIn('Saved to History', insert)
         self.assertNotIn('NSPasteboard', insert)   # dictation never leaves its words on the clipboard
         swift = r'''import Foundation
@@ -397,9 +398,9 @@ final class Harness {
     var dictateSelection: Target?, busy = false, dictating = true, dictateID = 1, dictateCleanup = false
     var dictationAppName = "App"
     func saveDictation(_ value: String, appName: String) -> Bool { if saves { saved.append(value) }; return saves }
-    var log: [String] = [], hides: [Double] = [], shrinks: [Bool] = [], words: [String] = []
+    var log: [String] = [], hides: [Double] = [], words: [String] = []
     func cue(_ value: String) {}
-    func hide(after s: Double, shrink: Bool = false) { hides.append(s); shrinks.append(shrink) }
+    func hide(after s: Double) { hides.append(s) }
     func js(_ call: String, _ arg: Any? = nil) {
         if let d = arg as? [String: Any] { log.append("\(call) \(d["text"]!) \(d["ok"]!)"); if let w = d["words"] as? String { words.append(w) } } else { log.append("\(call) \(arg as? String ?? "")") }
     }
@@ -411,11 +412,14 @@ final class Harness {
 ''' + release + '\n    }\n' + delivery + cancel + r'''}
 let user = AppRef(); NSWorkspace.shared.frontmostApplication = user
 let done = Harness(); done.dictateSelection = Target(user); done.release(); done.insertDictation("hi")
-precondition(done.log == ["finishing ", "dictated  true"] && done.hides == [0.15] && done.shrinks == [true], "success said something or did not fold: \(done.log)")
+precondition(done.log == ["finishing ", "dictated  true"] && done.hides == [0.8], "success said something or did not hold its check: \(done.log)")
 let clean = Harness(); clean.dictateCleanup = true; clean.release()
 precondition(clean.log == ["finishing Cleaning up…"], "Clean up mode did not label its wait")
 let fallback = Harness(); fallback.release(); fallback.insertDictation("keep me safe")
-precondition(fallback.log == ["finishing ", "dictated Saved to History false"] && saved == ["keep me safe"] && fallback.hides == [3] && fallback.shrinks == [false], "fallback: \(fallback.log)")
+precondition(fallback.log == ["finishing ", "dictated Nothing selected to insert — saved to History. false"] && saved == ["keep me safe"] && fallback.hides == [3], "fallback: \(fallback.log)")
+let moved = Harness(); moved.dictateSelection = Target(user); moved.release(); NSWorkspace.shared.frontmostApplication = AppRef(); moved.insertDictation("switched away")
+NSWorkspace.shared.frontmostApplication = user
+precondition(moved.log == ["finishing ", "dictated Couldn’t insert. Saved to History. false"], "a failed insert into a field said nothing was selected: \(moved.log)")
 saves = false
 let fail = Harness(); fail.release(); fail.insertDictation("keep me")
 precondition(fail.log == ["finishing ", "dictated Couldn’t insert. Your words are still here. false"] && fail.hides.isEmpty, "unsaved words faded away: \(fail.log)")
@@ -425,7 +429,7 @@ precondition(off.log == ["finishing ", "dictated Couldn’t insert. Your words a
 precondition(off.words == ["history off"] && fallback.words.isEmpty, "unsaved words cannot be copied from the pill")
 Prefs.on = ["dictateHistory"]
 let cleanupFail = Harness(); cleanupFail.dictationDeliveryFailed("raw words", cleanup: true)
-precondition(cleanupFail.log == ["dictated Couldn’t clean up. Saved to History false"] && saved == ["raw words"], "cleanup failure lost the words")
+precondition(cleanupFail.log == ["dictated Couldn’t clean up. Saved to History. false"] && saved == ["raw words"], "cleanup failure lost the words")
 let late = Target(user); late.deferred = true
 let cancelled = Harness(); cancelled.dictateSelection = late; cancelled.release(); cancelled.insertDictation("never"); cancelled.cancel(); late.pending?()
 precondition(cancelled.log == ["finishing ", "close"] && late.received.isEmpty && cancelled.hides.isEmpty, "cancel: \(cancelled.log)")
@@ -434,53 +438,102 @@ print("dictation states ok")
         self.assertIn('dictation states ok', run_swift(self, swift))
 
 
+    def test_pill_over_a_box_that_must_stay_gives_the_box_back(self):
+        # A pinned, placed or drawing-holding box blocked hide(), so the pill sat on its green check and hid the answer.
+        source = (ROOT / 'Atticus.swift').read_text()
+        hide = source[source.index('    func hide(after s: Double)'):source.index('    func defaultKey(')]
+        swift = r'''import Foundation
+final class Ctx { var duration = 0.0 }
+enum NSAnimationContext { static func runAnimationGroup(_ a: (Ctx) -> Void, completionHandler: (() -> Void)?) { a(Ctx()); completionHandler?() } }
+final class Panel { var alphaValue = 1.0; func animator() -> Panel { self } }
+final class Flag { var active = false, hasInput = false, holds = false, isRunning = false }
+final class Harness {
+    var gen = 1, busy = false, hovering = false, pinned = false, stuck = false, composing = false, pillOn = true, dictating = false
+    let engine = Flag(), mini = Flag(), drawing = Flag(), panel = Panel(); var ringGone: Int?, voice: Flag?
+    var log: [String] = []
+    func pill(_ on: Bool) { pillOn = on; log.append("pill \(on)") }
+    func gone() { log.append("gone") }
+''' + hide + r'''}
+func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+let pinned = Harness(); pinned.pinned = true; pinned.hide(after: 0); settle()
+precondition(pinned.log == ["pill false"], "a pinned box kept the pill: \(pinned.log)")
+let drawn = Harness(); drawn.drawing.active = true; drawn.hide(after: 0); settle()
+precondition(drawn.log == ["pill false"], "a drawing kept the pill: \(drawn.log)")
+let plain = Harness(); plain.hide(after: 0); settle()
+precondition(plain.log == ["gone"], "a free pill did not fade: \(plain.log)")
+let hover = Harness(); hover.pinned = true; hover.hovering = true; hover.hide(after: 0); settle()
+precondition(hover.log.isEmpty, "a hovered pill changed: \(hover.log)")
+let box = Harness(); box.pillOn = false; box.pinned = true; box.hide(after: 0); settle()
+precondition(box.log.isEmpty, "a pinned box changed: \(box.log)")
+print("pill gives the box back")
+'''
+        self.assertIn('pill gives the box back', run_swift(self, swift))
+
+
 @unittest.skipUnless(shutil.which('node'), 'Node runs the overlay state check')
 class DictationOverlayTests(unittest.TestCase):
     page = (ROOT / 'ui' / 'ui.html').read_text()
 
-    def test_finishing_skips_fast_inserts_and_ends_with_the_real_wait(self):
+    def test_pill_goes_from_wave_to_working_orb_to_check_or_one_line(self):
         page = self.page
-        helper = page[page.index('  let finishTimer = 0;'):page.index('\n  };\n', page.index('  let finishTimer = 0;')) + 5]
-        methods = page[page.index('    finishing(label)'):page.index('    line(l)')]
+        helper = page[page.index('  const pill = '):page.index('\n  };\n', page.index('  const pill = ')) + 5]
+        methods = page[page.index('    finishing(label)'):page.index('    learned(word)')]
         self.assertIn("if (document.body.classList.contains('dictate')) return window.ui.dictated({ text: s });", page)
         script = r'''
-const set = () => { const s = new Set(); return { s, ever: new Set(), add(...c) { c.forEach(x => { s.add(x); this.ever.add(x); }); }, remove(...c) { c.forEach(x => s.delete(x)); }, contains: c => s.has(c) }; };
-let states = [], q, turnEl;
-const fresh = () => { q = { classList: set(), after(n) { turnEl.kids.push(n); } }; q.classList.add('q', 'live'); turnEl = { kids: [q], append(n) { this.kids.push(n); } }; states = ['listening']; };
-const turn = () => turnEl, part = c => c === 'q' ? q : turnEl.kids.find(n => (n.className || '').split(' ').includes(c));
-const $ = () => ({ style: {} }), setState = s => states.push(s), fit = () => {};
-const document = { body: { classList: set() }, createElement: () => ({ className: '', textContent: '', setAttribute() {} }) };
-let listening = true, boost = 2;
+const classes = new Set(), body = { classList: { add: (...c) => c.forEach(x => classes.add(x)), remove: (...c) => c.forEach(x => classes.delete(x)), contains: c => classes.has(c) } };
+const document = { body, createElement: () => ({}) }, dn = { className: '', textContent: '', kids: [], append(...a) { this.kids.push(...a); } };
+let states = [], fits = 0, listening = true, boost = 2;
+const $ = id => id === 'dn' ? dn : { style: {} }, setState = s => states.push(s), fit = () => { fits++; }, post = () => {};
 ''' + helper + 'const ui = {\n' + methods + r'''};
-const wait = ms => new Promise(r => setTimeout(r, ms)), fail = m => { console.error(m); process.exit(1); };
-fresh(); ui.finishing('');
-if (q.classList.contains('live') || q.classList.contains('finishing')) fail('release did not stop the caret at once, or flashed the shimmer');
-await wait(60); ui.dictated({ text: '', ok: true }); await wait(200);
-if (q.classList.ever.has('finishing') || states.includes('solving')) fail('a fast Verbatim insert flashed the finishing state');
-if (part('dn').textContent !== '' || states.at(-1) !== 'breathing') fail('success said something, or the orb kept working');
-fresh(); ui.finishing(''); await wait(200);
-if (!q.classList.contains('finishing') || states.at(-1) !== 'solving' || part('dn').textContent) fail('a slow Verbatim insert showed no finishing state, or a label');
-ui.dictated({ text: 'Saved to History', ok: false });
-if (q.classList.contains('finishing') || part('dn').className !== 'dn' || states.join() !== 'listening,solving,breathing') fail('finishing outlived the real wait: ' + states);
-fresh(); ui.finishing('Cleaning up…');
-if (!q.classList.contains('finishing') || part('dn').textContent !== 'Cleaning up…') fail('Clean up mode did not show its wait in the same frame');
-ui.dictated({ text: 'Couldn’t clean up. Saved to History', ok: false });
-if (part('dn').className !== 'dn' || q.classList.contains('finishing')) fail('failure was not one plain line');
-fresh(); ui.finishing(''); const old = q; fresh(); await wait(200);
-if (old.classList.ever.has('finishing') || states.includes('solving')) fail('a stale release timer touched the next dictation');
+const fail = m => { console.error(m); process.exit(1); }, state = () => ['finishing', 'done', 'said'].filter(c => classes.has(c)).join();
+classes.add('dictate', 'hearing', 'locked');
+ui.finishing('Cleaning up…');
+if (state() !== 'finishing' || classes.has('hearing') || classes.has('locked') || states.at(-1) !== 'solving' || dn.textContent !== 'Cleaning up…' || !fits) fail('release did not fold into the working orb: ' + state());
+ui.dictated({ text: '', ok: true });
+if (state() !== 'done' || states.at(-1) !== 'breathing' || dn.textContent !== 'Inserted') fail('landing did not end on the check: ' + state());
+ui.dictated({ text: 'Nothing selected to insert — saved to History.', ok: false });
+if (state() !== 'said' || dn.className !== 'dn' || dn.textContent !== 'Nothing selected to insert — saved to History.') fail('nothing to insert into was not one line');
+ui.finishing('');
+if (state() !== 'finishing' || dn.textContent) fail('a new release kept the last line');
 '''
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_finishing_uses_transform_and_opacity_and_has_a_reduce_motion_path(self):
+    def test_dictation_leaves_the_boxs_last_answer_current(self):
+        # Oct 20, 2026: a dictation's hidden turn marked the box's answer old (grey) though no new ask happened
         page = self.page
-        rule = re.search(r'\.q\.finishing::after \{(.*?)\}', page, re.S).group(1)
-        for name in re.findall(r'animation: (.*?);', rule)[0].split(','):
-            frames = re.search(r'@keyframes ' + name.split()[0] + r' \{(.*?)\}\s*\}?\n', page, re.S).group(1)
-            self.assertEqual(set(re.findall(r'([a-z-]+):', frames)) - {'opacity', 'transform'}, set(), name)
+        methods = page[page.index('    dictate(on) {'):page.index('    locked(on)')] + page[page.index('    listen(keep) {'):page.index('    level(v) {')]
+        script = r'''
+const set = () => { const s = new Set(); return { add: (...c) => c.forEach(x => s.add(x)), remove: (...c) => c.forEach(x => s.delete(x)), toggle: (c, on) => on ? s.add(c) : s.delete(c), contains: c => s.has(c) }; };
+const kids = [], thread = { children: kids, get firstElementChild() { return kids[0]; }, querySelectorAll: q => q === '.turn.dict' ? kids.filter(k => k.className.split(' ').includes('dict')) : [], append: d => kids.push(d) };
+const node = () => { const n = { classList: set(), className: '', remove: () => kids.splice(kids.indexOf(n), 1), prepend() {}, firstChild: { classList: set() } }; return n; };
+const document = { body: { classList: set() }, createElement: node }, card = { classList: set() };
+const $ = id => id === 'thread' ? thread : id === 'card' ? card : { children: [], value: '' };
+const miniClear = () => {}, clockStop = () => {}, comp = () => {}, markShot = () => '', setState = () => {}, status = () => {}, fit = () => {}, pill = () => {};
+let hover, listening, working, boost, atBottom;
+const ui = {
+''' + methods + r'''};
+const answer = node(); kids.push(answer);
+ui.dictate(true); ui.listen(); ui.dictate(false);
+if (kids.length !== 1 || kids[0] !== answer) process.exit(console.error('the dictation turn stayed in the box') || 1);
+if (answer.classList.contains('old')) process.exit(console.error('a dictation greyed out the last answer') || 1);
+ui.listen();
+if (!answer.classList.contains('old')) process.exit(console.error('a real ask no longer marks the last answer old') || 1);
+'''
+        result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pill_morphs_with_transform_and_opacity_and_cross_fades_under_reduce_motion(self):
+        page, source = self.page, (ROOT / 'Atticus.swift').read_text()
+        for name, props in (('morph', {'opacity', 'transform'}), ('fade', {'opacity'})):
+            frames = re.search(r'@keyframes ' + name + r' \{(.*?)\}\s*\}?\n', page, re.S).group(1)
+            self.assertEqual(set(re.findall(r'([a-z-]+):', frames)), props, name)
         reduce = page[page.index('@media (prefers-reduced-motion: reduce)'):page.index('</style>')]
         self.assertIn('animation: none !important', reduce)
-        self.assertIn('.q.finishing { opacity: .6; } .q.finishing::after { content: none; }', reduce)
+        self.assertIn('body.dictate #orb { animation: fade', reduce)
+        self.assertIn('body.dictate :is(#check, .dn) { animation: fade', reduce)
+        sizing = source[source.index('let size = ((m.body as? [NSNumber])'):source.index('    func js(_ call: String')]
+        self.assertIn('!NSWorkspace.shared.accessibilityDisplayShouldReduceMotion', sizing)   # Reduce Motion: the panel just takes its size
 
     def test_locked_pill_wears_a_ring_that_fades_and_respects_reduce_motion(self):
         page = self.page
@@ -490,21 +543,27 @@ if (old.classList.ever.has('finishing') || states.includes('solving')) fail('a s
         self.assertIn('pointer-events: none', ring)
         self.assertIn('255,159,10', ring)   # the overlay's orange (Full access, attention)
         self.assertIn('body.dictate.locked::after { opacity: 1; }', page)
-        self.assertIn("locked(on) { document.body.classList.toggle('locked', !!on); }", page)
+        self.assertIn("locked(on) { document.body.classList.toggle('locked', !!on); fit(false); }", page)   # the pill makes room for the lock
         reduce = page[page.index('@media (prefers-reduced-motion: reduce)'):page.index('</style>')]
         self.assertIn('transition: none !important', reduce)   # Reduce Motion: the ring just appears
 
-    def test_landed_words_fold_the_pill_quietly_and_respect_reduce_motion(self):
+    def test_pill_is_sized_by_the_page_and_shows_no_transcript_or_divider(self):
+        # Oct 20, 2026: the pill had empty space between the wave and the lock, live words, and a line at finish
+        # (the thread's .turn + .turn divider on a later dictation, and a shimmer swept across the words).
         page, source = self.page, (ROOT / 'Atticus.swift').read_text()
-        self.assertIn('body.dictate.fold :is(.q, .dn) { opacity: 0; }', page)   # only opacity: the native panel does the shrinking
-        self.assertIn("document.body.classList.remove('locked', 'fold')", page)   # the next dictation starts unfolded
-        hide = source[source.index('    func hide(after s: Double, shrink'):source.index('    func defaultKey(')]
-        self.assertIn('guard shrink, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return fade() }', hide)
-        self.assertIn('f.size.width = min(f.width, f.height)', hide)
-        self.assertIn('pill(dictating)', hide)
+        self.assertIn("document.body.classList.contains('dictate') ? [card.offsetWidth, card.offsetHeight] : card.offsetHeight", page)
+        card = re.search(r'body\.dictate #card \{(.*?)\}', page).group(1)
+        self.assertIn('width: max-content', card)
+        self.assertIn('body.dictate :is(#thread, #comp', page)   # no words, no turn dividers in the pill
+        self.assertNotIn('.q.finishing', page)
+        sizing = source[source.index('let size = ((m.body as? [NSNumber])'):source.index('    func js(_ call: String')]
+        self.assertIn('size.count == 2 && pillOn', sizing)   # a late pill size never narrows the box
+        pill = source[source.index('    func pill(_ on: Bool)'):source.index('    func allow(_ ok: Bool)')]
+        self.assertIn('pillOn = on', pill)
+        self.assertNotIn('280', pill)
+        self.assertIn('if dictating { return }', source[source.index('    func heard(_ now: String)'):])
         insert = source[source.index('    func insertDictation('):source.index('    func typed(')]
-        self.assertIn('js("dictated", ["text": "", "ok": true]); hide(after: 0.15, shrink: true)', insert)
-
+        self.assertIn('cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.8)', insert)
 
 if __name__ == '__main__':
     unittest.main()

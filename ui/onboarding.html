@@ -216,7 +216,7 @@
   .keyfield .x:hover { background: rgba(127,127,127,.14); color: #ff453a; } .keyfield .x:focus-visible { outline: 2px solid rgba(10,132,255,.5); }
   .txt span.warn { color: #c93400; } @media (prefers-color-scheme: dark) { .txt span.warn { color: #ff9f0a; } }
   .subrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(420px, 100%); margin-top: 10px; padding: 0 14px; box-sizing: border-box; font-size: 12px; color: var(--fg2); }
-  /* dictate preview: the pill hears the words, the slips strike out, the clean text lands at the cursor */
+  /* dictate preview: what you say beside the pill (a wave, then the orb, then a check), the slips strike out, the clean text lands at the cursor */
   #dc-doc { position: absolute; left: 22px; right: 22px; top: 14px; bottom: 52px; padding: 9px 14px; border-radius: 10px; background: var(--card); box-shadow: inset 0 0 0 .5px var(--line);
     font: 13px/1.45 system-ui; color: var(--fg); }
   #dc-doc small { display: block; font-size: 11px; color: var(--fg3); margin-bottom: 3px; }
@@ -224,18 +224,25 @@
   #dc-caret { display: inline-block; width: 1.5px; height: 16px; margin-left: 1px; vertical-align: -3px; background: var(--accent); animation: blink 1s steps(1) infinite; }
   #dc-key { position: absolute; right: 22px; bottom: 12px; min-width: 32px; height: 32px; padding: 0 9px; border-radius: 8px; font-size: 12px; }
   #dc-globe button { all: unset; color: var(--accent); cursor: pointer; } #dc-globe button:focus-visible { outline: 2px solid rgba(10,132,255,.5); outline-offset: 2px; }
-  #dc-pill { left: 22px; right: 66px; bottom: 12px; height: 32px; padding: 0 14px; border-radius: 16px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-  #dc-pill i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #ff453a; animation: blink 1.2s ease-in-out infinite; }
-  #dc-pill.done i { animation: none; background: #8e8e93; }
-  #dc-said { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  #dc-pill { left: 22px; bottom: 12px; width: 56px; height: 32px; border-radius: 16px; display: grid; place-items: center;
+    transition: opacity .45s var(--ease), transform .55s var(--out), width .22s var(--ease); }
+  #dc-pill.work, #dc-pill.done { width: 32px; }
+  #dc-pill > * { grid-area: 1 / 1; } #dc-pill.work .wv, #dc-pill.done .wv, #dc-pill:not(.work) .orb, #dc-pill:not(.done) svg { display: none; }
+  #dc-pill .wv { display: flex; gap: 2px; align-items: center; height: 12px; } #dc-pill .wv i { width: 3px; border-radius: 2px; background: #0a84ff; animation: eq .9s ease-in-out infinite; }
+  #dc-pill .wv i:nth-child(2n) { animation-delay: .2s; } #dc-pill .wv i:nth-child(3n) { animation-delay: .4s; }
+  #dc-pill .orb { width: 14px; height: 14px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff, #64d2ff 35%, #5e5ce6 80%); animation: blink 1s ease-in-out infinite; }
+  #dc-pill svg { width: 20px; height: 20px; } #dc-pill svg circle { fill: #30d158; } #dc-pill svg path { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  #dc-said { position: absolute; left: 88px; right: 66px; bottom: 12px; line-height: 32px; font: italic 12px/32px system-ui; color: var(--fg2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #dc-said:not(:empty)::before { content: "“"; } #dc-said:not(:empty)::after { content: "”"; }
   #dc-said .x { text-decoration: line-through transparent; transition: opacity .4s var(--ease), text-decoration-color .4s var(--ease); }
-  #dc-pill.done .x { opacity: .4; text-decoration-color: currentColor; }
+  #dc-said.done .x { opacity: .4; text-decoration-color: currentColor; }
   /* work preview: a long ask offers to move, then runs on as an agent chip */
-  #wk-box { left: 22px; top: 16px; width: 236px; padding: 10px 12px; }
+  #wk-box { left: 22px; top: 16px; width: 208px; box-sizing: border-box; padding: 10px 12px; }
   #wk-box .q, #wk-chip small { color: #8e8e93; font-size: 11px; }
   #wk-line { margin-top: 4px; color: #a1a1a6; }
   #wk-chip { right: 22px; top: 16px; width: 150px; padding: 9px 11px; overflow: hidden; }
   #wk-chip b { display: block; font-weight: 500; } #wk-chip u { position: absolute; left: 11px; right: 11px; bottom: 0; height: 2px; background: rgba(255,255,255,.1); }
+  #wk-chip.done u { display: none; } #wk-chip.done small { color: #30d158; }
   #wk-chip u::after { content: ""; position: absolute; inset: 0; width: 40%; background: #0a84ff; animation: crawl 2.4s var(--ease) infinite; }
   @keyframes crawl { from { width: 8%; } to { width: 85%; } }
   #work .list { max-width: 420px; margin-top: 14px; } #work .row { padding: 9px 14px; } #work .stage { height: 122px; }
@@ -245,6 +252,11 @@
   #pt-win .tb i { width: 7px; height: 7px; border-radius: 50%; background: rgba(127,127,127,.4); }
   #pt-win .it { display: flex; align-items: center; gap: 8px; margin: 4px 8px; padding: 5px 8px; border-radius: 6px; font: 12px system-ui; color: var(--fg); position: relative; }
   #pt-win .it b { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+  #pt-spot { position: relative; display: flex; align-items: center; gap: 8px; }
+  /* the leader line: its head runs from the box to the spot, the faint tail follows, then the ring shows */
+  #pt-lead { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #pt-lead line { stroke: url(#pt-ink); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 1 2; stroke-dashoffset: 1; }
+  #pt-lead.on line { animation: lead .85s var(--out) forwards; } @keyframes lead { 55% { stroke-dashoffset: 0; } to { stroke-dashoffset: -1; } }
   #pt-ring { position: absolute; inset: -4px; border-radius: 9px; border: 2px solid #ff375f; box-shadow: 0 0 0 4px rgba(255,55,95,.2), 0 0 18px rgba(255,55,95,.5);
     opacity: 0; transform: scale(1.4); transition: opacity .35s var(--ease), transform .5s var(--spring); pointer-events: none; }
   #pt-ring.on { opacity: 1; transform: none; animation: ring 1.2s .5s ease-in-out infinite; }
@@ -333,7 +345,7 @@
   <div id="orbwrap" class="r"><canvas id="orb"></canvas></div>
   <h1 class="r">Meet Atticus</h1>
   <p class="sub r" id="welcome-talk">Hold the shortcut, say what you need, let go. Your Mac does the rest.</p>
-  <div class="keys r"><div class="key" id="k1">⌃</div><div class="key" id="k2">⌥</div><div class="key wide" id="k3">Space</div></div>
+  <div class="keys r" id="welkeys"><div class="key">⌃</div><div class="key">⌥</div><div class="key wide">Space</div></div>
   <button class="btn r" data-go="perms">Get Started</button>
 </section>
 
@@ -358,7 +370,7 @@
 <section class="page" id="try">
   <h2 class="r">Try it now</h2>
   <p class="sub r" id="try-talk">Hold the keys anywhere, say what you need, then let go. Try one now.</p>
-  <div class="keys big r"><div class="key" id="t1">⌃</div><div class="key" id="t2">⌥</div><div class="key wide" id="t3">Space</div></div>
+  <div class="keys big r" id="trykeys"><div class="key">⌃</div><div class="key">⌥</div><div class="key wide">Space</div></div>
   <div id="hint" class="r">Hold the keys and say “open Calculator”.</div>
   <div class="bar2 r"><button class="btn quiet" data-go="mac" id="try-skip">Skip</button><button class="btn" data-go="mac" id="try-next" hidden>Next</button></div>
 </section>
@@ -366,7 +378,7 @@
 <section class="page" id="mac">
   <div class="kicker r">Your whole Mac, by voice</div>
   <h2 class="r">Say it. It’s done.</h2>
-  <p class="sub r">Run apps, arrange windows and play music in the background. A live mini screen shows the work; ask to focus it when you want.</p>
+  <p class="sub r">Run apps, arrange windows and play music in the background. When the work is out of sight, a live mini screen shows it; click it to open that window.</p>
   <div class="stage r" id="macstage" aria-hidden="true">
     <div class="mw" id="mw-chrome"><div class="tb"><i></i><i></i><i></i><span>Chrome</span></div><div class="ln"></div><div class="ln" style="width:60%"></div><div class="ln" style="width:75%"></div></div>
     <div class="mw" id="mw-notes"><div class="tb"><i></i><i></i><i></i><span>Notes</span></div><div class="ln" style="width:50%"></div><div class="ln"></div></div>
@@ -374,6 +386,7 @@
     <div class="fake gone2" id="mac-box"><div class="q" id="mac-q">“Chrome left, Notes right”</div><div id="mac-mini"><span>Spotify · Live</span><b>Lo-fi beats</b><div class="eq"><i></i><i></i><i></i></div></div><span id="mac-a">Done.</span></div>
   </div>
   <div class="says r"><i>“Open Spotify and play lo-fi”</i><i>“Make Chrome full screen”</i><i>“Volume to 30%”</i><i>“Turn on dark mode”</i></div>
+  <div class="done-note r" id="safe-note">Safe mode is on: deleting, sending or buying asks you first.</div>
   <div class="bar2 r"><button class="btn quiet" data-go="learn">Skip</button><button class="btn" data-go="learn">Next</button></div>
 </section>
 
@@ -405,7 +418,8 @@
   <p class="sub r" id="dc-sub"></p>
   <div class="stage r" aria-hidden="true">
     <div id="dc-doc"><small>To: Sam</small><span id="dc-words"></span><i id="dc-caret"></i></div>
-    <div class="fake gone2" id="dc-pill"><i></i><span id="dc-said"></span></div>
+    <span id="dc-said"></span>
+    <div class="fake gone2" id="dc-pill"><span class="wv"><i></i><i></i><i></i><i></i><i></i></span><span class="orb"></span><svg viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg></div>
     <div class="key" id="dc-key">fn</div>
   </div>
   <div class="says r" id="dc-ex" role="group" aria-label="Clean up examples"></div>
@@ -424,10 +438,11 @@
   <div class="stage r" id="ptstage" aria-hidden="true">
     <div id="pt-win"><div class="tb"><i></i><i></i><i></i></div>
       <div class="it"><b style="background:#8e8e93"></b>General</div>
-      <div class="it"><b style="background:#0a84ff"></b>Appearance<span id="pt-ring"></span></div>
+      <div class="it"><span id="pt-spot"><b style="background:#0a84ff"></b>Appearance<span id="pt-ring"></span></span></div>
       <div class="it"><b style="background:#ff9f0a"></b>Notifications</div>
       <div class="it"><b style="background:#30d158"></b>Battery</div></div>
     <div class="fake gone2" id="pt-box"><div class="q">“how do I turn on dark mode?”</div><div id="pt-ans">Step 1 of 2: click Appearance.</div></div>
+    <svg id="pt-lead"><defs><linearGradient id="pt-ink" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0a84ff" stop-opacity=".1"/><stop offset="1" stop-color="#0a84ff"/></linearGradient></defs><line pathLength="1"/></svg>
     <svg id="wb" width="220" height="146"><g data-s="1"><path class="tr" pathLength="1" d="M30 26V122H150Z"/><path d="M30 110h12v12"/></g>
       <g data-s="2"><text x="14" y="79">a</text><text x="86" y="140">b</text><text x="98" y="68">c</text></g>
       <g data-s="3"><text x="116" y="26">a² + b² = c²</text><text class="sm" x="122" y="44">3² + 4² = 5²</text></g></svg>
@@ -458,10 +473,10 @@
 <section class="page" id="work">
   <div class="kicker r">Your plan, your pace</div>
   <h2 class="r">Quick asks stay quick</h2>
-  <p class="sub r">Choose how much of your plan Atticus uses. A long ask moves to a background agent by itself, so you keep working. ⌃⌥↩ moves one sooner.</p>
+  <p class="sub r"><span id="wk-plan">Choose how much of your plan Atticus uses. </span>A long ask moves to a background agent by itself, so you keep working. ⌃⌥↩ moves one sooner.</p>
   <div class="stage r" aria-hidden="true">
     <div class="fake gone2" id="wk-box"><div class="q">“Find standing desks under $600”</div><div id="wk-line">Searching the web…</div></div>
-    <div class="fake gone2" id="wk-chip"><small>Agent · working</small><b>Standing desks</b><u></u></div>
+    <div class="fake gone2" id="wk-chip"><small id="wk-state">Agent · working</small><b>Standing desks</b><u></u></div>
   </div>
   <div class="list r">
     <div class="row" id="wk-brain"><div class="txt"><b>Intelligence</b><span id="wk-why"></span></div><div class="seg" data-k="routing" role="group" aria-label="Intelligence"><button data-v="cheapest">Cheapest</button><button data-v="balanced">Balanced</button><button data-v="capable">Most capable</button></div></div>
@@ -482,7 +497,7 @@
     </div>
   </div>
   <div class="mt-row r"><div class="ic" style="background:#30b0c7"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg></div>
-    <div class="txt"><b>Turn on Meeting Copilot<span class="beta">Beta</span></b><span>Then start it from the menu bar when a call begins.</span></div>
+    <div class="txt"><b>Turn on Meeting Copilot<span class="beta">Beta</span></b><span id="mt-hint"></span></div>
     <label class="sw"><input type="checkbox" data-k="meeting" aria-label="Meeting Copilot"></label></div>
   <div class="bar2 r"><button class="btn quiet" data-go="improve">Skip</button><button class="btn" data-go="improve">Next</button></div>
 </section>
@@ -574,14 +589,21 @@
       const on = prefs[g.dataset.k] === b.dataset.v; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
     }));
     $('wk-why').textContent = WHY[prefs.routing] || '';
-    $('wk-brain').hidden = provider === 'server';   // a custom server runs one model
+    $('safe-note').hidden = prefs.safe === false;
+    $('wk-brain').hidden = $('wk-plan').hidden = provider === 'server';   // a custom server runs one model
     if (!recording) dcKeys(prefs.dictateHotkeyLabel || '', 'Record Shortcut');
+    if (prefs.hotkeyLabel && prefs.hotkeyLabel !== talkLabel) {   // the talk shortcut as set; redrawn only when it changes, so held keys stay lit
+      talkLabel = prefs.hotkeyLabel;
+      const caps = () => capsOf(talkLabel).map(c => Object.assign(document.createElement('div'), { className: c.length > 3 ? 'key wide' : 'key', textContent: c }));
+      $('welkeys').replaceChildren(...caps()); $('trykeys').replaceChildren(...caps());
+    }
     const key = prefs.dictateHotkeyLabel;
     $('dc-sub').textContent = key ? `Hold ${key} to talk. Double-tap to lock.` : 'Give dictation a shortcut. Hold it to talk, double-tap to lock.';
     $('dc-key').textContent = key || 'fn'; $('dc-globe').hidden = !prefs.globeTaken;
     $('dc-mode').classList.toggle('dim', !prefs.dictateHotkeyLabel);
     document.querySelector('[data-k=dictateMode] [data-v=cleanup]').disabled = other;
     $('dc-mode-hint').textContent = other ? 'Clean up needs Claude.' : 'Clean up tidies it as shown. Verbatim types every word.';
+    $('mt-hint').textContent = other ? `With ${NAMES[provider]}, it saves the transcript on this Mac. Answers and recaps need Claude.` : 'Then start it from the menu bar when a call begins.';
   };
   document.querySelectorAll('.seg[data-k]').forEach(g => g.querySelectorAll('button').forEach(b => b.onclick = () => {
     prefs[g.dataset.k] = b.dataset.v; paintPrefs(); post({ do: 'set', k: g.dataset.k, v: b.dataset.v });
@@ -594,7 +616,7 @@
     $('dc-field').classList.toggle('set', !!label && !recording); $('dc-clear').hidden = !label || recording;
     if (!dcWarn && !recording) { $('dc-hint').textContent = dcHint(); $('dc-hint').className = ''; }
   };
-  const capsOf = label => { const m = label.match(/^([⌃⌥⇧⌘]*)(.*)$/); return [...m[1]].concat(m[2] ? [m[2]] : []); };
+  const capsOf = label => { const m = label.match(/^((?:fn|[⌃⌥⇧⌘])*)(.*)$/); return (m[1].match(/fn|./g) || []).concat(m[2] ? [m[2]] : []); };
   $('dc-field').onclick = () => {
     if (recording) return post({ do: 'cancelRecord' });
     recording = true; $('dc-field').classList.add('rec'); dcKeys('', 'Type Shortcut');
@@ -607,7 +629,7 @@
 
   // Permissions: icon color + SF-style glyph, why it's needed.
   const P = [
-    ['claude', 'Claude Plan', 'Checking your Claude sign-in…', '#d97757', '<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>'],
+    ['claude', 'AI Provider', 'Checking…', '#d97757', '<path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>'],
     ['mic', 'Microphone', 'Listens when you start a voice request.', '#ff9f0a', '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'],
     ['speech', 'Speech Recognition', 'Turns your words into text, on this Mac.', '#8e8e93', '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>'],
     ['ax', 'Accessibility', 'Moves windows and clicks buttons for you.', '#0a84ff', '<circle cx="12" cy="4.5" r="1.6"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5M12 14.5l-3 6M12 14.5l3 6"/>'],
@@ -705,27 +727,29 @@
     post({ do: 'grant', id: b.dataset.id });
   });
 
-  let planOK = false, last = null;
+  let planOK = false, last = null, toggleMode = false, talkLabel = '⌃⌥Space';
   const paintDone=s=>{
     const core=[['claude','AI provider'],['mic','Microphone'],['speech','Speech Recognition'],['ax','Accessibility']],missing=core.filter(([id])=>!s[id]).map(([,name])=>name),voice=['claude','mic','speech'].every(id=>s[id]);
     $('done-title').textContent=!missing.length?'You’re all set':voice?'Voice is ready':'Setup isn’t finished yet';
-    $('done-sub').textContent=!missing.length?'Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.':(voice?'Still needed for full Mac control: ':'Still needed: ')+missing.join(', ')+'. You can allow '+(missing.length===1?'it':'them')+' later in Setup & Permissions.';
+    $('done-sub').textContent=!missing.length?(toggleMode?'Press':'Hold')+' the shortcut anytime and just ask. Everything else lives in Settings, in the menu bar.':(voice?'Still needed for full Mac control: ':'Still needed: ')+missing.join(', ')+'. You can allow '+(missing.length===1?'it':'them')+' later in Setup & Permissions.';
     $('finish').textContent=voice?'Start Using Atticus':'Finish Setup Later';
   };
   window.ob = {
     mode(toggle) {
+      toggleMode = toggle;
+      if (!$('hint').classList.contains('yes')) $('hint').textContent = (toggle ? 'Press the shortcut' : 'Hold the keys') + ' and say “open Calculator”.';
       $('welcome-talk').textContent = (toggle ? 'Press the shortcut, speak, press again to send.' : 'Hold the shortcut, speak, release to send.') + ' Your Mac does the rest.';
       $('try-talk').textContent = (toggle ? 'Press the shortcut anywhere. Say what you need, then press again to send.' : 'Hold the keys anywhere, say what you need, then let go.') + ' Try one now.';
     },
-    keys(ctrl, opt) {   // live modifier state, many times a second
-      const k = KEYS[cur];
-      if (!k || $(k[2]).classList.contains('yes')) return;
-      $(k[0]).classList.toggle('lit', ctrl); $(k[1]).classList.toggle('lit', opt);
+    keys(held) {   // the modifiers held now ("⌃⌥", "fn"…), many times a second
+      const k = cur === 'try' ? [...$('trykeys').children] : [];   // only the try page reacts; the welcome keys are a demo
+      if (!k.length || k[0].classList.contains('yes')) return;
+      k.forEach(c => c.classList.toggle('lit', /^(fn|[⌃⌥⇧⌘])$/.test(c.textContent) && held.includes(c.textContent)));
     },
     tried() {   // the hotkey fired: keys go green, then on to the next step
-      const k = KEYS[cur];
-      if (!k || $(k[2]).classList.contains('yes')) return;
-      k.forEach((id, i) => setTimeout(() => { $(id).classList.remove('lit', 'down'); $(id).classList.add('yes'); }, i * 70));
+      const k = cur === 'try' ? [...$('trykeys').children] : [];
+      if (!k.length || k[0].classList.contains('yes')) return;
+      k.forEach((c, i) => setTimeout(() => { c.classList.remove('lit', 'down'); c.classList.add('yes'); }, i * 70));
       { $('hint').textContent = 'That’s it. Atticus is on it.'; $('hint').classList.add('yes'); }
       $('try-skip').hidden = true; $('try-next').hidden = false;
     },
@@ -799,8 +823,7 @@
   };
 
   // Welcome keys press in, hold, let go: the gesture itself.
-  const KEYS = { try: ['t1', 't2', 't3'] };   // only the try page reacts; the welcome keys are a demo
-  const keys = ['k1', 'k2', 'k3'].map($);   // the welcome demo keys
+  const keys = () => [...$('welkeys').children];   // the welcome demo keys
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const motionChange = () => new Promise(resolve => reduced.addEventListener('change', resolve, { once: true }));
   let welcomeGeneration = 0;
@@ -808,8 +831,8 @@
     if (reduced.matches) return;
     if (cur !== 'welcome') return setTimeout(press, 1500);
     const generation = welcomeGeneration;
-    keys.forEach((k, i) => setTimeout(() => generation === welcomeGeneration && k.classList.add('down'), i * 130));
-    setTimeout(() => generation === welcomeGeneration && keys.forEach(k => k.classList.remove('down')), 2100);
+    keys().forEach((k, i) => setTimeout(() => generation === welcomeGeneration && k.classList.add('down'), i * 130));
+    setTimeout(() => generation === welcomeGeneration && keys().forEach(k => k.classList.remove('down')), 2100);
     setTimeout(() => generation === welcomeGeneration && press(), 3600);
   };
   if (!reduced.matches) setTimeout(press, 1200);
@@ -830,9 +853,9 @@
   const word = ([w, x]) => Object.assign(document.createElement('span'), { textContent: w, className: x ? 'x' : '' });
   let dcAt = 0, dcGen = 0, dcWake = null;
   const dcPaint = i => $('dc-ex').querySelectorAll('button').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
-  const dcShow = i => {   // the finished example: struck words in the pill, clean text in the note
-    $('dc-said').replaceChildren(...said(DC[i][1]).flatMap(t => [word(t), ' ']));
-    $('dc-pill').classList.add('done'); $('dc-pill').classList.remove('gone2'); $('dc-words').textContent = DC[i][2]; dcPaint(i);
+  const dcShow = i => {   // the finished example: what was said with the slips struck, the pill's check, clean text in the note
+    $('dc-said').replaceChildren(...said(DC[i][1]).flatMap(t => [word(t), ' ']).slice(0, -1)); $('dc-said').classList.add('done');
+    $('dc-pill').classList.remove('gone2', 'work'); $('dc-pill').classList.add('done'); $('dc-words').textContent = DC[i][2]; dcPaint(i);
   };
   $('dc-ex').replaceChildren(...DC.map(([name, s, out], i) => Object.assign(document.createElement('button'), {
     textContent: name, ariaLabel: `${name}: you say “${s.replace(/[[\]]/g, '')}”, Clean up types “${out.replace(/\n/g, ' ')}”`,
@@ -841,6 +864,13 @@
     document.querySelectorAll('#ptstage [data-s]').forEach(e => e.classList.toggle('on', +e.dataset.s <= k));
     $('wb-n').textContent = Math.max(k, 1);
   };
+  const lead = () => {   // from the box's edge to just outside the spot, measured, so it fits any stage width
+    const s = $('ptstage').getBoundingClientRect(), b = $('pt-box').getBoundingClientRect(), t = $('pt-spot').getBoundingClientRect();
+    const xy = { x1: b.left - s.left, y1: b.top - s.top + b.height / 2, x2: t.right - s.left + 6, y2: t.top - s.top + t.height / 2 };
+    for (const el of [$('pt-lead').querySelector('line'), $('pt-ink')]) for (const k in xy) el.setAttribute(k, xy[k]);
+    $('pt-lead').classList.remove('on'); void $('pt-lead').getBoundingClientRect(); $('pt-lead').classList.add('on');
+  };
+  const WK_STARTED = 'I started an agent. I’ll ping you when it’s done.';
   const loops = {
     async text() {
       const line = $('tx-line'), words = $('tx-words'), box = $('tx-box'), btn = $('tx-go');
@@ -860,24 +890,25 @@
     async dictate() {   // one example per pass; picking an example wakes the current wait so it starts at once
       const gen = dcGen, i = dcAt, pill = $('dc-pill'), heard = $('dc-said'), words = $('dc-words'), key = $('dc-key');
       const ok = ms => new Promise(r => { dcWake = r; setTimeout(r, ms); }).then(() => !reduced.matches && gen === dcGen && cur === 'dictate');
-      dcPaint(i); words.textContent = ''; heard.replaceChildren(); pill.classList.remove('done'); pill.classList.add('gone2'); key.classList.remove('down');
-      if (!await ok(600)) return; key.classList.add('down'); pill.classList.remove('gone2');   // held: the pill listens
-      for (const t of said(DC[i][1])) { heard.append(word(t), ' '); if (!await ok(210)) return; }
-      if (!await ok(350)) return; key.classList.remove('down'); pill.classList.add('done');   // let go: the words land
-      if (!await ok(1000)) return; words.textContent = DC[i][2];
-      if (!await ok(500)) return; pill.classList.add('gone2');
+      dcPaint(i); words.textContent = ''; heard.replaceChildren(); heard.classList.remove('done'); pill.classList.remove('work', 'done'); pill.classList.add('gone2'); key.classList.remove('down');
+      if (!await ok(600)) return; key.classList.add('down'); pill.classList.remove('gone2');   // held: the pill's wave listens
+      for (const [n, t] of said(DC[i][1]).entries()) { heard.append(...(n ? [' '] : []), word(t)); if (!await ok(210)) return; }
+      if (!await ok(350)) return; key.classList.remove('down'); pill.classList.add('work'); heard.classList.add('done');   // let go: the orb cleans up
+      if (!await ok(1000)) return; words.textContent = DC[i][2]; pill.classList.replace('work', 'done');   // the words land, the check shows
+      if (!await ok(800)) return; pill.classList.add('gone2');
       if (await ok(2400)) dcAt = (i + 1) % DC.length;
     },
     async work() {
       const box = $('wk-box'), line = $('wk-line'), chip = $('wk-chip');
-      box.classList.add('gone2'); chip.classList.add('gone2'); line.textContent = 'Searching the web…';
-      await wait(600); box.classList.remove('gone2'); await wait(2000); line.textContent = 'Moving to an agent…'; await wait(1000);
-      box.classList.add('gone2'); await wait(300); chip.classList.remove('gone2'); await wait(3000);
+      box.classList.add('gone2'); chip.classList.add('gone2'); chip.classList.remove('done'); line.textContent = 'Searching the web…'; $('wk-state').textContent = 'Agent · working';
+      await wait(600); box.classList.remove('gone2'); await wait(2000);
+      line.textContent = WK_STARTED; chip.classList.remove('gone2'); await wait(1800);   // the box says it once; the chip shows the steps
+      box.classList.add('gone2'); await wait(2400); chip.classList.add('done'); $('wk-state').textContent = 'Agent · done'; await wait(2400);
     },
     async point() {   // a guide marks the spot, then an explanation builds up
       const st = $('ptstage'), box = $('pt-box'), ring = $('pt-ring');
-      st.classList.remove('wb'); wb(0); box.classList.add('gone2'); ring.classList.remove('on');
-      await wait(700); box.classList.remove('gone2'); await wait(1100); ring.classList.add('on'); await wait(3000);
+      st.classList.remove('wb'); wb(0); box.classList.add('gone2'); ring.classList.remove('on'); $('pt-lead').classList.remove('on');
+      await wait(700); box.classList.remove('gone2'); await wait(1100); lead(); await wait(400); ring.classList.add('on'); await wait(2600);
       st.classList.add('wb'); for (let k = 1; k <= 3; k++) { await wait(k === 1 ? 500 : 1600); wb(k); } await wait(3200);
     },
     async pointer() {
@@ -900,7 +931,7 @@
   const finals = { dictate() { dcShow(dcAt); },
                    pointer() { $('pa-box').classList.remove('gone2'); $('pa-mark').classList.add('on'); $('pa-pt').classList.add('on'); $('pa-hint').hidden = true; $('pa-chip').hidden = false;
                      $('pa-q').textContent = 'what’s wrong?'; $('pa-q').classList.add('on'); $('pa-a').hidden = false; },
-                   work() { $('wk-box').classList.remove('gone2'); $('wk-chip').classList.remove('gone2'); },
+                   work() { $('wk-line').textContent = WK_STARTED; $('wk-box').classList.remove('gone2'); $('wk-chip').classList.remove('gone2'); },
                    mac() { $('macstage').classList.add('snapped'); $('mac-play').classList.remove('gone2'); $('mac-box').classList.remove('gone2'); }, point() { $('ptstage').classList.add('wb'); wb(3); }, text() { $('tx-box').classList.remove('gone2'); $('tx-line').classList.add('sel'); },
                    meeting() { $('mt-q').classList.remove('gone2'); $('mt-think').hidden = true; $('mt-ans').classList.add('on'); } };
   for (const id of Object.keys(loops)) (async () => {
@@ -915,7 +946,7 @@
   reduced.addEventListener('change', () => {
     welcomeGeneration++; previewGeneration++;
     orbWake?.(); orbWake = null;
-    keys.forEach(k => k.classList.remove('down'));
+    keys().forEach(k => k.classList.remove('down'));
     if (reduced.matches) { dcGen++; dcWake?.(); Object.keys(loops).forEach(id => finals[id]()); }
     else setTimeout(press, 1200);
   });

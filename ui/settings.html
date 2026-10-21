@@ -697,12 +697,12 @@
     }
   }
 
-  const money = u => u < 1 ? (u * 100).toFixed(u < .1 ? 2 : 1) + '¢' : '$' + u.toFixed(2);
+  const money = u => '$' + u.toFixed(u < .01 ? 4 : 2);
   function state(s) {
     $('stats').innerHTML = [['Today', s.today], ['7 days', s.week], ['All time', s.all]].map(([n, u]) =>
-      `<div class="stat"><small>${n}</small><b>${u.asks}</b><span>asks · ${u.unknown ? '≥' : ''}${money(u.usd)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('') +
+      `<div class="stat"><small>${n}</small><b>${u.unknown ? '≥' : ''}${money(u.usd)}</b><span>${u.asks} asks ${money(u.askUsd ?? u.usd)} · ${u.agentCalls || 0} agent calls ${money(u.agentUsd || 0)}${u.asks ? ' · ' + u.secs + ' s avg' : ''}</span></div>`).join('') +
       (s.all.asks ? `<div class="stat"><small>Avg response</small><b>${s.all.secs} s</b><span>per ask, all time</span></div>` +
-        `<div class="stat"><small>Avg cost</small><b>${s.all.unknown ? '≥' : ''}${money(s.all.usd / s.all.asks)}</b><span>per ask, all time</span></div>` : '');
+        `<div class="stat"><small>Avg ask cost</small><b>${s.all.unknown ? '≥' : ''}${money((s.all.askUsd ?? s.all.usd) / s.all.asks)}</b><span>per ask, all time</span></div>` : '');
     const typed = $('newrule')?.value || '';
     $('rules').innerHTML = (s.rules.length ? s.rules.map((r, i) =>
       `<div class="row rule"><input class="field" data-rule="${i}" value="${esc(r)}" aria-label="Edit rule"><button class="x" data-i="${i}" aria-label="Forget this rule">${ICON.trash}</button></div>`).join('')

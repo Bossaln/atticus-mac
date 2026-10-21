@@ -220,6 +220,8 @@ enum Hands {
  static var window:UInt32 = 77, front:[String] = []
  static func targetWindow(_ a:TargetApp)->UInt32 { window }
  static func keysReachTask(_ pid:Int32)throws {}
+ static func webFocused(_ pid:Int32)->Bool { false }
+ static func postKey(_ e:Event,pid:Int32,web:Bool) { precondition(!web); e.postToPid(pid) }
  static func frontMouse(_ p:CGPoint,_ a:TargetApp,double:Bool,right:Bool,to:CGPoint?)throws { front.append("mouse") }
  static func frontWheel(_ d:String,_ p:CGPoint,_ a:TargetApp,fraction:Double)throws { front.append("wheel") }
 ''' + methods + '''
@@ -310,7 +312,8 @@ print("hands Quartz spies ok")
         header = header.replace('ProcessInfo.processInfo.environment', '["ATTICUS_DIR":CommandLine.arguments[1], "ATTICUS_AX_ONLY":"1"]')
         names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu','screenLease',
                  'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','stringValue','selectedRange','insertionTarget','insertAfter','typeText',
-                 'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root','windowNumber','targetWindow','lease','unlock','submitReceipt','keysReachTask']
+                 'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root','windowNumber','targetWindow','lease','unlock','submitReceipt','keysReachTask',
+                 'isShortcut','menuShortcut','webFocused']
         matches = list(re.finditer(r'^    static func (\w+)\(', section, re.M))
         methods = ''.join(section[m.start():matches[i+1].start() if i+1<len(matches) else section.rfind('\n}')]
                           for i,m in enumerate(matches) if m[1] in names)

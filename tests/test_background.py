@@ -29,6 +29,33 @@ class BackgroundTests(unittest.TestCase):
             atticus.gate()
         return json.loads(out.getvalue())['hookSpecificOutput']['permissionDecision'] if out.getvalue() else 'allow'
 
+    def test_instant_open_tells_the_focus_guard_it_was_asked(self):
+        calls = []
+        run = lambda cmd, **_: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, '', '')
+        with patch.object(atticus, 'LAST', os.path.join(os.environ['ATTICUS_ASK'], 'last')), \
+             patch.object(atticus, 'app_named', return_value='Fixture'), patch.object(atticus, 'skills', return_value={}), \
+             patch.object(atticus, 'pref', side_effect=lambda k, v=None: v), patch.object(atticus.subprocess, 'run', side_effect=run):
+            for words in ('launch fixture', 'open fixture'):
+                calls.clear()
+                with self.subTest(words=words):
+                    self.assertEqual(atticus.fast(words), 'Opened Fixture.')
+                    self.assertEqual(calls[-1], ['open', '-a', 'Fixture'])
+                    self.assertEqual(calls[:-1], [[atticus.APP, '--raise', 'user']] if words.startswith('launch') else [])   # "open" was freed by allow_focus already
+            calls.clear()
+            with patch.object(atticus, 'move_target', return_value=('Fixture', 'left', 'current')), \
+                 patch.object(atticus, 'place', return_value='Fixture window -> left of Main'):
+                self.assertEqual(atticus.fast('launch fixture on the left'), 'Fixture: left.')
+            self.assertEqual(calls[:2], [[atticus.APP, '--raise', 'user'], ['open', '-a', 'Fixture']])   # the inner "open" must not hide that the user asked
+
+    def test_settings_and_tool_hints_never_steer_to_focus(self):
+        self.assertIn('System settings: shell, defaults or AppleScript first; else open the pane with --bg', atticus.system_prompt(atticus.ASK_FIRST))
+        self.assertTrue(atticus.hands_valid(['click', 'Night Shift…', 'front']) and atticus.hands_valid(['click', 'Done', 'near', 'Sheet', 'double', 'front']))
+        self.assertFalse(atticus.hands_valid(['click', 'Done', 'front', 'front']))
+        swift = Path(atticus.ME).with_name('Atticus.swift').read_text()
+        # --front grants focus for the rest of the ask; a tool reply suggesting it made System Settings stay in front for "is Night Shift on?"
+        self.assertNotIn('--front', swift); self.assertNotIn('Bring the window forward', swift)
+        self.assertIn('case "front": guard !front', swift)
+
     def test_recursive_ask_and_unrequested_activation_are_denied(self):
         self.assertEqual(self.gate(f'env -u ATTICUS_ASK -u CLAUDECODE python3 {atticus.ME} ask again'), 'deny')
         self.assertEqual(self.gate(f'python3 {atticus.ME} --wait'), 'deny')

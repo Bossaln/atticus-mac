@@ -502,6 +502,13 @@ func loadPage(_ web: WKWebView, _ name: String) {
 
 // The screen under the mouse, else the main one.
 var mouseScreen: NSScreen { NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main! }
+// Every floating surface's one follow check: where a frame jumps once the pointer is on another display (same nearer side and
+// offsets, clamped there), or nil to stay. Callers set it without an animator so it never shows on both displays or crosses the gap.
+func pointerFollow(_ f: NSRect) -> NSRect? {
+    let to = mouseScreen.visibleFrame
+    guard NSEvent.pressedMouseButtons == 0, let from = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x: f.midX, y: f.midY)) })?.visibleFrame, from != to else { return nil }
+    return MeetingFrame.clamp(MeetingFrame.follow(f, from, to, right: f.midX > from.midX, top: f.midY > from.midY), to)
+}
 
 // Freeze the display where the ask began before live actions can move the cursor or box.
 func currentRequestScreen(_ box: NSWindow? = nil) -> String {
@@ -617,7 +624,8 @@ struct TextSelection {
             let release = { if let clipboard { Hands.unlock(clipboard) } }
             guard draft.isEmpty || restore != nil else { release(); done(false); return }
             let finish = { (ok: Bool) in restore?(); release(); done(ok) }
-            for e in [down, up] { e.flags = draft.isEmpty ? [] : .maskCommand; e.post(tap: .cghidEventTap) }
+            // The box is a non-activating panel: while it holds the keyboard, a system ⌘V lands in its own field, not the target.
+            for e in [down, up] { e.flags = draft.isEmpty ? [] : .maskCommand; if NSApp.keyWindow == nil { e.post(tap: .cghidEventTap) } else { e.postToPid(app.processIdentifier) } }
             confirm(until: Date().addingTimeInterval(0.45)) { result in
                 finish(valid() && result == .landed)
             }
@@ -691,7 +699,7 @@ final class DrawingPanel: NSPanel {
 }
 struct DrawingShape: Codable {
     let kind: String
-    var rect: [Double]?, at: [Double]?, points: [[Double]]?, text: String?, color: String?, size: String?
+    var rect: [Double]?, at: [Double]?, points: [[Double]]?, text: String?, color: String?, size: String?, fill: Bool?
 }
 struct DrawingStep: Codable {
     let id: String?, say: String?, target: String?, shapes: [DrawingShape]
@@ -786,7 +794,8 @@ final class DrawingView: NSView {
             let color = colors[shape.color ?? "red"] ?? .systemRed
             let path = CGMutablePath()
             if let r = shape.rect {
-                let frame = ScreenDrawing.ring(ScreenDrawing.rect(r),circle:shape.kind == "circle").offsetBy(dx:-origin.x,dy:-origin.y)
+                let bounds = ScreenDrawing.rect(r)
+                let frame = (shape.fill == true ? bounds : ScreenDrawing.ring(bounds,circle:shape.kind == "circle")).offsetBy(dx:-origin.x,dy:-origin.y)
                 if shape.kind == "circle" { path.addEllipse(in:frame) } else { path.addRoundedRect(in:frame,cornerWidth:6,cornerHeight:6) }
             } else if let points = shape.points?.map({ CGPoint(x:$0[0],y:$0[1]) }), let first = points.first {
                 var points = points
@@ -801,14 +810,15 @@ final class DrawingView: NSView {
                 if shape.kind == "label" {
                     guard screen.contains(point) else { continue }
                     let light = ["green","yellow","white"].contains(shape.color ?? "red")
-                    let attributes: [NSAttributedString.Key:Any] = [.font:NSFont.systemFont(ofSize:12,weight:.semibold),.foregroundColor:light ? NSColor.black : NSColor.white]
+                    let font = NSFont.systemFont(ofSize:["s":12,"m":15,"l":19][shape.size ?? "m"] ?? 15,weight:.semibold)
+                    let attributes: [NSAttributedString.Key:Any] = [.font:font,.foregroundColor:light ? NSColor.black : NSColor.white]
                     let text = NSAttributedString(string:shape.text ?? "",attributes:attributes)
-                    let size = CGSize(width:min(bounds.width-12, text.size().width+16), height:26)
+                    let textSize = text.size(), size = CGSize(width:min(bounds.width-12,textSize.width+16),height:textSize.height+10)
                     let box = ScreenDrawing.labelBox(size,at:point,keepOff:keepOff,in:screen.insetBy(dx:6,dy:6)).offsetBy(dx:-origin.x,dy:-origin.y)
                     let bg = CAShapeLayer(); bg.path = CGPath(roundedRect:box,cornerWidth:7,cornerHeight:7,transform:nil); bg.fillColor = (light ? color : color.blended(withFraction:0.2,of:.black) ?? color).cgColor
                     add(bg,box); hit(CGPath(rect:box,transform:nil),i)
                     let label = CATextLayer(); label.string = text; label.contentsScale = window?.backingScaleFactor ?? 2
-                    label.frame = CGRect(x:box.minX+8,y:box.minY+5,width:box.width-16,height:18); label.truncationMode = .end
+                    label.frame = CGRect(x:box.minX+8,y:box.midY-textSize.height/2,width:box.width-16,height:textSize.height); label.truncationMode = .end
                     add(label,box); continue
                 }
                 let p = local(ScreenDrawing.beside(point,targets))
@@ -820,10 +830,11 @@ final class DrawingView: NSView {
                 }
                 continue
             }
-            let stroke = CAShapeLayer(); stroke.path = path; stroke.fillColor = NSColor.clear.cgColor
+            let stroke = CAShapeLayer(); stroke.path = path; stroke.fillColor = shape.fill == true ? color.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
             stroke.strokeColor = color.cgColor; stroke.lineWidth = 3; stroke.lineCap = .round; stroke.lineJoin = .round
             stroke.shadowColor = NSColor.black.cgColor; stroke.shadowOpacity = 0.45; stroke.shadowRadius = 2
-            add(stroke,path.boundingBoxOfPath.insetBy(dx:-3,dy:-3)); hit(path.copy(strokingWithWidth:12,lineCap:.round,lineJoin:.round,miterLimit:2),i)
+            add(stroke,path.boundingBoxOfPath.insetBy(dx:-3,dy:-3))
+            hit(shape.fill == true ? path : path.copy(strokingWithWidth:12,lineCap:.round,lineJoin:.round,miterLimit:2),i)
             if animate { let draw = CABasicAnimation(keyPath:"strokeEnd"); draw.fromValue = 0; draw.toValue = 1; draw.duration = 0.28; stroke.add(draw,forKey:"draw") }
         }
         return drawn
@@ -1067,7 +1078,8 @@ final class ScreenDrawing {
                 guard ["red","blue","green","yellow","white"].contains(s.color ?? "red"),
                       s.rect == nil || ["rect","circle"].contains(s.kind), s.at == nil || ["pointer","label","text"].contains(s.kind),
                       s.points == nil || ["arrow","line","path"].contains(s.kind), s.text == nil || ["label","text"].contains(s.kind),
-                      s.size == nil || s.kind == "text" && ["s","m","l"].contains(s.size!) else { return false }
+                      s.size == nil || ["label","text"].contains(s.kind) && ["s","m","l"].contains(s.size!),
+                      s.fill == nil || ["rect","circle"].contains(s.kind) else { return false }
                 switch s.kind {
                 case "rect","circle": return s.rect.map(validRect) ?? (step.target != nil)
                 case "pointer","label": return (s.at.map { numbers($0,2) } ?? (step.target != nil)) && (s.kind != "label" || (1...120).contains(s.text?.count ?? 0))
@@ -1631,6 +1643,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var ahead = "", aheadItem: DispatchWorkItem?   // words the AI already started on while the user was still holding the keys
     var stops = 0   // each key release; tells a late "words landed" from a current one
     var dragging = false, fromTop = false   // moving or resizing the box; fromTop: dragging the top edge, so the bottom stays put
+    var followTimer: Timer?
     var began = Date()   // when recording began, for the recording limit
     var composing = false, compH: CGFloat = 0, clickTalk = false, quiet: DispatchWorkItem?   // typing box focused / its height from the bottom; mic button = talk without keys
     var toggleTalk = false, shortcutDown = false, pausedNotice = Date.distantPast
@@ -1649,6 +1662,8 @@ final class App: NSObject, WKScriptMessageHandler {
     var mine = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""   // the app the user's in, never Atticus itself
     var userApp = NSWorkspace.shared.frontmostApplication, guardUntil = Date.distantPast, allowUntil = Date.distantPast, userSwitch = Date.distantPast
     var allowUserApp = false
+    var hiddenAtStart = Set<pid_t>()   // re-activating the user's app does not cover an app that unhid itself (an empty desktop shows it)
+    func noteHidden() { hiddenAtStart = Set(NSWorkspace.shared.runningApplications.filter(\.isHidden).map(\.processIdentifier)) }
     let focusFile = (Prefs.path as NSString).deletingLastPathComponent + "/focus"   // atticus.py touches it when the user asked to see an app
     var focusFree: Bool { (try? FileManager.default.attributesOfItem(atPath: focusFile)[.modificationDate] as? Date).map { Date().timeIntervalSince($0) < 60 } ?? false }
     static func focusGuardActive(busy: Bool, recording: Bool, now: Date, until: Date, focusFree: Bool, workInFront: Bool = false) -> Bool {
@@ -1661,11 +1676,16 @@ final class App: NSObject, WKScriptMessageHandler {
     let recent = (Prefs.path as NSString).deletingLastPathComponent + "/recent.jsonl"
     // ⌘-Tab, a Space swipe and Spotlight never reach a global event monitor, so the guard took them for an app jumping forward and pulled
     // the user back. Hardware ⌘/⌥ releases, clicks and gestures in the last second mean the user switched; plain typing does not.
+    // Letting go of Atticus's own ⌃⌥ shortcut is a modifier change too, so one within 0.6 s of that release is not a switch.
+    static var keysUp = Date.distantPast
     static func userJustSwitched() -> Bool {
-        ([CGEventType.flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown] + [29, 20].compactMap { CGEventType(rawValue: $0) })
-            .contains { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) < 1 }
+        let ours = Date().timeIntervalSince(keysUp)
+        return ([CGEventType.flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown] + [29, 20].compactMap { CGEventType(rawValue: $0) }).contains {
+            let ago = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0)
+            return ago < 1 && !($0 == .flagsChanged && ago >= ours - 0.6 && ago <= ours + 0.1)
+        }
     }
-    func frame(_ requested: NSRect) {   // keep the close button and composer reachable on every display
+    func frame(_ requested: NSRect, animate: Bool = false) {   // keep the close button and composer reachable on every display
         let screen = NSScreen.screens.max { a, b in
             let x = a.visibleFrame.intersection(requested), y = b.visibleFrame.intersection(requested)
             return x.width * x.height < y.width * y.height
@@ -1676,7 +1696,7 @@ final class App: NSObject, WKScriptMessageHandler {
         f.size.width = min(f.width, bounds.width); f.size.height = min(f.height, bounds.height)
         f.origin.x = min(max(f.minX, bounds.minX), bounds.maxX - f.width)
         f.origin.y = min(max(f.minY, bounds.minY), bounds.maxY - f.height)
-        panel.setFrame(f, display: true); panel.invalidateShadow()
+        (animate ? panel.animator() : panel).setFrame(f, display: true); panel.invalidateShadow()
         js("limit", bounds.height)
     }
     // Which edges the point is on (window coordinates): 6 px edges, 14 px corners.
@@ -1742,10 +1762,18 @@ final class App: NSObject, WKScriptMessageHandler {
         if boxHome == nil { boxHome = panel.frame.origin }
         var f = panel.frame; f.origin = spot; glide(f)
     }
-    func glide(_ f: NSRect) {
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return frame(f) }
+    func glide(_ f: NSRect, done: (() -> Void)? = nil) {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { frame(f); done?(); return }
         NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; $0.timingFunction = CAMediaTimingFunction(name:.easeInEaseOut); panel.animator().setFrame(f, display:true) },
-                                             completionHandler: { [weak self] in guard let self, !dragging else { return }; frame(panel.frame) })   // keeps it on a display and updates its height limit
+                                             completionHandler: { [weak self] in guard let self else { return }; if !dragging { frame(panel.frame) }; done?() })   // keeps it on a display and updates its height limit
+    }
+    func followPointerScreen() {   // the box, typing box, answer and dictation pill alike
+        guard panel.isVisible, !dragging, !hovering, !agentsUI.cardBesideShelf, let f = pointerFollow(panel.frame) else { return }   // a done card beside the shelf moves with it
+        boxHome = nil; frame(f)
+    }
+    func startFollowingPointerScreen() {
+        guard followTimer == nil else { return }
+        followTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.followPointerScreen() }
     }
     func pointElement(_ point: CGPoint) -> String {
         guard AXIsProcessTrusted(), let app = userApp, !app.isTerminated else { return "" }
@@ -1873,7 +1901,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 if let ed = edges(p), !(overX(p) && !ed.r && !ed.t) { sizing = (NSEvent.mouseLocation, panel.frame, ed); fromTop = ed.t; pinned = true; dragging = true }
                 else if overX(p) { close(clear: true) }
                 else if p.y < compH { if !panel.isKeyWindow && replacement == nil { selection = TextSelection.capture() }; pinned = true; panel.makeKey(); panel.makeFirstResponder(web); return e }   // the typing box: a normal click; a waiting Insert/Replace keeps its target
-                else { pinned = true; grab = (NSEvent.mouseLocation, panel.frame.origin); moved = false; dragging = true }
+                else { if !pillOn { pinned = true }; grab = (NSEvent.mouseLocation, panel.frame.origin); moved = false; dragging = true }   // the pill is not a box to keep
             case .leftMouseDragged:
                 if let z = sizing {   // width from the side edges, height from the top/bottom; a corner does both
                     let m = NSEvent.mouseLocation, dx = m.x - z.mouse.x, dy = m.y - z.mouse.y
@@ -1885,7 +1913,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 }
                 guard let g = grab else { return e }
                 let m = NSEvent.mouseLocation
-                if abs(m.x - g.mouse.x) + abs(m.y - g.mouse.y) > 3 { moved = true; stuck = true; boxHome = nil }   // the user placed it: a drawing never moves it back
+                if abs(m.x - g.mouse.x) + abs(m.y - g.mouse.y) > 3 { moved = true; if !pillOn { stuck = true }; boxHome = nil }   // the user placed it: a drawing never moves it back
                 var f = panel.frame; f.origin = NSPoint(x: g.origin.x + m.x - g.mouse.x, y: g.origin.y + m.y - g.mouse.y); frame(f)
             default:
                 dragging = false
@@ -1913,7 +1941,7 @@ final class App: NSObject, WKScriptMessageHandler {
             let workInFront = Prefs.str("workIn") == "front"
             if Self.focusGuardActive(busy:busy, recording:engine.isRunning, now:now, until:guardUntil, focusFree:focusFree, workInFront:workInFront),
                now > allowUntil, now.timeIntervalSince(userSwitch) > 0.6, !Self.userJustSwitched(),
-               let u = userApp, !u.isTerminated, u != a { MiniScreen.activate(u.processIdentifier); return }
+               let u = userApp, !u.isTerminated, u != a { MiniScreen.activate(u.processIdentifier); if hiddenAtStart.contains(a.processIdentifier) { a.hide() }; return }
             if Self.isUserApp(now:now, allowUntil:allowUntil, userSwitch:userSwitch, allowUserApp:allowUserApp || workInFront) { mine = a.localizedName ?? ""; userApp = a }
         }
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] e in
@@ -1929,10 +1957,15 @@ final class App: NSObject, WKScriptMessageHandler {
             let frames = NSScreen.screens.map(\.frame), moved = frames != screenFrames   // Dock/menu-bar changes also post this; only real display changes stale a drawing
             screenFrames = frames
             let hadDrawing = moved && (drawing.active || drawing.hasInput)
-            if hadDrawing && (engine.isRunning || dictating) { hush() }
+            let wasDictating = dictating, interrupted = hadDrawing && (engine.isRunning || dictating || busy)
+            if interrupted { hush() }
             if hadDrawing { drawing.clear() }
             frame(panel.frame)
-            if hadDrawing { js("notice", "The screen changed. Ask again to continue.") }
+            if interrupted {
+                let message = "The screen changed. Ask again to continue."
+                if wasDictating { js("dictated", ["text": message, "ok": false]) } else { js("stopped", message) }
+                hide(after: 3)
+            } else if hadDrawing { js("notice", "The screen changed. Ask again to continue.") }
         }
         prepareSpeech()
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
@@ -1958,7 +1991,10 @@ final class App: NSObject, WKScriptMessageHandler {
                 composing = f
                 if !f && !hovering && !busy { hide(after: 3) }
             }
-            if b["type"] != nil { if engine.isRunning { if retryOffer { stopOfferInput() } else { hush() } } }   // typing wins; a pending failure card keeps its worker
+            if b["type"] != nil {   // typing wins; a pending failure card keeps its worker
+                if engine.isRunning { if retryOffer { stopOfferInput() } else { hush() } }
+                else if busy && proc == nil && offerText == nil && !dictating && text.isEmpty { hush(); js("msg", "") }   // released, nothing heard, still finalizing
+            }
             if let s = b["link"] as? String, let url = URL(string: s), ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") {   // a link in an answer: the user's browser
                 allowUntil = Date().addingTimeInterval(3); allowUserApp = true; NSWorkspace.shared.open(url)
             }
@@ -2015,12 +2051,18 @@ final class App: NSObject, WKScriptMessageHandler {
             if let ok = b["allow"] as? Bool, !askFile.isEmpty { allow(ok) }
             return
         }
-        guard let h = (m.body as? NSNumber).map({ CGFloat($0.doubleValue) }), h > 0 else { return }
+        let size = ((m.body as? [NSNumber]) ?? [m.body as? NSNumber].compactMap { $0 }).map { CGFloat($0.doubleValue) }
+        guard let h = size.last, h > 0 else { return }
         var f = panel.frame
         if !fromTop { f.origin.y = f.maxY - h }   // grows down from the top, unless the user is dragging the top edge
         f.size.height = h
+        let pillWidth = size.count == 2 && pillOn ? size[0] : nil   // a late one from before pill(false) must not shrink the box
+        if let w = pillWidth, w > 0 { if Prefs.str("corner") == "top-right" { f.origin.x = f.maxX - w }; f.size.width = w }
         guard f != panel.frame else { return }
-        frame(f)
+        if pillWidth != nil && panel.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {   // the pill morphs between its states
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.22; $0.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut); frame(f, animate: true) },
+                                                 completionHandler: { [self] in panel.invalidateShadow() })
+        } else { frame(f) }
         if drawing.active && !stuck && !dragging { avoidDrawing() }   // grew onto a mark; a box the user placed waits for the next step
     }
 
@@ -2035,6 +2077,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
     func show() {
         gen += 1; js("visible", true); js("mode", Prefs.bool("safe")); js("models", modelChoices())
+        startFollowingPointerScreen()
         if panel.isVisible {   // still up: stay where the user dragged it
             NSAnimationContext.runAnimationGroup { $0.duration = 0.18; panel.animator().alphaValue = 1 }
             return
@@ -2052,19 +2095,16 @@ final class App: NSObject, WKScriptMessageHandler {
         NSAnimationContext.runAnimationGroup { $0.duration = 0.18; panel.animator().alphaValue = 1 }
     }
 
-    func hide(after s: Double, shrink: Bool = false) {   // shrink: the dictation pill folds into its orb first
+    func hide(after s: Double) {
         let g = gen
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { [self] in
-            guard g == gen, !busy, !engine.isRunning, !hovering, !pinned, !stuck, !composing, !mini.holds, !drawing.active, !drawing.hasInput, ringGone == nil, voice?.isRunning != true else { return }   // moved or drawn on: only ✕ (Esc for a drawing); an answer's ring keeps its text up
-            let fade = { [self] in NSAnimationContext.runAnimationGroup({ $0.duration = shrink ? 0.18 : 0.3; panel.animator().alphaValue = 0 },
-                                                              completionHandler: { [self] in if g == gen { gone() } }) }
-            guard shrink, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return fade() }
-            js("fold")
-            var f = panel.frame; f.size.width = min(f.width, f.height)   // the orb's end stays put
-            NSAnimationContext.runAnimationGroup({ $0.duration = 0.22; $0.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut); panel.animator().setFrame(f, display: true) },
-                                                 completionHandler: { [self] in
-                if g == gen { fade() } else if panel.frame.width < 280 { pill(dictating) }   // interrupted by a new press: its width back
-            })
+            guard g == gen, !busy, !engine.isRunning, !hovering else { return }
+            guard !pinned, !stuck, !composing, !mini.holds, !drawing.active, !drawing.hasInput, ringGone == nil, voice?.isRunning != true else {   // moved or drawn on: only ✕ (Esc for a drawing); an answer's ring keeps its text up
+                if pillOn && !dictating { pill(false) }   // the box stays up for its answer or drawing: give it back, not a pill stuck on its check
+                return
+            }
+            NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; panel.animator().alphaValue = 0 },
+                                                 completionHandler: { [self] in if g == gen { gone() } })
         }
     }
 
@@ -2103,16 +2143,20 @@ final class App: NSObject, WKScriptMessageHandler {
     func gone() {
         defaultKey(false)
         mini.reset()
+        followTimer?.invalidate(); followTimer = nil
         panel.orderOut(nil); agentCard = ""; pinned = false; stuck = false; boxHome = nil; composing = false; js("compose", false); js("visible", false)
         if hovering || xHot { hovering = false; xHot = false; js("hover", false); js("xhot", false); NSCursor.arrow.set() }   // a hidden panel gets no mouseExited
         pill(false)
         if let r = escRef { UnregisterEventHotKey(r); escRef = nil }
     }
-    func pill(_ on: Bool) {   // dictation is a small fixed pill; the box gets its saved width back
-        js("dictate", on)
-        let w = CGFloat(on ? 280 : max(340, Prefs.num("boxW")))
-        var f = panel.frame; guard f.width != w else { return }
+    var pillOn = false
+    func pill(_ on: Bool) {   // dictation is a pill the page sizes (a hidden one starts as the dot it grows from); the box gets its saved width back
+        pillOn = on; js("dictate", on)
+        guard !on || !panel.isVisible else { return }
+        let w = CGFloat(on ? 36 : max(340, Prefs.num("boxW")))
+        var f = panel.frame; guard f.width != w || on && f.height != w else { return }
         if Prefs.str("corner") == "top-right" { f.origin.x = f.maxX - w }
+        if on { f.origin.y = f.maxY - w; f.size.height = w }
         f.size.width = w; frame(f)
     }
 
@@ -2214,8 +2258,11 @@ final class App: NSObject, WKScriptMessageHandler {
     func shortcut(_ pressed: Bool) {
         if meeting.running { if pressed { meeting.focus() }; return }
         if !pressed {
-            shortcutDown = false
-            if engine.isRunning && !toggleTalk && !clickTalk { stop() }
+            shortcutDown = false; Self.keysUp = Date()
+            guard engine.isRunning && !toggleTalk && !clickTalk else { return }
+            // a tap: nobody spoke in 0.3 s, so stop now instead of waiting on the recognizer to report nothing
+            if text.isEmpty && offerText == nil && Date().timeIntervalSince(began) < 0.3 { hush(); js("msg", ""); return hide(after: 0.2) }
+            stop()
             return
         }
         guard !shortcutDown else { return }   // one action per physical press, including key repeat
@@ -2243,7 +2290,7 @@ final class App: NSObject, WKScriptMessageHandler {
     // Hold to talk, release to insert. A quick tap waits a moment: a second tap locks it on until the next press (toggleTalk).
     func dictateShortcut(_ pressed: Bool) {
         if !pressed {
-            dictateShortcutDown = false
+            dictateShortcutDown = false; Self.keysUp = Date()
             guard engine.isRunning, dictating, !toggleTalk, dictateTap == nil else { return }
             if Date().timeIntervalSince(dictatePressed) > 0.3 { return stop() }
             let id = listenID, tap = DispatchWorkItem { [weak self] in
@@ -2321,14 +2368,11 @@ final class App: NSObject, WKScriptMessageHandler {
                 if secureField {
                     hush(); js("dictated", ["text": "Dictation is off in secure fields", "ok": false]); hide(after: 3); return
                 }
-                guard let selected else {
-                    hush()
-                    let message = AXIsProcessTrusted()
-                        ? "Click an editable text field, then try dictation again"
-                        : "Allow Accessibility in System Settings → Privacy & Security → Accessibility"
-                    js("dictated", ["text": message, "ok": false]); hide(after: 6); return
-                }
                 dictateSelectionPending = false
+                guard let selected else {   // no text field: the words still go to History ("Nothing selected to insert")
+                    if AXIsProcessTrusted() { return }
+                    hush(); js("dictated", ["text": "Allow Accessibility in System Settings → Privacy & Security → Accessibility", "ok": false]); hide(after: 6); return
+                }
                 dictateSelection = selected
                 dictateBefore = before
             }
@@ -2405,7 +2449,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         drawingReply = !dictate && drawing.active
         let replying = drawingReply || retryOffer && !askFile.isEmpty
-        replyAgent = dictate || replying ? "" : agentCard
+        replyAgent = dictate || (retryOffer && !askFile.isEmpty) ? "" : agentCard
         if !replying { if !dictate && !drawing.hasInput { drawing.clear() }; mini.reset(); try? FileManager.default.removeItem(atPath: focusFile) }   // a new ask: "show it" from the last one no longer counts
         guard !Prefs.bool("paused") else { dictating = false; return }
         dictating = dictate
@@ -2417,7 +2461,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if busy && !replying {   // pressed again while it works = cancel
             return cancel()
         }
-        cancelFast()
+        cancelFast(); noteHidden()
         if dictate {
             dictateCleanup = Prefs.str("dictateMode") == "cleanup"
             captureDictationSelection(); replacement = nil
@@ -2447,7 +2491,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
         }
         quietAudio.begin(Prefs.bool("quietAudio"), level: Float32(Prefs.num("quietLevel")))
-        listenID += 1; let listeningID = listenID
+        listenID += 1; let listeningID = listenID; began = Date()   // key-down until the mic is ready; a release in that gap is a tap
         speechInputs = SpeechInputs(); speechText = [:]; speechSegment = 0; nextSpeechRollover = 50
         let first = beginSpeechSegment("", listeningID: listeningID)
         feed = first.feed; speechInputID = first.inputID; analyzer = first.analyzer; reading = first.reading; activeSpeechSegment = first.segment
@@ -2494,7 +2538,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func heard(_ now: String) {
         guard engine.isRunning || busy else { return }
         text = now
-        if dictating { js("words", text); return }
+        if dictating { return }   // the pill shows only the wave, never the words
         if offerText != nil {
             js(drawingReply ? "words" : "draft", now)
             if clickTalk { quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q; DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q) }
@@ -2594,6 +2638,7 @@ final class App: NSObject, WKScriptMessageHandler {
             else {
                 if let old = offerText { let partial = text; text = old; offerText = nil; busy = proc?.isRunning == true; js("draft", partial); return }   // a drawing reply has no worker; a card's keeps waiting
                 if dictating { hush(); cue("soundStop"); return hide(after: 0.2) }
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { hush(); js("msg", ""); return hide(after: 0.2) }   // nothing to review
                 review("Couldn’t confirm your words. Check them and press Return.")
             }
         }
@@ -2732,6 +2777,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func dictationDeliveryFailed(_ value: String, cleanup: Bool = false) {
+        let noTarget = dictateSelection == nil
         busy = false; dictating = false; dictateSelection = nil
         let failed = cleanup ? "Couldn’t clean up." : "Couldn’t insert."
         cue("soundStop")
@@ -2739,7 +2785,7 @@ final class App: NSObject, WKScriptMessageHandler {
         guard Prefs.bool("dictateHistory") && saveDictation(value, appName: dictationAppName) else {
             js("dictated", ["text": failed + " Your words are still here.", "ok": false, "words": value]); return
         }
-        js("dictated", ["text": (cleanup ? failed + " " : "") + "Saved to History", "ok": false]); hide(after: 3)
+        js("dictated", ["text": cleanup || !noTarget ? failed + " Saved to History." : "Nothing selected to insert — saved to History.", "ok": false]); hide(after: 3)
     }
 
     func insertDictation(_ value: String) {
@@ -2754,7 +2800,7 @@ final class App: NSObject, WKScriptMessageHandler {
             guard let self, dictateID == id else { return }
             if !ok { dictationDeliveryFailed(value); return }
             busy = false; dictating = false; dictateSelection = nil
-            cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.15, shrink: true); inserted()
+            cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.8); inserted()
         }
     }
 
@@ -2777,7 +2823,8 @@ final class App: NSObject, WKScriptMessageHandler {
         if !panel.isKeyWindow { selection = TextSelection.capture() }
         if !Prefs.bool("selection") { selection = nil }
         if !drawing.active { targetScreen = currentRequestScreen(panel) }   // follow-ups stay with the guide, not its relocated box
-        text = t; replacement = nil; replyAgent = agentCard
+        text = t; replacement = nil
+        if !heard { replyAgent = agentCard }   // a spoken drawing reply keeps the done card captured at key-down
         if !heard { js("listen", keep); if let s = selection { js("selected", s.text) } }; show(); js("words", t); run(t)
     }
 
@@ -2811,8 +2858,8 @@ final class App: NSObject, WKScriptMessageHandler {
         dropAhead()
         // the rest keeps the whole sentence: "for e-bikes, open the cheapest" alone lost "on Amazon"
         if !rest.isEmpty { return run(did.isEmpty ? rest : text, remaining: did.isEmpty ? nil : rest) }
-        busy = false; unwarm()   // nothing left for the AI
-        if did.isEmpty { js("msg", "Didn't catch that."); return hide(after: 1.2) }
+        busy = false; guardUntil = Date().addingTimeInterval(2); unwarm()   // nothing left for the AI; an app an instant command started can still jump forward
+        if did.isEmpty { js("msg", ""); return hide(after: 0.2) }   // nothing heard: end quietly, no error line
         answer = "✓ " + did.joined(separator: " ")
         deliver(did.joined(separator: " "))
         js("line", answer); lastDone = Date(); cue("soundDone"); hide(after: linger(5))
@@ -2925,7 +2972,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func run(_ t: String, speculative: Bool = false, remaining: String? = nil) {
         let point = pointContext, drawn = drawing.summary
         pointContext = nil; unpoint(false)
-        drawing.clearInput(); drawing.deselect(); mini.reset(); busy = true; agentMoveFile = ""; answer = ""; showAgent = ""; try? FileManager.default.removeItem(atPath: focusFile)
+        drawing.clearInput(); drawing.deselect(); mini.reset(); if !busy && !engine.isRunning { noteHidden() }; busy = true; agentMoveFile = ""; answer = ""; showAgent = ""; try? FileManager.default.removeItem(atPath: focusFile)
         if !speculative { js("think") }
         if let w = warm, !w.p.isRunning { try? w.input.close(); warm = nil }
         if warm != nil && warmSel != selKey { unwarm() }   // spawned before the selection changed
@@ -3003,7 +3050,11 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         }
         NotificationCenter.default.addObserver(forName:NSApplication.didChangeScreenParametersNotification, object:nil, queue:.main) { [weak self] _ in
             guard let self else { return }
-            if let shelf, let screen = shelf.screen ?? NSScreen.main { shelf.setFrame(MeetingFrame.clamp(shelf.frame,screen.visibleFrame),display:true) }
+            if let shelf, let screen = shelf.screen ?? NSScreen.main {
+                let f = MeetingFrame.clamp(shelf.frame,screen.visibleFrame)
+                shelf.setFrame(f,display:true)
+                if cardBesideShelf { app.frame(Self.doneFrame(app.panel.frame,shelf:f,shelfShown:shelf.isVisible,bounds:screen.visibleFrame)) }
+            }
             if let view, let screen = view.screen ?? NSScreen.main { view.setFrame(MeetingFrame.clamp(view.frame,screen.visibleFrame),display:true) }
         }
         monitor = NSEvent.addLocalMonitorForEvents(matching:[.leftMouseDown,.leftMouseDragged,.leftMouseUp]) { [weak self] e in
@@ -3161,7 +3212,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         return f
     }
     func placeShelf(_ screen:NSScreen?) {
-        guard let shelf, let screen = screen ?? NSScreen.main else { return }
+        guard let shelf, let screen = screen ?? NSScreen.main, !(shelf.isVisible && shelf.screen == screen) else { return }   // already there: keep the side it followed with
         let bounds = screen.visibleFrame, saved = (Prefs.d["agentFrames"] as? [String:[Double]])?[MeetingFrame.key(screen)]
         shelf.setFrame(Self.shelfFrame(shelf.frame,bounds,saved),display:true)
     }
@@ -3170,6 +3221,22 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         f.origin = NSPoint(x:bounds.maxX-f.width-12,y:bounds.maxY-f.height-8)
         if let saved, saved.count == 2, saved.allSatisfy(\.isFinite) { f.origin = NSPoint(x:saved[0],y:saved[1]-f.height) }
         return MeetingFrame.clamp(f,bounds)
+    }
+    // The shelf follows the pointer's display like the box, keeping its side and offsets. The pointer is then off the shelf,
+    // so a hovered chip shows as `expanded` until its grace period ends; an open chip, a drag or the orb's swim holds it.
+    var following = false, byShelf = false   // byShelf: the done card opened beside the shelf (doneFrame)
+    var cardBesideShelf: Bool { ping != nil && byShelf && !app.stuck && app.panel.isVisible && shelf?.isVisible == true }
+    func follow() {
+        guard let shelf, drag == nil, flight == nil, !following, pointerFollow(shelf.frame) != nil, !(cardBesideShelf && (app.dragging || app.hovering)) else { return }
+        following = true
+        shelfWeb?.evaluateJavaScript("agents.expanded()") { [weak self] open, _ in
+            guard let self, let shelf = self.shelf else { return }
+            self.following = false
+            guard (open as? String ?? "").isEmpty || !shelf.isVisible, self.drag == nil, let f = pointerFollow(shelf.frame) else { return }
+            let card = self.cardBesideShelf
+            shelf.setFrame(f,display:true)
+            if card { app.frame(Self.doneFrame(app.panel.frame,shelf:f,shelfShown:shelf.isVisible,bounds:mouseScreen.visibleFrame)) }
+        }
     }
     // The agent's orb lifts off the hand-off card and swims to the shelf's top slot: one transient panel, Core Animation only,
     // so nothing runs per frame in the app or WebKit. Reduce Motion (or no card) skips the swim; the chip cross-fades in.
@@ -3320,7 +3387,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     func show(_ id:String) {
         guard let row = rows[id] else { return }
         guard row["status"] as? String == "done" else { openView(id); return }
-        pending.removeAll { $0 == id }; ping = id; app.show()
+        pending.removeAll { $0 == id }; ping = id; byShelf = false; app.show()
         app.pinned = true; app.agentCard = id; app.js("agentDone",row); send(["action":"seen","id":id])
     }
     func tick() {
@@ -3338,6 +3405,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
                 let fade = nearSince.map { Date().timeIntervalSince($0) >= 0.3 } ?? false
                 if shelf.ignoresMouseEvents != fade { shelf.ignoresMouseEvents = fade; NSAnimationContext.runAnimationGroup { $0.duration = 0.2; shelf.animator().alphaValue = fade ? 0.25 : 1 } }   // eased, never a snap
             }
+            follow()
         }
         if ping != nil, !app.panel.isVisible || app.busy || app.engine.isRunning {
             ping = nil; app.agentCard = ""; app.pinned = false; app.defaultKey(false); app.js("agentCancelled")
@@ -3351,7 +3419,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         guard Date().timeIntervalSince(lastKey) >= 1.5 else { return }   // the card holds Return: never pop it up mid-typing, box shown or not
         let id = pending.removeFirst(); guard let row = rows[id] else { return }; ping = id
         let fresh = !app.panel.isVisible
-        app.show()
+        app.show(); byShelf = fresh && shelf != nil
         if fresh, let shelf, let screen = shelf.screen ?? NSScreen.main {
             app.frame(Self.doneFrame(app.panel.frame,shelf:shelf.frame,shelfShown:shelf.isVisible,bounds:screen.visibleFrame))
         }
@@ -3479,8 +3547,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         var tick = 0
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in   // keys 20×/s, permissions 1×/s
             guard let self else { return }
-            let f = NSEvent.modifierFlags
-            web?.evaluateJavaScript("ob.keys(\(f.contains(.control)), \(f.contains(.option)))")
+            call("ob.keys", shortcutModifierLabel(NSEvent.modifierFlags))
             tick += 1
             if tick % 20 == 1 { push() }
             if tick % 100 == 1 { checkPlan() }   // every 5 s: it starts Claude Code, too slow for every second
@@ -3495,7 +3562,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                 if self?.screenInitiallyGranted == false, s["screen"] == true { self?.screenGrantedDuringSetup = true }
                 self?.call("ob.set", s)
                 self?.web?.evaluateJavaScript("ob.mode(\(Prefs.str("talkMode") == "toggle"))")
-                self?.call("ob.prefs", ["meeting": Prefs.bool("meeting"), "draw": Prefs.bool("draw"), "routing": Prefs.str("routing"),
+                self?.call("ob.prefs", ["meeting": Prefs.bool("meeting"), "draw": Prefs.bool("draw"), "routing": Prefs.str("routing"), "hotkeyLabel": Prefs.str("hotkeyLabel"), "safe": Prefs.bool("safe"),
                                         "dictateMode": Prefs.str("dictateMode"), "dictateHotkeyLabel": Prefs.str("dictateHotkeyLabel"), "globeTaken": globeKeyTaken()])
                 self?.call("ob.server", ["apiBase": Prefs.str("apiBase"), "apiModel": Prefs.str("apiModel")])
             }
@@ -3965,12 +4032,22 @@ final class MenuBar: NSObject, NSMenuDelegate {
     }
     func add(_ m: NSMenu, _ t: String, _ a: Selector, _ k: String) { let i = NSMenuItem(title: t, action: a, keyEquivalent: k); i.target = self; m.addItem(i) }
     func today() -> String {
-        let day = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: Date()) }()
-        let log = (try? String(contentsOfFile: (Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl", encoding: .utf8)) ?? ""
+        let format = DateFormatter(); format.dateFormat = "yyyy-MM-dd"; let day = format.string(from: Date())
+        let root = (Prefs.path as NSString).deletingLastPathComponent
+        let log = (try? String(contentsOfFile: root + "/log.jsonl", encoding: .utf8)) ?? ""
         let rows = log.split(separator: "\n").compactMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
             .filter { ($0["at"] as? String ?? "").hasPrefix(day) && $0["reply"] != nil }
-        let usd = rows.reduce(0.0) { $0 + (($1["usd"] as? NSNumber)?.doubleValue ?? 0) }
-        return "Today: \(rows.count) ask\(rows.count == 1 ? "" : "s") · " + (rows.contains { $0["usd"] is NSNull } ? "≥" : "") + (usd < 1 ? String(format: "%.2f¢", usd * 100) : String(format: "$%.2f", usd))
+        let askUSD = rows.reduce(0.0) { $0 + (($1["usd"] as? NSNumber)?.doubleValue ?? 0) }
+        let agentUSD = ((try? FileManager.default.contentsOfDirectory(atPath: root + "/agents")) ?? []).reduce(0.0) { total, name in
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: root + "/agents/" + name + "/state.json")),
+                  let row = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return total }
+            if row["costDay"] as? String == day { return total + ((row["costToday"] as? NSNumber)?.doubleValue ?? 0) }
+            guard row["costDay"] == nil, let created = (row["created"] as? NSNumber)?.doubleValue,
+                  format.string(from: Date(timeIntervalSince1970: created)) == day else { return total }
+            return total + ((row["cost"] as? NSNumber)?.doubleValue ?? 0)   // shortcut: legacy states use creation day; exact daily counters start with this version
+        }
+        let lower = rows.contains { $0["usd"] is NSNull } ? "≥" : ""
+        return "Today: \(lower)\(String(format: "$%.2f", askUSD + agentUSD)) · asks \(String(format: "$%.2f", askUSD)) · agents \(String(format: "$%.2f", agentUSD))"
     }
     @objc func toggleMeeting() { meeting.running ? meeting.stop() : meeting.open() }
     @objc func ask() { if meeting.running { return meeting.focus() }; app.clickTalk = true; app.start(); if !app.engine.isRunning { app.clickTalk = false } }   // the same box as the shortcut, like its mic button
@@ -4557,6 +4634,13 @@ enum MeetingFrame {
         f.origin.x = min(max(f.minX, bounds.minX), bounds.maxX - f.width)
         f.origin.y = min(max(f.minY, bounds.minY), bounds.maxY - f.height)
         return f
+    }
+    // The same frame on another display: the same distance from the chosen side and from the top or bottom.
+    static func follow(_ f: NSRect, _ from: NSRect, _ to: NSRect, right: Bool, top: Bool) -> NSRect {
+        var g = f
+        g.origin.x = right ? to.maxX - (from.maxX - f.maxX) - f.width : to.minX + (f.minX - from.minX)
+        g.origin.y = top ? to.maxY - (from.maxY - f.maxY) - f.height : to.minY + (f.minY - from.minY)
+        return g
     }
     static func initial(_ saved: [Double]?, _ bounds: NSRect) -> NSRect {
         let fallback = NSRect(x: bounds.minX + 12, y: bounds.maxY - min(470, bounds.height - 24) - 12, width: min(340, bounds.width - 24), height: min(470, bounds.height - 24))
@@ -5816,13 +5900,38 @@ enum Hands {
         }
         throw Failure("Invalid menu path.")
     }
+    // AXMenuItemCmdModifiers bits: 1 shift, 2 option, 4 control, 8 no command.
+    static func isShortcut(_ text: String, cmdChar: String, modifiers: Int) -> Bool {
+        guard let (_, flags) = try? keys(text), let key = normalized(text).replacingOccurrences(of:" ",with:"").split(separator:"+",omittingEmptySubsequences:false).last, key.count == 1 else { return false }
+        return flags.contains(.maskCommand) && modifiers & 8 == 0 && cmdChar.uppercased() == key.uppercased() &&
+            (modifiers & 1 != 0) == flags.contains(.maskShift) && (modifiers & 2 != 0) == flags.contains(.maskAlternate) && (modifiers & 4 != 0) == flags.contains(.maskControl)
+    }
+    // Background keys reach an app's views but never its menu shortcuts (a background cmd+s saves nothing; trycua/cua-driver found the same),
+    // so a native app behind the user's runs the enabled menu item for that shortcut. Web content keeps its keys: the page may handle them.
+    static func menuShortcut(_ text: String, _ a: NSRunningApplication) -> (AXUIElement, String)? {
+        guard !MiniScreen.workInFront, NSWorkspace.shared.frontmostApplication?.processIdentifier != a.processIdentifier, !webFocused(a.processIdentifier) else { return nil }
+        let application = AXUIElementCreateApplication(a.processIdentifier); AXUIElementSetMessagingTimeout(application, 0.15)
+        guard let bar = element(application, kAXMenuBarAttribute) else { return nil }
+        var queue = children(bar).dropFirst().map { ($0, [name($0)], 0) }, i = 0; let start = Date()   // the Apple menu belongs to the system
+        while i < queue.count && i < 2000 && Date().timeIntervalSince(start) < 0.5 {
+            let (item, path, depth) = queue[i]; i += 1
+            if let char = attribute(item, "AXMenuItemCmdChar") as? String, !char.isEmpty {
+                if isShortcut(text, cmdChar: char, modifiers: (attribute(item, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue ?? 0),
+                   attribute(item, kAXEnabledAttribute) as? Bool != false { return (item, mask(path.joined(separator: " > "))) }
+            } else if depth < 6 {
+                for child in children(item) { queue.append((child, attribute(child, kAXRoleAttribute) as? String == "AXMenu" ? path : path + [name(child)], depth + 1)) }
+            }
+        }
+        return nil
+    }
     static func sendKeys(_ text: String, pid: Int32, times: Int = 1) throws {
         let (code, flags) = try keys(text)
         guard (1...50).contains(times), let source = CGEventSource(stateID: .privateState) else { throw Failure("Invalid key repeat count.") }
         try keysReachTask(pid)
+        let web = !flags.contains(.maskCommand) && NSWorkspace.shared.frontmostApplication?.processIdentifier != pid && webFocused(pid)
         for _ in 0..<times {
             try checkStopped()
-            for down in [true, false] { guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { throw Failure("Could not create key event.") }; event.flags = flags; event.postToPid(pid) }
+            for down in [true, false] { guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { throw Failure("Could not create key event.") }; event.flags = flags; postKey(event, pid: pid, web: web) }
         }
     }
     // Background input: each event goes to the app's process with its window stamped in, so the pointer, the front app,
@@ -5830,6 +5939,18 @@ enum Hands {
     static let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
     static let stampLocation = dlsym(skyLight, "CGEventSetWindowLocation").map { unsafeBitCast($0, to: (@convention(c) (CGEvent, CGPoint) -> Void).self) }
     static let skyPost = dlsym(skyLight, "SLEventPostToPid").map { unsafeBitCast($0, to: (@convention(c) (pid_t, CGEvent) -> Void).self) }
+    // Background web content (Chromium, Electron) takes keys as live input only through SkyLight with an authentication message
+    // (macOS 15+; technique from trycua/cua-driver, MIT). Other keys keep the plain post: authenticated keys skip the path menu shortcuts use.
+    static let authenticate = dlsym(skyLight, "SLEventSetAuthenticationMessage").map { unsafeBitCast($0, to: (@convention(c) (CGEvent, AnyObject) -> Void).self) }
+    static func postKey(_ e: CGEvent, pid: Int32, web: Bool) {
+        let factory = NSSelectorFromString("messageWithEventRecord:pid:version:")
+        guard web, let skyPost, let authenticate, let type: AnyClass = NSClassFromString("SLSEventAuthenticationMessage"), (type as AnyObject).responds(to: factory),
+              let method = (type as AnyObject).method(for: factory),
+              let record = Unmanaged.passUnretained(e).toOpaque().load(fromByteOffset: 24, as: UnsafeMutableRawPointer?.self),   // CGEvent: CFRuntimeBase, UInt32, SLSEventRecord *
+              let message = unsafeBitCast(method, to: (@convention(c) (AnyClass, Selector, UnsafeMutableRawPointer, Int32, UInt32) -> Unmanaged<AnyObject>?).self)(type, factory, record, pid, 0)?.takeUnretainedValue()
+        else { return e.postToPid(pid) }
+        authenticate(e, message); skyPost(pid, e)
+    }
     static func deliver(_ e: CGEvent, at p: CGPoint, pid: Int32, window: UInt32, fields: [UInt32: Int64] = [:]) {
         e.flags = []; e.location = p; stampLocation?(e, p)
         let routing: [UInt32: Int64] = window == 0 ? [40: Int64(pid)] : [40: Int64(pid), 51: Int64(window), 91: Int64(window), 92: Int64(window)]
@@ -5846,6 +5967,16 @@ enum Hands {
             previous.activate()
             if let window { _ = perform(window,["AXRaise"]) }
         }
+    }
+    static func webFocused(_ pid: Int32) -> Bool {
+        let application = AXUIElementCreateApplication(pid); AXUIElementSetMessagingTimeout(application, 0.15)
+        var item = element(application, kAXFocusedUIElementAttribute)
+        for _ in 0..<64 {
+            guard let e = item else { return false }
+            if attribute(e, kAXRoleAttribute) as? String == "AXWebArea" { return true }
+            item = element(e, kAXParentAttribute).flatMap { CFEqual($0, e) ? nil : $0 }
+        }
+        return false
     }
     // An app sends keys to its own focused window. With a task window pinned, keys go only when that window has the focus.
     static func keysReachTask(_ pid: Int32) throws {
@@ -6226,7 +6357,7 @@ enum Hands {
         switch verb {
         case "menu": guard rest.count == 2, !rest[0].isEmpty, rest[1].components(separatedBy:">").count > 1, rest[1].components(separatedBy:">").allSatisfy({ !$0.trimmingCharacters(in:.whitespaces).isEmpty }) else { throw Failure("Use menu app path.") }
         case "see": guard rest.count <= 1 else { throw Failure("Use see [app].") }
-        case "click": guard !rest.isEmpty, rest.count <= 5 else { throw Failure("Use click target [near label] [double] [right].") }; _ = try clickOptions(rest)
+        case "click": guard !rest.isEmpty, rest.count <= 6 else { throw Failure("Use click target [near label] [double] [right] [front].") }; _ = try clickOptions(rest)
         case "scroll": guard (1...3).contains(rest.count), ["down","up","left","right"].contains(rest[0]), rest.count < 3 || rest[1] == "all" || Double(rest[1]).map({ $0.isFinite && $0 >= 0.1 && $0 <= 50 }) == true else { throw Failure("Use scroll direction [pages|all] [target].") }; if rest.count == 2, let n = Double(rest[1]), !n.isFinite || n < 0.1 || n > 50 { throw Failure("Invalid page count.") }
         case "scroll-to": guard rest.count == 1 else { throw Failure("Use scroll-to text.") }
         case "press": guard (1...2).contains(rest.count) else { throw Failure("Use press keys [times].") }; _ = try keys(rest[0]); if rest.count == 2 { guard let n = Int(rest[1]), (1...50).contains(n) else { throw Failure("Invalid repeat count.") } }
@@ -6237,17 +6368,18 @@ enum Hands {
         default: throw Failure("Unknown hands verb: \(verb)")
         }
     }
-    static func clickOptions(_ args: [String]) throws -> (String,Bool,Bool) {
-        var near = "", double = false, right = false, i = 1
+    static func clickOptions(_ args: [String]) throws -> (String,Bool,Bool,Bool) {
+        var near = "", double = false, right = false, front = false, i = 1
         while i < args.count {
             switch args[i] {
             case "near": guard i + 1 < args.count, near.isEmpty else { throw Failure("Use near label.") }; near = args[i+1]; i += 1
             case "double": guard !double else { throw Failure("Duplicate double.") }; double = true
             case "right": guard !right else { throw Failure("Duplicate right.") }; right = true
+            case "front": guard !front else { throw Failure("Duplicate front.") }; front = true
             default: throw Failure("Unknown click option: \(args[i])")
             }; i += 1
         }
-        return (near,double,right)
+        return (near,double,right,front)
     }
     static func targets(_ args: [String]) -> [String] {
         switch args[0] {
@@ -6294,8 +6426,8 @@ enum Hands {
         var labels: [String] = [], secure = false
         let verb = args[0]
         if verb == "click", args[1].contains(">") {
-            let (near,double,right) = try clickOptions(Array(args.dropFirst()))
-            guard near.isEmpty && !double && !right else { throw Failure("Menu paths accept no click options.") }
+            let (near,double,right,front) = try clickOptions(Array(args.dropFirst()))
+            guard near.isEmpty && !double && !right && !front else { throw Failure("Menu paths accept no click options.") }
             labels = args[1].components(separatedBy:">").dropLast().map { mask($0.trimmingCharacters(in:.whitespaces)) } + [try menu(args[1],a,act:false)]
         }
         else if ["click","drag","type"].contains(verb) {
@@ -6304,7 +6436,7 @@ enum Hands {
         } else if verb == "type-after" {
             let target = try insertionTarget(args[1],a); labels = [target.label]; secure = secret(name(target.field))
         } else if verb == "press" {
-            labels = [map.focused,args[1]]
+            labels = [map.focused,args[1]] + (menuShortcut(args[1],a).map { [$0.1] } ?? [])
             let (code, _) = try keys(args[1])
             if [CGKeyCode(51),CGKeyCode(117)].contains(code),
                let focused = element(AXUIElementCreateApplication(a.processIdentifier),kAXFocusedUIElementAttribute),
@@ -6376,8 +6508,8 @@ enum Hands {
             // Background first; the real pointer for work the user asked to see or a window without a known id. An app can take a
             // background gesture without any visible change, so one is never repeated in front by itself: the reply says how to redo it.
             var background = false
-            func gesture(_ act: (Bool) throws -> Void) throws {
-                let front = MiniScreen.workInFront || targetWindow(a) == 0
+            func gesture(_ asked: Bool = false, _ act: (Bool) throws -> Void) throws {
+                let front = asked || MiniScreen.workInFront || targetWindow(a) == 0
                 try act(front); background = !front
             }
             var result = "", spot: CGPoint?
@@ -6385,9 +6517,9 @@ enum Hands {
             case "click":
                 if input[1].contains(">") { let label = try menu(input[1],a,act:true); result = "Clicked \(quote(label))" }
                 else {
-                    let (near,double,right) = try clickOptions(Array(input.dropFirst())), (n,e) = try resolve(input[1],map:before,a:a,near:near); spot = n.spot
-                    if let e, !double && !right, perform(e,["AXPress","AXPick","AXConfirm","AXOpen"]) { }
-                    else { try gesture { try mouse(n.spot,a,double:double,right:right,front:$0) } }
+                    let (near,double,right,front) = try clickOptions(Array(input.dropFirst())), (n,e) = try resolve(input[1],map:before,a:a,near:near); spot = n.spot
+                    if let e, !double && !right && !front, perform(e,["AXPress","AXPick","AXConfirm","AXOpen"]) { }
+                    else { try gesture(front) { try mouse(n.spot,a,double:double,right:right,front:$0) } }
                     result = "Clicked \(quote(n.label))"
                 }
             case "scroll":
@@ -6397,7 +6529,16 @@ enum Hands {
                 spot = p ?? CGPoint(x:before.windowFrame[0] + before.windowFrame[2] / 2,y:before.windowFrame[1] + before.windowFrame[3] / 2)
                 result = try scroll(input[1],pages:pages,all:amount == "all",a:a,target:p)
             case "scroll-to": result = try scrollTo(input[1],a)
-            case "press": try sendKeys(input[1],pid:a.processIdentifier,times:input.count > 2 ? Int(input[2])! : 1); result = "Pressed \(quote(input[1])) in \(a.localizedName ?? "app")"
+            case "press":
+                let times = input.count > 2 ? Int(input[2])! : 1
+                if let (item, label) = menuShortcut(input[1],a) {
+                    try keysReachTask(a.processIdentifier)   // the menu command acts on the app's focused window, so it must be this task's
+                    let lease = try screenLease(); defer { unlock(lease) }   // as menu(): a press can bring the app forward, so put the user's app back
+                    DistributedNotificationCenter.default().postNotificationName(.init("atticus.raise"), object: nil, deliverImmediately: true)
+                    usleep(50_000); let restore = restoreFocus(a); defer { usleep(30_000); restore() }
+                    for _ in 0..<times { try checkStopped(); guard perform(item,["AXPress"]) else { throw Failure("Could not run \(quote(label)).") }; usleep(15_000) }
+                    result = "Ran \(quote(label)) for \(quote(input[1])) in \(a.localizedName ?? "app")"
+                } else { try sendKeys(input[1],pid:a.processIdentifier,times:times); result = "Pressed \(quote(input[1])) in \(a.localizedName ?? "app")" }
             case "drag": let from = try resolve(input[1],map:before,a:a).0, to = try resolve(input[2],map:before,a:a).0; try gesture { try mouse(from.spot,a,to:to.spot,front:$0) }; spot = to.spot; result = "Dragged \(quote(from.label)) to \(quote(to.label))"
             case "type":
                 let (n,e) = try resolve(input[1],map:before,a:a); guard let e else { throw Failure("No editable field.") }
@@ -6410,7 +6551,7 @@ enum Hands {
                         usleep(50_000)
                         accepted = submitReceipt(typed, stringValue(e), sent, submitted, try capture(a))
                     } while !accepted && Date() < deadline
-                    if !accepted { throw Failure("Could not verify Return was accepted in the background. Bring the window forward and try again.") }
+                    if !accepted { throw Failure("Could not verify Return was accepted in the background. Read the window; if it was not sent, click its send button (add front if it ignores background clicks).") }
                 }
                 result = "Typed into \(quote(n.label))"
             case "type-after": result = try insertAfter(input[1],input[2],a)
@@ -6422,7 +6563,7 @@ enum Hands {
             if input[0] == "click" {
                 let (_, w) = try root(a)
                 if let sheet = (attribute(w,"AXSheets") as? [AXUIElement])?.first ?? (attribute(w,kAXRoleAttribute) as? String == "AXSheet" ? w : nil) { result += " — a sheet opened: \(quote(mask(name(sheet))))" }
-                else if after.signature == before.signature { result = "Nothing changed after clicking \(quote((check["labels"] as? [String])?.first ?? input[1]))" + (background ? ". It went in the background; if this app ignores background clicks, run atticus.py --front \(quote(a.localizedName ?? "the app")) and click again in front" : "") }
+                else if after.signature == before.signature { result = "Nothing changed after clicking \(quote((check["labels"] as? [String])?.first ?? input[1]))" + (background ? ". It went in the background; if this app ignores background clicks, add front to the same click: the app comes forward for that click only, then the user's app returns" : "") }
             }
             print(result)
             if let spot { print("@ \(Int(spot.x)) \(Int(spot.y))") }

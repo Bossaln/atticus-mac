@@ -70,6 +70,14 @@ class SpotifyTests(unittest.TestCase):
         preview.assert_called_once_with('Spotify', 'play')
         behind.assert_called_once_with('Editor', 'Spotify')
 
+    def test_play_reply_names_spotify_once(self):
+        item = ('spotify:playlist:' + 'C' * 22, 'Top 100 Pop Tracks on Spotify')
+        with patch.object(atticus, 'spotify_item', return_value=item), patch.object(atticus, 'osa', return_value='Editor'), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'playing', '')), \
+             patch.object(atticus, 'preview_app'), patch.object(atticus, 'keep_behind'):
+            self.assertEqual(atticus.play('my playlist'), 'Playing Top 100 Pop Tracks on Spotify.')
+        self.assertEqual(atticus.label('Bash', {'command': f'{atticus.PLAY} "hits on spotify"'}), 'Playing hits on spotify')
+
     def test_play_reports_rejected_or_unverified_spotify_commands(self):
         item = ('spotify:track:' + 'G' * 22, 'Fixture song')
         for result in (subprocess.CompletedProcess([], 1, '', 'denied'),

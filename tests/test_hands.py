@@ -259,6 +259,55 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
             for phrase in ['open the wifi menu in my menu bar', 'open teh wi-fi menu', 'click the battery icon']:
                 self.assertIsNotNone(atticus.fast_hands(phrase), phrase)
 
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('swiftc'), 'macOS Swift matcher')
+    def test_background_command_key_runs_its_exact_menu_item(self):
+        source = (Path(__file__).resolve().parents[1] / 'Atticus.swift').read_text()
+        press = source[source.index('            case "press":'):source.index('            case "drag":')]
+        self.assertLess(press.index('menuShortcut('), press.index('sendKeys('))   # the menu item, else today's keys
+        route = source[source.index('    static func menuShortcut('):source.index('    static func sendKeys(')]
+        for guard in ('workInFront', 'frontmostApplication', 'webFocused', 'kAXEnabledAttribute', 'dropFirst()'):
+            self.assertIn(guard, route)
+        swift = 'import Cocoa\nenum Hands {\n struct Failure: Error { init(_ m: String) {} }\n' + \
+            source[source.index('    static func normalized('):source.index('    static func rank(')] + \
+            source[source.index('    static func keys('):source.index('    static func riskyKey(')] + \
+            source[source.index('    static func isShortcut('):source.index('    // Background keys reach')] + '''}
+precondition(Hands.isShortcut("cmd+s", cmdChar: "S", modifiers: 0) && Hands.isShortcut("⌘+s", cmdChar: "s", modifiers: 0))
+precondition(!Hands.isShortcut("cmd+s", cmdChar: "S", modifiers: 1) && Hands.isShortcut("cmd+shift+s", cmdChar: "S", modifiers: 1))   // Save vs Save As
+precondition(Hands.isShortcut("cmd+option+ctrl+t", cmdChar: "T", modifiers: 6) && !Hands.isShortcut("cmd+t", cmdChar: "T", modifiers: 2))
+precondition(!Hands.isShortcut("cmd+s", cmdChar: "S", modifiers: 8) && !Hands.isShortcut("ctrl+s", cmdChar: "S", modifiers: 12))   // no Command
+precondition(Hands.isShortcut("cmd+,", cmdChar: ",", modifiers: 0) && !Hands.isShortcut("cmd+return", cmdChar: "\\r", modifiers: 0) && !Hands.isShortcut("cmd++", cmdChar: "+", modifiers: 0))
+print("menu shortcuts ok")
+'''
+        from tests import run_swift
+        self.assertIn('menu shortcuts ok', run_swift(self, swift))
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('swiftc'), 'macOS Swift key route')
+    def test_only_plain_keys_into_background_web_content_are_authenticated(self):
+        source = (Path(__file__).resolve().parents[1] / 'Atticus.swift').read_text()
+        post = source[source.index('    static func postKey('):source.index('    static func deliver(')]
+        self.assertIn('guard web,', post); self.assertIn('else { return e.postToPid(pid) }', post)   # anything unproven keeps today's post
+        keys = source[source.index('    static func sendKeys('):source.index('    static let skyLight')].replace('CGEventSource(', 'EventSource(').replace('CGEvent(', 'Event(')
+        swift = '''import Cocoa
+final class EventSource { init?(stateID: CGEventSourceStateID) {} }
+final class Event { var flags: CGEventFlags = []; init?(keyboardEventSource: EventSource, virtualKey: CGKeyCode, keyDown: Bool) {} }
+enum Hands {
+ struct Failure: Error { init(_ m: String) {} }
+ static var stopped: Int32 = 0, web = false, routes: [Bool] = []
+ static func checkStopped() throws {}
+ static func keysReachTask(_ pid: Int32) throws {}
+ static func webFocused(_ pid: Int32) -> Bool { web }
+ static func postKey(_ e: Event, pid: Int32, web: Bool) { routes.append(web) }
+''' + source[source.index('    static func normalized('):source.index('    static func rank(')] + \
+            source[source.index('    static func keys('):source.index('    static func riskyKey(')] + keys + '''}
+Hands.web = true; try Hands.sendKeys("return", pid: 999999); try Hands.sendKeys("shift+tab", pid: 999999, times: 2)
+precondition(Hands.routes == [true, true, true, true, true, true])
+Hands.routes = []; try Hands.sendKeys("cmd+v", pid: 999999); precondition(Hands.routes == [false, false])   // command keys keep the menu path
+Hands.web = false; Hands.routes = []; try Hands.sendKeys("tab", pid: 999999); precondition(Hands.routes == [false, false])
+print("key routes ok")
+'''
+        from tests import run_swift
+        self.assertIn('key routes ok', run_swift(self, swift))
+
     def test_fast_exact_labels_duplicates_and_intended_phrases(self):
         map_ = {'nodes':[{'label':'Export'}]}
         with patch.object(atticus,'hands_map',return_value=map_), patch.object(atticus,'hands',return_value=('Clicked Export\nNow: sheet',True)) as action:

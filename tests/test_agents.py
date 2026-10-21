@@ -47,7 +47,7 @@ for line in sys.stdin:
   print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'[agent-plan {"steps":["Read the brief","Verify the result"],"completed":1}]'},{'type':'text','text':'Reading the task'},{'type':'tool_use','id':'t','name':'mcp__fixture__inspect','input':{}}]}}),flush=True)
   print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t','content':[{'type':'text','text':'Links: [{"title":"Source material","url":"https://fixture.example/source"}]'}]}]}}),flush=True)
   if text.startswith('WAIT'): continue
-  print(json.dumps({'type':'result','session_id':'11111111-1111-4111-8111-111111111111','is_error':text.startswith('FAIL'),'total_cost_usd':.001,'usage':{'input_tokens':3},'result':'[agent-result '+json.dumps({'summary':'Finished the task.','changes':'Created a result.','links':[]})+']'}),flush=True)
+  print(json.dumps({'type':'result','session_id':'11111111-1111-4111-8111-111111111111','is_error':text.startswith('FAIL'),'total_cost_usd':.002 if text.startswith('That was a main-chat routing control') else .001,'usage':{'input_tokens':3},'result':'[agent-result '+json.dumps({'summary':'Finished the task.','changes':'Created a result.','links':[]})+']'}),flush=True)
 '''
 
 
@@ -306,9 +306,20 @@ class AgentTests(unittest.TestCase):
     def test_interrupted_usage_is_unknown_and_aggregates_are_lower_bounds(self):
         atticus.log_turn('Moved task','Moved to an agent',time.time(),None)
         row=atticus.read_rows(str(Path(self.root.name)/'log.jsonl'))[-1];self.assertIsNone(row['usd'])
+        directory=Path(self.root.name)/'agents'/'usage-fixture';directory.mkdir(parents=True)
+        results=[(.1656,779),(.2017,306),(.3813,2708)]
+        (directory/'log.jsonl').write_text(''.join(json.dumps({'at':time.time(),'event':'claude','data':{
+            'type':'result','total_cost_usd':usd,'usage':{'output_tokens':turn},'modelUsage':{'outputTokens':cumulative},
+            'result':'private result'}})+'\n' for (usd,turn),cumulative in zip(results,(779,1085,3793))))
         with patch.object(sys,'argv',['atticus.py','--state']),patch.object(atticus,'plan',return_value={}),contextlib.redirect_stdout(io.StringIO()) as output:
             atticus.main()
         state=json.loads(output.getvalue());self.assertEqual(state['today']['asks'],1);self.assertEqual(state['today']['unknown'],1)
+        self.assertEqual((state['today']['agentCalls'],state['today']['askUsd'],state['today']['agentUsd'],state['today']['usd']),(3,0,.3813,.3813))
+        self.assertAlmostEqual(sum(row['usd'] for row in atticus.agent_usage_rows()),.3813)
+        self.assertTrue(all('result' not in row for row in atticus.agent_usage_rows()))
+        with (directory/'log.jsonl').open('a') as log:
+            log.write(json.dumps({'at':time.time(),'event':'claude','data':{'type':'result','total_cost_usd':.02}})+'\n')
+        self.assertEqual(atticus.agent_usage_rows()[-1]['usd'],.02)
         with patch.object(sys,'argv',['atticus.py','--budget']),contextlib.redirect_stdout(io.StringIO()) as output:atticus.main()
         self.assertIn('no AI asks',output.getvalue())
 
@@ -345,6 +356,7 @@ class AgentTests(unittest.TestCase):
                     self.until(lambda:row['status']=='done')
                     self.assertEqual(row['summary'],'Finished the task.')
                     self.assertNotEqual(row['result'].strip(),token.strip())
+                    self.assertEqual((row['cost'],row['costToday']),(.002,.002))
                     self.until(lambda:len([e for e in self.events if e.get('event')=='done'])==before+1)
                     self.assertEqual(len([e for e in self.events if e.get('event')=='done']),before+1)
                     results=[e['data']['result'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl'))
@@ -531,6 +543,15 @@ class AgentTests(unittest.TestCase):
         self.manager.command({'action':'followup','id':row['id'],'text':'WAIT another instruction'})
         self.assertIs(self.manager.processes[row['id']],p);self.assertEqual(self.manager.outstanding[row['id']],2)
         self.assertEqual(Path(atticus.request_file(row['directory'])).read_text(),'WAIT another instruction')
+
+    def test_background_followup_revokes_an_agents_old_focus_permission(self):
+        row=self.prepare(request='Show the result in front');self.manager.start(row['id'])
+        marker=Path(atticus.agent_gate_dir(row['directory']))/'focus-requested'
+        self.assertTrue(marker.exists())
+        self.manager.command({'action':'followup','id':row['id'],'text':'WAIT continue in the background'})
+        with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}):
+            self.assertFalse(atticus.wants_focus())
+        self.assertFalse(marker.exists())
 
     def test_a_new_request_to_a_finished_agent_shows_only_what_it_made(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')

@@ -56,6 +56,8 @@ enum Hands {
 }
 ''' + borrow + '''
 enum CGEventTapLocation { case cghidEventTap }
+final class FakeNSApp { var keyWindow: Int? }
+let NSApp = FakeNSApp()
 struct Flags: OptionSet { let rawValue: Int; static let maskCommand = Flags(rawValue: 1) }
 final class CGEvent {
  var flags: Flags = []
@@ -127,6 +129,9 @@ reset(); clipboardBusy = true; ok = false; let busyEvents = events
 h.apply("draft", valid: { true }) { ok = $0 }; pump(0.3)
 precondition(!ok && events == busyEvents && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "pasted while another Atticus process held the clipboard")
 clipboardBusy = false; pump(0.6); precondition(ok && leases == unlocks, "paste did not resume after the clipboard freed, or kept the lock")
+reset(); NSApp.keyWindow = 1; ok = false; let hidKeyed = hidEvents, pidKeyed = events
+h.apply("draft", valid: { true }) { ok = $0 }; pump(0.6); NSApp.keyWindow = nil
+precondition(ok && hidEvents == hidKeyed && events == pidKeyed + 2, "with the box holding the keyboard, ⌘V went to the box instead of the target app")
 print("paste safety ok")
 '''
         self.assertIn('paste safety ok', run_swift(self, swift))

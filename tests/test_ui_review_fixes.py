@@ -48,6 +48,14 @@ const ui = {''' + tap + r'''};
 for (const key of ['.redo', '#agents-pill', '.dn button']) { current = make(key); clicked = ''; ui.tap([0, 0]); if (clicked !== key) { console.error(key + ' opened the ' + clicked); process.exit(1); } }
 ''')
 
+    def test_typing_row_animates_everything_it_changes(self):
+        # Oct 20, 2026: the open row's -4px side margins jumped while its 4px padding animated, so the field and buttons slid
+        closed = re.search(r'  #comp \{([^}]*)\}', self.box).group(1)
+        opened = re.search(r'  #comp\.open \{([^}]*)\}', self.box).group(1)
+        animated = {p.split()[0] for p in re.search(r'transition: ([^;]*);', closed).group(1).split(',')}
+        for prop in re.findall(r'([a-z-]+):', opened):
+            self.assertIn(prop, animated)
+
     def test_choice_number_shortcuts_work_from_the_empty_composer(self):
         handler = self.box[self.box.index("  $('ask').onkeydown = e => {"):self.box.index('  // the model row:')]
         node(self, r'''let picked = 0, clicked = 0, prevented = false;
@@ -73,11 +81,11 @@ picked = 0; prevented = false; ask.value = 'version '; key('2'); if (picked || p
     def test_failed_dictation_offers_its_words_to_copy(self):
         dictated = self.box[self.box.index('    dictated({'):self.box.index('    learned(word)')]
         node(self, r'''let sent, button;
-const note = () => {}, fit = () => {}, setState = () => {}, $ = () => ({ style: {} }), post = m => { sent = m; };
-let finishTimer = 0, listening = true, boost = 1;
-const document = { createElement: () => ({}) }, part = c => c === 'dn' ? { append: (...a) => { button = a[1]; } } : { classList: { remove() {} } };
+const fit = () => {}, setState = () => {}, $ = () => ({ style: {} }), post = m => { sent = m; };
+let listening = true, boost = 1;
+const document = { body: { classList: { remove() {} } }, createElement: () => ({}) }, pill = () => ({ append: (...a) => { button = a[1]; } });
 const ui = {''' + dictated + r'''};
-ui.dictated({ text: 'Saved to History', ok: false }); if (button) process.exit(1);
+ui.dictated({ text: 'Nothing selected to insert — saved to History.', ok: false }); if (button) process.exit(1);
 ui.dictated({ text: 'Couldn’t insert. Your words are still here.', ok: false, words: 'my words' }); button.onclick();
 if (sent?.copy !== 'my words' || button.textContent !== 'Copied') process.exit(1);
 ''')
@@ -172,6 +180,10 @@ if (apiCost(.0412) !== '≈4.12¢ at API prices' || apiCost(.1861) !== '≈18.6�
     def test_usage_history_shows_a_readable_date(self):
         self.assertNotIn('a.at.slice(5, 16)', self.settings)
         self.assertIn("new Date(a.at.replace(' ', 'T')).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})", self.settings)
+
+    def test_usage_splits_asks_from_agents_in_unambiguous_dollars(self):
+        self.assertIn("const money = u => '$' + u.toFixed(u < .01 ? 4 : 2);", self.settings)
+        self.assertIn('${u.asks} asks ${money(u.askUsd ?? u.usd)} · ${u.agentCalls || 0} agent calls ${money(u.agentUsd || 0)}', self.settings)
 
     def test_a_new_ask_drops_a_paused_card_left_by_resuming_elsewhere(self):
         listen = self.box[self.box.index('    listen(keep)'):self.box.index('    level(v)')]

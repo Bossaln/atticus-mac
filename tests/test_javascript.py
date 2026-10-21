@@ -40,25 +40,21 @@ if(!old.removed||button.disabled||button.textContent!=='Try again'||sent.id!=='q
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_dictation_text_is_centered_without_the_voice_caret(self):
+    def test_dictation_pill_shows_the_wave_not_the_words(self):
         source = (Path(__file__).resolve().parents[1] / 'ui' / 'ui.html').read_text()
         native = (Path(__file__).resolve().parents[1] / 'Atticus.swift').read_text()
-        rule = re.search(r'body\.dictate \.q \{.*?\}', source, re.S).group(0)
-        self.assertIn('align-items: center', rule)
-        self.assertIn('height: 28px', rule)
-        self.assertIn('body.dictate .q.live::after { content: none; }', source)
         self.assertIn('<span id="dictwave" role="img" aria-label="Listening"></span>', source)
-        dictate = source[source.index('    dictate(on) {'):source.index('    fold() {')]
-        script = '''const bars=[{style:{height:'21px'}},{style:{height:'9px'}}],$=()=>({children:bars}),fit=()=>{};
+        dictate = source[source.index('    dictate(on) {'):source.index('    locked(on) {')]
+        script = '''const bars=[{style:{height:'21px'}},{style:{height:'9px'}}];let gone=0,state;
+const $=id=>id==='thread'?{querySelectorAll:s=>s==='.turn.dict'?[{remove(){gone++;}}]:[]}:{children:bars},pill=s=>{state=s;};
 const document={body:{classList:{toggle(){},remove(){}}}};
-const ui={''' + dictate + '''};ui.dictate(true);if(bars.some(b=>b.style.height))process.exit(1);'''
+const ui={''' + dictate + '''};ui.dictate(true);if(bars.some(b=>b.style.height)||gone!==1||state!=='')process.exit(1);'''
         result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, "a new dictation shows the last one's wave " + result.stderr)
-        self.assertIn('body.dictate.hearing:not(.has-words) #dictwave', source)
+        self.assertEqual(result.returncode, 0, "a new dictation shows the last one's wave, state or empty turn " + result.stderr)
+        self.assertIn('body.dictate.hearing #dictwave', source)
         self.assertIn("classList.toggle('hearing', listening)", source)
-        self.assertIn("classList.toggle('has-words'", source)
         self.assertIn("for (let i = 0; i < 9; i++) $('dictwave').append", source)
-        self.assertIn('if dictating { js("words", text); return }', native)
+        self.assertIn('if dictating { return }', native)
 
     def test_onboarding_finish_names_missing_voice_requirements(self):
         source = (Path(__file__).resolve().parents[1] / 'ui' / 'onboarding.html').read_text()

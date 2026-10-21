@@ -112,7 +112,8 @@ print("correction bounds ok")
         self.assertIn('guard let selected else', session)
         self.assertIn('dictateSelection = selected', session)
         self.assertNotIn('selected.text.count <= 6000', session)
-        self.assertIn('Click an editable text field, then try dictation again', session)
+        self.assertIn('if AXIsProcessTrusted() { return }', session)   # no text field: keep listening, the words go to History
+        self.assertLess(session.index('dictateSelectionPending = false'), session.index('guard let selected else'))
         start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
         self.assertLess(start.index('if dictate && !AXIsProcessTrusted()'), start.index('captureDictationSelection()'))
         self.assertIn('Allow Accessibility in System Settings → Privacy & Security → Accessibility', start)
@@ -172,8 +173,8 @@ assert($('dictationhistory').children.length === 1 && $('dictationhistory').chil
         page = (ROOT / 'ui/ui.html').read_text()
         method = page[page.index('    learned(word)'):page.index('    line(l)')]
         script = r'''let label, sent, button;
-const note = text => { label = text; }, fit = () => {};
-const document = {createElement: () => ({})}, part = () => ({remove() {}, append: (...args) => { button = args[1]; }});
+const pill = (state, text) => { label = text; return {append: (...args) => { button = args[1]; }}; }, fit = () => {};
+const document = {createElement: () => ({})};
 const post = message => { sent = message; };
 const ui = {''' + method + r'''};
 ui.learned('Saarth'); button.onclick();

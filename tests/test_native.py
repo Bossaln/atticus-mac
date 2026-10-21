@@ -181,8 +181,9 @@ enum Prefs {
 final class Target: Equatable {
     let processIdentifier: Int32
     var localizedName: String? { String(processIdentifier) }
-    var isTerminated = false
+    var isTerminated = false, hidden = false
     init(_ pid: Int32) { processIdentifier = pid }
+    func hide() { hidden = true }
     static func == (a: Target, b: Target) -> Bool { a.processIdentifier == b.processIdentifier }
 }
 enum MiniScreen {
@@ -201,7 +202,7 @@ final class Harness {
     var busy = true, focusFree = false, allowUserApp = false
     var engine = (isRunning: false, unused: false), agentsUI = (hasLive: false, unused: false)
     var guardUntil = Date.distantPast, allowUntil = Date().addingTimeInterval(3), userSwitch = Date.distantPast
-    var userApp: Target? = Target(1), mine = "1"
+    var userApp: Target? = Target(1), mine = "1", hiddenAtStart: Set<Int32> = [5]
     static var switched = false
     static func userJustSwitched() -> Bool { switched }   // stands in for the hardware input check
 ''' + policy + '''
@@ -219,6 +220,9 @@ precondition(h.userApp == chosen, "temporary automation raise replaced the user'
 h.allowUntil = .distantPast
 h.activated(Target(1))   // a later background action in the previously used app
 precondition(MiniScreen.restored == chosen.processIdentifier, "background action restored the stale app")
+let unhid = Target(5), shown = Target(6)
+h.activated(unhid); h.activated(shown)
+precondition(unhid.hidden && !shown.hidden, "an app hidden before the task stayed visible after the guard sent it back")
 MiniScreen.restored = nil
 Harness.switched = true   // ⌘-Tab or a swipe: no click the global monitor sees, but real input
 h.activated(Target(4))
@@ -518,10 +522,11 @@ final class Engine { var isRunning = false, stopped = false; func stop() {isRunn
 final class Input { var cancelled=false; func finish() {cancelled=true}; func cancel() {cancelled=true} }
 final class Analyzer { func cancelAndFinishNow() async {} }
 final class SpeechInputs { var finished=false; func finishAll() {finished=true} }
-final class QuietAudio { func end() {} }
+final class QuietAudio { func end(immediate: Bool = false) {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
 final class DrawingStub { var active = false, hasInput = false; func clear() { hasInput = false }; func clearInput() { hasInput = false } }
 final class Harness {
+    static var keysUp = Date(); func gone() {}; func unwarm() {}
     var drawingReply = false; let drawing = DrawingStub()
     let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
     var retryOffer=false,offerText:String?,askFile="fixture-answer",agentCard="",listenID=0,stops=0
@@ -556,7 +561,8 @@ toggle.shortcut(true); precondition(toggle.events == ["start", "send"], "second 
 toggle.shortcut(false); toggle.shortcut(true); precondition(toggle.events.contains("cancel"), "working shortcut did not cancel")
 let empty = Harness(); empty.text = ""; empty.shortcut(true); empty.shortcut(false); empty.shortcut(true); precondition(empty.events == ["start", "send"] && !empty.clickTalk && !empty.engine.isRunning, "empty toggle failed to finalize late speech or reopened typing")
 Prefs.toggle = false
-let tap = Harness(); tap.text = ""; tap.began = Date(); tap.shortcut(true); tap.shortcut(false); precondition(tap.events == ["start", "send"] && !tap.clickTalk, "quick voice tap opened typing")
+let tap = Harness(); tap.text = ""; tap.began = Date(); tap.shortcut(true); tap.shortcut(false); precondition(tap.events == ["start", "hush"] && !tap.clickTalk && !tap.engine.isRunning, "quick voice tap kept listening, sent, or opened typing")
+let silent = Harness(); silent.text = ""; silent.began = .distantPast; silent.shortcut(true); silent.shortcut(false); precondition(silent.events == ["start", "send"], "a real hold must still wait for late final words")
 let hold = Harness(); hold.shortcut(true); hold.shortcut(false); precondition(hold.events == ["start", "send"], "hold release regressed")
 let voice = Harness(); voice.speaking = true; voice.busy = true; voice.shortcut(true); precondition(voice.events == ["quiet"] && !voice.engine.isRunning && voice.busy, "stopping voice started the mic")
 let click = Harness(); click.engine.isRunning = true; click.clickTalk = true; click.shortcut(false); precondition(click.events.isEmpty, "release sent click-to-talk")

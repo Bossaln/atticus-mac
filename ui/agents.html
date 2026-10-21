@@ -366,6 +366,7 @@ window.agents={mode(value){mode=value;document.body.classList.toggle('view',mode
   if(!target&&p.length&&over?.isConnected){const r=over.getBoundingClientRect();if(p[0]>=r.left-6&&p[0]<=r.right+6&&p[1]>=r.top-6&&p[1]<=r.bottom+6)target=over;}hoverAt(target);},
  arrive(id){arriving.add(id);setTimeout(()=>land(id),5000);}/* safety only: native always lands it */,land,leave(id){leaveAt.add(id);leave(id);},
  prefs(value){dismissed=new Set(value.dismissed||[]);stack=value.stack||'';if(mode==='shelf')renderShelf();},
+ expanded:()=>expanded,
  // shortcut: Markdown still reparses once per frame; render incrementally if very long answers stutter.
  text({id,text}){liveText.set(id,(liveText.get(id)||'')+text);if(mode==='view'&&selected===id&&!textFrame)textFrame=requestAnimationFrame(()=>{textFrame=0;if(mode==='view')renderView();});},select(id){selected=id;renderView();},visible(value){visible=value;},
  resume(){if(mode==='shelf'){visible=true;previewing='';renderShelf();}},

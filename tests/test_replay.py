@@ -44,6 +44,23 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(atticus.shortcut_commands('study guide',['mdfind -name guide 2>/dev/null | head -20; mdfind x | grep -i y',found]),[f'{atticus.SHOW} --bg /tmp/Guide.pdf'])
         with patch.object(atticus,'cached_hands',return_value=None): self.assertIsNone(atticus.learn('study guide',['ls /tmp > /tmp/out',found],'Opened.'))   # a write is not a lookup
 
+    def test_act_then_sleep_then_state_read_learns_the_act_alone(self):
+        play,state='osascript -e \'tell application "Fixture" to play\'','osascript -e \'tell application "Fixture" to player state as string\''
+        track='osascript -e \'tell application "Fixture" to name of current track\''
+        with patch.object(atticus,'cached_hands',return_value=None):
+            self.assertTrue(atticus.learn('unpause fixture',[f'{play} && sleep 1 && {state}'],'Playing again.'))
+            self.assertEqual(atticus.skills()['unpause fixture']['cmds'],[play])
+            self.assertEqual(atticus.shortcut_commands('pause fixture',[f'{play.replace("play","pause")} && {track}']),[play.replace('play','pause')])
+            self.assertIsNone(atticus.shortcut_commands('play fixture',[f'{state} && {play}']))   # a read before the act: replay would act blind
+            self.assertIsNone(atticus.learn('play fixture',[f'{state} && sleep 1 && {play}'],'Playing.'))
+            delete='osascript -e \'tell application "System Events" to tell process "Fixture" to click button "Delete" of window 1\''
+            self.assertIsNone(atticus.learn('clear fixture',[f'{delete} && sleep 1 && {state}'],'Cleared.'))   # risky acts stay unlearned
+        self.assertEqual(set(atticus.skills()),{'unpause fixture'})
+        both='osascript -e \'tell application "Fixture" to pause\' -e \'tell application "Fixture" to get player state\''
+        self.assertEqual(atticus.shortcut_commands('pause fixture',[both,state]),[both])   # an act with its own check in one script stays
+        framed='osascript -e \'tell application "System Events"\' -e \'tell process "Fixture" to get name of every window\' -e \'end tell\''
+        self.assertEqual(atticus.shortcut_commands('windows',[framed]),[])
+
     def test_unsupported_peekaboo_falls_back_without_running(self):
         atticus.save_skills({'do fixture':{'cmds':['peekaboo click --id 12'],'reply':'Done.','mine':True}})
         with patch.object(atticus.subprocess,'run') as run:self.assertIsNone(atticus.replay('do fixture'));run.assert_not_called()

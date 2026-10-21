@@ -126,8 +126,11 @@ precondition(profileName(me) == "Chosen Name", "categorized profile name priorit
 let format = DateFormatter(); format.dateFormat = "yyyy-MM-dd"; let day = format.string(from: Date())
 let log = "{\\"at\\":\\"\\(day) 10:00:00\\",\\"usd\\":9}\\n{\\"at\\":\\"\\(day) 10:00:01\\",\\"reply\\":\\"Done\\",\\"usd\\":0.01}\\n"
 try! log.write(toFile: (Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl", atomically: true, encoding: .utf8)
+let agents = (Prefs.path as NSString).deletingLastPathComponent + "/agents/a"
+try! fm.createDirectory(atPath: agents, withIntermediateDirectories: true)
+try! "{\\"created\\":\\(Date().timeIntervalSince1970),\\"costDay\\":\\"\\(day)\\",\\"costToday\\":0.02}".write(toFile: agents + "/state.json", atomically: true, encoding: .utf8)
 let usage = FixtureMenu().today()
-precondition(usage.contains("Today: 1 ask") && usage.contains("1.00¢"), "usage counted checkpoints")
+precondition(usage == "Today: $0.03 · asks $0.01 · agents $0.02", "usage did not split asks from agents: \\(usage)")
 """
         with tempfile.TemporaryDirectory() as root:
             path, binary = Path(root) / "check.swift", Path(root) / "check"

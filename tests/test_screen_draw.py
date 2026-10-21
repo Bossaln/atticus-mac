@@ -37,10 +37,24 @@ class DrawingTests(unittest.TestCase):
         self.assertEqual(value['steps'][0]['shapes'][0],{'kind':'text','text':'12x⁵ = (3·4)·x⁵','at':[-960,540],'size':'l'})
         self.assertTrue(value['teaching'])
         for bad in ({'kind':'text'},{'kind':'text','text':''},{'kind':'text','text':'x'*301},{'kind':'text','text':'a','size':'xl'},
-                    {'kind':'text','text':'a','rect':[1,2,3,4]},{'kind':'label','at':[1,1],'text':'a','size':'l'}):
+                    {'kind':'text','text':'a','rect':[1,2,3,4]}):
             with self.subTest(bad=bad), self.assertRaises(ValueError): atticus.drawing({'steps':[{'say':'s','shapes':[bad]}]})
         self.assertIn('text "text" (one large line',atticus.DRAW_HELP)
         self.assertIn('Drawings stay through later asks',atticus.DRAW_HELP)
+
+    def test_filled_diagram_parts_and_sized_labels(self):
+        shapes = [{'kind':'circle','rect':[100,100,300,220],'color':'green','fill':True},
+                  {'kind':'rect','rect':[130,130,240,160],'color':'blue','fill':False},
+                  {'kind':'label','at':[250,210],'text':'Cell membrane','size':'l'}]
+        value = atticus.drawing({'steps':[{'say':'Compare the two layers.','shapes':shapes}]})
+        self.assertEqual(value['steps'][0]['shapes'],shapes)
+        self.assertIn('circle may be an ellipse; add "fill":true',atticus.DRAW_HELP)
+        self.assertIn('optional "size":"s"|"m"|"l"',atticus.DRAW_HELP)
+        for bad in ({'kind':'circle','rect':[1,2,3,4],'fill':'yes'},
+                    {'kind':'line','points':[[1,2],[3,4]],'fill':True},
+                    {'kind':'label','at':[1,2],'text':'x','size':'xl'}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                atticus.drawing({'steps':[{'say':'s','shapes':[bad]}]})
 
     def test_help_names_the_order_and_keys_the_validator_takes(self):
         help_ = atticus.DRAW_HELP
@@ -49,12 +63,30 @@ class DrawingTests(unittest.TestCase):
         for bad in ({'kind':'text','text':'a','s':'l'},{'kind':'label','at':[1,1],'text':'a','screen':2},{'kind':'line','points':[[0,0],[1,1],[2,2]]}):
             with self.subTest(bad=bad), self.assertRaises(ValueError): atticus.drawing({'steps':[{'say':'s','shapes':[bad]}]})
 
+    def test_explain_asks_get_a_diagram_not_marks_on_words(self):
+        help_ = atticus.DRAW_HELP   # Oct 20 "draw and explain cell wall vs membrane": two rects around the study guide's words
+        self.assertIn('Pick the kind from the ask, not from what is on screen',help_)
+        self.assertLess(help_.index('- Locate ('),help_.index('Fit the mark'),help_.index('- Explain ('))   # rect/circle fitting is for locating only
+        for said in ('draw the idea itself','clear space','otherwise draw your own',"marks around on-screen words are not an explanation"): self.assertIn(said,help_)
+        self.assertNotIn('build on the on-screen material',help_)
+        mapping = {'2':{'frame':[1440,0,1920,1080],'pixels':[1280,720]}}   # the logged ask drew on screen 2 in --look pixels
+        logged = {'steps':[{'id':'1','screen':2,'say':'The membrane…','shapes':[{'kind':'rect','rect':[626,484,270,16],'color':'blue'}]},
+                           {'id':'2','screen':2,'say':'The cell wall…','shapes':[{'kind':'rect','rect':[702,509,88,15],'color':'green'}]}]}
+        diagram = {'steps':[{'screen':2,'say':'Every cell has a thin, flexible membrane that picks what gets in.','shapes':[
+                                {'kind':'circle','rect':[940,120,140,140],'color':'blue'},{'kind':'label','at':[960,280],'text':'membrane: every cell'}]},
+                            {'screen':2,'say':'Plants, fungi and bacteria add a rigid wall outside it.','shapes':[
+                                {'kind':'rect','rect':[1100,110,160,160],'color':'green'},{'kind':'circle','rect':[1115,125,130,130],'color':'blue'},
+                                {'kind':'label','at':[1110,280],'text':'wall + membrane'},{'kind':'arrow','points':[[792,516],[1100,190]],'color':'green'}]},
+                            {'screen':2,'say':'Side by side.','shapes':[{'kind':'text','text':'membrane: flexible gate, every cell','at':[940,330]},
+                                {'kind':'text','text':'wall: rigid, outside, stops bursting'}]}]}
+        for value in (logged,diagram): self.assertTrue(atticus.drawing(value,mapping)['teaching'])   # both valid: only the help tells them apart
+
     def test_follow_up_sees_the_drawing_and_a_selected_mark(self):
         drawn = {'steps':[{'say':'The shared x.','shapes':[{'kind':'circle','rect':[600,170,60,60],'color':'red'}]}],'shown':1}
         context = atticus.drawing_context(drawn)
         self.assertIn('still on screen, step 1 of 1',context)
         self.assertIn('"rect":[600,170,60,60]',context)
-        self.assertIn('visual explanation, run --look, then --draw',context)
+        self.assertIn('more drawing, run --look && --draw --help (one call), then one --draw',context)   # the help carries the locate/explain split
         for bad in (None,{},{'steps':[]},{'steps':'x'},'steps'):
             self.assertEqual(atticus.drawing_context(bad),'')
         many = {'steps':[{'say':f'Step {i}','shapes':[{'kind':'path','points':[[j,j] for j in range(256)]}]} for i in range(12)]}
@@ -601,6 +633,13 @@ let layers = view.layer!.sublayers!, global = { (r: CGRect) in r.offsetBy(dx:vie
 for text in layers.compactMap({ $0 as? CATextLayer }) { precondition(!global(text.frame).intersects(g),"Label text sits on its target") }
 let arrow = layers.compactMap { $0 as? CAShapeLayer }.first { $0.strokeColor == NSColor.systemBlue.cgColor }!
 precondition(global(arrow.path!.boundingBoxOfPath).minX > g.maxX,"Arrow head sits on its target")
+let diagram = DrawingView(frame:CGRect(x:0,y:0,width:1000,height:800))
+diagram.render([DrawingShape(kind:"circle",rect:[100,100,300,220],color:"green",fill:true),
+                DrawingShape(kind:"label",at:[250,210],text:"Cell membrane",color:"blue",size:"l")],animate:false,previous:nil)
+let part = diagram.layer!.sublayers!.compactMap { $0 as? CAShapeLayer }.first { $0.strokeColor == NSColor.systemGreen.cgColor }!
+precondition(part.path!.boundingBoxOfPath == CGRect(x:100,y:100,width:300,height:220) && (part.fillColor?.alpha ?? 0) > 0,
+             "A filled ellipse is not an exact, visible diagram part")
+precondition(diagram.layer!.sublayers!.compactMap { $0 as? CATextLayer }.first!.frame.height > 20,"A large diagram label stayed tiny")
 let dim = DrawingView(frame:view.frame); dim.render([DrawingShape(kind:"line",points:[[1,2],[30,40]])],animate:false,previous:nil,dim:true)
 precondition(dim.layer!.sublayers!.allSatisfy { $0.opacity == 0.5 },"Earlier whiteboard steps are not quieter")
 let boardFrame = CGRect(x:0,y:0,width:300,height:100), boardPad: CGFloat = 8

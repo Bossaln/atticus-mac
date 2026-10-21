@@ -414,10 +414,11 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                          'can you write out a similar equation and work it out on the screen')
 
     def test_on_screen_results_require_fresh_context_and_draw(self):
-        self.assertIn("Screen where/how & on-screen asks, even if known: point, not tell: after --look", atticus.DRAWING)   # Haiku answered "where do I click" from memory, unpointed; "how do I cook rice" is no screen ask
+        self.assertIn("UI where/how asks, even if known: point, not tell;", atticus.DRAWING)   # Haiku answered "where do I click" from memory, unpointed; "how do I cook rice" is no screen ask
+        self.assertIn("draw/explain on screen: diagram the idea, not marks.", atticus.DRAWING)   # "draw and explain cell wall vs membrane" got two rects around words
         self.assertIn("about the screen, even if known,", atticus.POINTER)
         self.assertIn("use " + atticus.DRAW + " once on Request screen", atticus.DRAWING)
-        self.assertIn("after --look && --draw --help (one call)", atticus.DRAWING)   # draw() refuses before this ask's --look
+        self.assertIn("After --look && --draw --help (one call)", atticus.DRAWING)   # draw() refuses before this ask's --look
 
     def test_installed_tool_help_is_attached_cached_and_system_tools_are_not(self):
         bin_ = Path(atticus.DIR) / 'bin'; bin_.mkdir()
@@ -597,7 +598,7 @@ print(json.dumps(atticus.look(cleanup=sys.argv[3] != 'standalone')))
             atticus.gate()
         self.assertEqual(out.getvalue(), '')
 
-    def test_main_ask_web_search_waits_for_the_free_search_first(self):
+    def test_claude_web_search_waits_for_the_free_search_first(self):
         event = json.dumps({'tool_name': 'WebSearch', 'tool_input': {'query': 'fixture'}})
         def gate(**env):
             with patch.dict(os.environ, {'ATTICUS_CLIENT': 'claude', **env}), patch.object(atticus, 'preview_commands'), \
@@ -607,11 +608,13 @@ print(json.dumps(atticus.look(cleanup=sys.argv[3] != 'standalone')))
         with tempfile.TemporaryDirectory() as root:
             denied = json.loads(gate(ATTICUS_ASK=root))['hookSpecificOutput']
             self.assertEqual(denied['permissionDecision'], 'deny'); self.assertIn(atticus.SEARCH, denied['permissionDecisionReason'])
-            self.assertNotIn('deny', gate(ATTICUS_ASK=root, ATTICUS_AGENT='fixture'))   # agents keep their own search tiers
+            agent = json.loads(gate(ATTICUS_ASK=root, ATTICUS_AGENT='fixture'))['hookSpecificOutput']
+            self.assertEqual(agent['permissionDecision'], 'deny'); self.assertIn(atticus.SEARCH, agent['permissionDecisionReason'])
             with patch.dict(os.environ, {'ATTICUS_ASK': root}), patch.object(atticus, 'search', return_value='no results'), \
                  patch('sys.argv', ['atticus.py', '--search', 'fixture']), patch('sys.stdout', new_callable=io.StringIO):
                 atticus.main()
-            self.assertEqual(gate(ATTICUS_ASK=root), '')   # after the free search, WebSearch is the fallback
+            allowed = json.loads(gate(ATTICUS_ASK=root, ATTICUS_AGENT='fixture'))['hookSpecificOutput']
+            self.assertEqual(allowed['permissionDecision'], 'allow')   # after the free search, WebSearch is the fallback
 
     def test_web_search_redirect_is_not_a_failed_step_or_a_move_step(self):
         use = {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'w', 'name': 'WebSearch', 'input': {'query': 'fixture'}}]}}
@@ -1043,11 +1046,13 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
 
     def test_completed_log_records_final_model_and_each_attempt(self):
         atticus.begin_turn('Hard fixture')
+        atticus.TURN['attempt_usage'] = [{'usage': {'input_tokens': 7, 'output_tokens': 2}}]
         atticus.log_turn('Hard fixture', 'Done.', time.time(), .041, model='sonnet', escalated=True,
                          escalate_why='asked', attempt_usd=[.001, .04])
         row = atticus.read_rows(str(Path(atticus.DIR) / 'log.jsonl'))[-1]
         self.assertEqual((row['model'], row['escalated'], row['escalate_why'], row['attempt_usd']),
                          ('sonnet', True, 'asked', [.001, .04]))
+        self.assertEqual(row['attempt_usage'], [{'usage': {'input_tokens': 7, 'output_tokens': 2}}])
 
     def test_confirmed_instant_command_skips_context_work(self):
         with patch.multiple(atticus, **{name: unittest.mock.DEFAULT for name in
@@ -1705,7 +1710,8 @@ class BoxLookTests(unittest.TestCase):
         self.assertEqual(out.call_args_list[0].args[0], '✓ **Options:**\u2028\u20281. one two\u20282. three')
         self.assertEqual(out.call_args_list[1].args[0], '▸ Reading the page')
         self.assertIn('line.dropFirst(2).replacingOccurrences(of: "\\u{2028}", with: "\\n")', self.SOURCE)   # the app turns them back once
-        self.assertIn('LaTeX math: $inline$, $$display$$ (drawings: plain Unicode)', atticus.SYSTEM)
+        self.assertIn('LaTeX math: $inline$, $$display$$.', atticus.SYSTEM)
+        self.assertIn('Drawn text is plain Unicode, no LaTeX.', atticus.DRAW_HELP)   # read only when drawing
         self.assertIn('≤3 short sentences, more if asked', atticus.SYSTEM)   # concise by default; detail only on request
         self.assertNotIn('plain text', atticus.SYSTEM.split('Final:', 1)[1].split('\n', 1)[0])
 
@@ -1718,6 +1724,9 @@ class BoxLookTests(unittest.TestCase):
                 self.assertIn(held, guard, f'{name} ignores {held}')
         self.assertIn('stuck = true', app.split('case .leftMouseDragged:', 1)[1].split('default:', 1)[0])   # a drag places it
         self.assertIn('stuck = false', app.split('func gone() {', 1)[1].split('\n    }', 1)[0])   # cleared only once it is gone
+        # the dictation pill is not a box to keep: clicking or dragging it must not hold it (or bring the box back) after its check
+        self.assertIn('if !pillOn { stuck = true }', app.split('case .leftMouseDragged:', 1)[1].split('default:', 1)[0])
+        self.assertIn('else { if !pillOn { pinned = true }; grab =', app.split('case .leftMouseDown:', 1)[1].split('case .leftMouseDragged:', 1)[0])
 
     def test_links_open_in_the_browser_only_for_web_and_mail(self):
         handler = self.SOURCE[self.SOURCE.index('if let s = b["link"] as? String'):]
