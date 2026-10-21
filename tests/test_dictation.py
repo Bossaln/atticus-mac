@@ -230,39 +230,58 @@ print("dictation target safety ok")
         source = (ROOT / 'Atticus.swift').read_text()
         apply = source[source.index('    func apply(_ draft:'):source.index('    var value:', source.index('    func apply(_ draft:'))]
         insert = source[source.index('    func dictationDeliveryFailed('):source.index('    func typed(')]
-        self.assertIn('case .unchanged: fallback()', apply)
-        self.assertIn('case .unknown: done(false)', apply)
         self.assertEqual(apply.count('.post(tap: .cghidEventTap)'), 1)
         self.assertEqual(apply.count('postToPid'), 1)   # one send, never both: per-process only while Atticus holds the keyboard
         self.assertIn('if NSApp.keyWindow == nil { e.post(tap: .cghidEventTap) } else { e.postToPid(', apply)
         self.assertIn('Saved to History', insert)
         self.assertNotIn('NSPasteboard', insert)   # dictation never leaves its words on the clipboard
+        # Oct 21, 2026: a paste into an Electron chat box landed but its field read back unchanged, so Atticus said "Couldn't insert".
         swift = r'''import Foundation
-enum Delivery { case landed, unchanged, unknown }
-final class FakeTarget {
-    var writes = 0, pastes = 0, copied = ""
-    func deliver(_ afterWrite: Delivery, _ afterPaste: Delivery, _ text: String) -> Bool {
-        writes += 1
-        switch afterWrite {
-        case .landed: return true
-        case .unchanged:
-            pastes += 1
-            if afterPaste == .landed { return true }
-            copied = text; return false
-        case .unknown:
-            copied = text; return false
-        }
-    }
+struct AppRef: Equatable { let id: Int; var isTerminated: Bool { false }; var processIdentifier: Int32 { 1 }; func activate() {} }
+final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: AppRef? }
+enum NSApp { static var keyWindow: Int? { nil } }
+enum CGEventTapLocation { case cghidEventTap }
+struct CGEventFlags: OptionSet { let rawValue: Int; static let maskCommand = CGEventFlags(rawValue: 1) }
+var posted = 0, writes = 0, restored = 0, focused = "box", editable = false, writeOK = true, readBack = TextSelection.Delivery.unchanged
+final class CGEvent {
+    var flags: CGEventFlags = []
+    init?(keyboardEventSource: Any?, virtualKey: Int, keyDown: Bool) {}
+    func post(tap: CGEventTapLocation) { posted += 1 }
+    func postToPid(_ pid: Int32) { posted += 1 }
 }
-let delayed = FakeTarget()
-precondition(delayed.deliver(.landed, .unknown, "one") && delayed.writes == 1 && delayed.pastes == 0,
-             "a delayed verified AX write was pasted twice")
-let rejected = FakeTarget()
-precondition(rejected.deliver(.unchanged, .landed, "two") && rejected.writes == 1 && rejected.pastes == 1,
-             "a proven rejected AX write did not fall back once")
-let unknown = FakeTarget()
-precondition(!unknown.deliver(.unknown, .landed, "never lose me") && unknown.pastes == 0 && unknown.copied == "never lose me",
-             "an unverifiable write retried or lost the transcript")
+let kAXFocusedUIElementAttribute = "focused"
+func AXUIElementCreateApplication(_ pid: Int32) -> String { "app" }
+func AXUIElementSetMessagingTimeout(_ e: String, _ t: Double) {}
+func axAttribute(_ e: String, _ k: String) -> String? { focused }
+func CFEqual(_ a: String, _ b: String) -> Bool { a == b }
+enum Hands { static func lease(_ n: String, wait: Bool) throws -> Int { 1 }; static func unlock(_ l: Int) {} }
+func borrowPasteboard(_ s: String) -> (() -> Void)? { { restored += 1 } }
+struct TextSelection {
+    enum Delivery { case landed, unchanged, unknown }
+    static let settle: TimeInterval = 0.05
+    let focus = "box", app = AppRef(id: 1), range: CFRange? = CFRange(location: 0, length: 0)
+    var pastable: Bool { true }
+    var value: String? { "" }
+    func selectionMatches() -> Bool { true }
+    func delivery(_ draft: String, _ before: String?) -> Delivery { readBack }
+    func replace(_ draft: String) -> Bool { writes += 1; return writeOK }
+''' + apply + r'''}
+func deliver(write: Bool = false, _ read: TextSelection.Delivery, front: Int = 1, focus: String = "box") -> Bool? {
+    posted = 0; writes = 0; restored = 0; editable = write; readBack = read; focused = focus
+    NSWorkspace.shared.frontmostApplication = AppRef(id: front)
+    var result: Bool?
+    TextSelection().apply("hello", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication == AppRef(id: 1) }) { result = $0 }
+    let end = Date().addingTimeInterval(2)
+    while result == nil && Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    return result
+}
+precondition(deliver(.unchanged) == true && posted == 2 && restored == 1, "a posted paste whose field reads back unchanged was called a failure")
+precondition(deliver(.unknown) == true && posted == 2 && restored == 1, "an unreadable field after a posted paste was called a failure")
+precondition(deliver(.unchanged, front: 2) == false && posted == 0 && restored == 0, "pasted after the front app changed")
+precondition(deliver(.unchanged, focus: "other") == false && posted == 0, "pasted after focus moved")
+precondition(deliver(write: true, .landed) == true && writes == 1 && posted == 0, "a verified AX write was pasted too")
+precondition(deliver(write: true, .unknown) == true && writes == 1 && posted == 0, "an unverifiable AX write was pasted again or called a failure")
+precondition(deliver(write: true, .unchanged) == true && writes == 1 && posted == 2 && restored == 1, "a proven rejected AX write did not fall back to one paste")
 print("single delivery fallback ok")
 '''
         self.assertIn('single delivery fallback ok', run_swift(self, swift))

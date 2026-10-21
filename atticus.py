@@ -3091,7 +3091,7 @@ def report(task, reply, ran, secs, why):
 
 
 def say(tag, text):   # one line per message; an answer's own line breaks (lists, display math) travel as U+2028
-    if tag != '✓': text = ' '.join(text.split())
+    if tag not in ('✓', '…'): text = ' '.join(text.split())
     else:   # lines inside ``` fences keep their spacing (code, text diagrams)
         fence, lines = False, []
         for line in text.strip().splitlines():
@@ -3425,6 +3425,17 @@ def parse_handoff(text):
 def without_handoff_line(text):
     """Routing controls are protocol, never user-visible answer text."""
     return re.sub(r'(?m)^[ \t]*\[(?:agent-profile|agent|steer)(?:\s[^\n]*)?\][ \t]*(?:\n|$)', '', text).strip()
+
+
+def streamed_answer(text):
+    """What of a main reply still arriving may show in the box: never a tag, a draft, a handoff or a Sources list."""
+    text = text.lstrip()
+    if text[:1] in ('[', '`'): return ''   # a tagged, handed-off or fenced reply shows only as the final reply
+    text = re.split(r'\n\s*Sources?:', text.split('[', 1)[0], maxsplit=1, flags=re.I)[0]   # every control tag starts with [
+    head, _, tail = text.rpartition('\n')
+    if head and 'sources:'.startswith(tail.strip().lower()): text = head   # that line may still become "Sources:"
+    text = text.rstrip()
+    return text if len(text) >= 120 else ''   # notes before tools are 3-8 words: shorter text may still be one
 
 
 def private_json(path, data):
@@ -4445,7 +4456,7 @@ def start_claude(model=None, agent=None):
     settings['hooks'] = {'PreToolUse': [{'matcher': '.*', 'hooks': [{'type': 'command', 'command': f'/bin/sh "{ME}" --gate', 'timeout': 660 if agent else 140}]}]}
     errors = tempfile.TemporaryFile(mode='w+')   # draining a pipe only after wait() can deadlock
     flags = ['--resume', agent['session']] if agent and agent.get('session') else []
-    flags += ['--include-partial-messages'] if agent else ['--no-session-persistence', '--strict-mcp-config']
+    flags += ['--include-partial-messages'] + ([] if agent else ['--no-session-persistence', '--strict-mcp-config'])
     if agent and pref('agentUserTools', True): flags += user_agent_tools(ask)
     if not agent: flags += ['--disable-slash-commands']
     elif not pref('agentUserTools', True): flags += ['--disable-slash-commands']
@@ -4673,6 +4684,8 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     reset_deadline()
     reply, managed_reply, cost, steps, cmds, last_failed, completed, result_error, ids, bad = '', '', 0, [], [], False, False, False, {}, set()
     action_indexes, evidence, redirected = [], False, set()
+    live, shown, drew = '', '', False   # the answer so far, as the box shows it ("… <text>"); the final reply always replaces it
+    streams = os.environ.get('ATTICUS_UI') == '1' and pref('showAnswers', 'stream') != 'once'   # Settings › Show answers: All at once
     # a draft for the caret shows its mode only in the final answer, so a cursor ask never moves mid-way
     move = MainMove(task, p, request) if not main_only and not os.environ.get('ATTICUS_CARET') and getattr(p, 'ask', '') and os.environ.get('ATTICUS_UI') == '1' else None
     if move:
@@ -4685,6 +4698,18 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 continue
             if not isinstance(j, dict): continue
             if (run.handoff or managed_reply) and j.get('type') != 'result': continue
+            if j.get('type') == 'stream_event':
+                event = j.get('event') if isinstance(j.get('event'), dict) else {}
+                block, delta = (event.get(k) if isinstance(event.get(k), dict) else {} for k in ('content_block', 'delta'))
+                if event.get('type') == 'message_start' or block.get('type') == 'tool_use':   # a tool call: the text before it was a note
+                    live = None if block.get('type') == 'tool_use' else ''
+                    if shown: say('…', ''); shown = ''
+                elif delta.get('type') == 'text_delta' and isinstance(delta.get('text'), str) and live is not None:
+                    live += delta['text']
+                    commit = os.environ.get('ATTICUS_COMMIT')
+                    text = streamed_answer(live) if streams and not drew and (not commit or os.path.exists(commit)) else ''
+                    if text != shown: say('…', text); shown = text
+                continue
             if move:
                 move.record(j)
                 if j.get('type') == 'assistant': move.poll()
@@ -4729,6 +4754,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                         elif b.get('type') == 'tool_use':
                             if not isinstance(b.get('name'), str) or not isinstance(b.get('input'), dict): continue
                             name, inp = b['name'], b['input']
+                            drew = drew or bool(re.search(r'--draw\b|--point\b', str(inp)))   # a guide or pointer replaces the answer text
                             if name == 'WebSearch' and search_first(getattr(p, 'ask', '')):
                                 redirected.add(b.get('id')); continue
                             p.waiting.clear()

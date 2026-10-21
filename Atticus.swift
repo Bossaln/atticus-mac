@@ -112,7 +112,7 @@ enum Prefs {
             ["name": "Technical", "text": "Precise terms, numbers and how it works. Name the tradeoff."],
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
-        "speak": false, "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
+        "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
         "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "verbatim", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundDone", "soundStop",
@@ -626,9 +626,9 @@ struct TextSelection {
             let finish = { (ok: Bool) in restore?(); release(); done(ok) }
             // The box is a non-activating panel: while it holds the keyboard, a system ⌘V lands in its own field, not the target.
             for e in [down, up] { e.flags = draft.isEmpty ? [] : .maskCommand; if NSApp.keyWindow == nil { e.post(tap: .cghidEventTap) } else { e.postToPid(app.processIdentifier) } }
-            confirm(until: Date().addingTimeInterval(0.45)) { result in
-                finish(valid() && result == .landed)
-            }
+            // Posted after every check passed: it went in. Web and Electron fields often read back empty or stale, so the
+            // read-back only decides when the clipboard can come back, never whether the paste failed.
+            confirm(until: Date().addingTimeInterval(0.45)) { _ in finish(true) }
         }
         let fallback = {
             if preserveFocus { paste() }
@@ -641,11 +641,9 @@ struct TextSelection {
         // A successful AX call can update slowly. Retry only after proving it changed nothing; an unverifiable retry can insert twice.
         guard editable, before != nil, replace(draft) else { fallback(); return }
         confirm(until: Date().addingTimeInterval(0.45)) { result in
-            guard valid() else { done(false); return }
             switch result {
-            case .landed: done(true)
-            case .unchanged: fallback()
-            case .unknown: done(false)
+            case .landed, .unknown: done(true)   // the write succeeded and the field changed; an odd read-back is no failure
+            case .unchanged: valid() ? fallback() : done(false)
             }
         }
     }
@@ -6672,7 +6670,7 @@ if CommandLine.arguments.dropFirst() == ["--type"] {
               let focused = axAttribute(target, kAXFocusedUIElementAttribute) else { return false }
         return CFEqual(focused, selected.focus)
     }) { ok in
-        print(ok ? "typed into \(selected.app.localizedName ?? "app")" : "Could not type: the text did not appear in the field.")
+        print(ok ? "typed into \(selected.app.localizedName ?? "app")" : "Could not type: the field lost focus or the keystroke could not be sent.")
         if ok { DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { exit(0) } }
         else { exit(1) }
     }

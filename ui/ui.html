@@ -140,7 +140,7 @@
   .a th { font-size: 11.5px; font-weight: 600; color: var(--fg2); } .a tr:last-child td { border-bottom: 0; }
   .a code { padding: 1px 5px; border-radius: 5px; font: 13px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.1); }
   .a a, .agent-card a { color: #64d2ff; text-decoration: none; cursor: pointer; } .a a:hover, .agent-card a:hover { text-decoration: underline; }
-  .a math { font-family: "STIX Two Math", math; font-size: 1.12em; } .a :is(math, .tex) { animation: word .5s var(--ease) both; }
+  .a math { font-family: "STIX Two Math", math; font-size: 1.12em; } .a :is(math, .tex), .turn > .a :is(li, pre, code, th, td) { animation: word .5s var(--ease) both; }
   .a math[display=block] { margin: 12px 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden; }
   .a math::-webkit-scrollbar { height: 0; }
   .tex { font: 13px ui-monospace, Menlo, monospace; color: #e5e5ea; } .tex.block { display: block; margin: 6px 0; text-align: center; }
@@ -561,6 +561,7 @@
     const a = part('a'); a ? a.after(d) : turn().append(d); fit();
   };
   const settle = () => turn()?.querySelectorAll('.step.live').forEach(e => { e.classList.remove('live'); e.classList.add('done'); });
+  const unstream = () => $('thread').querySelectorAll('.a.streaming').forEach(a => { a.classList.remove('streaming'); a.replaceChildren(); });   // the answer so far was a note, or a later attempt follows
   // TeX → MathML, drawn by WebKit's own math layout: the subset short answers use. Anything else throws and shows the source.
   const MML = 'http://www.w3.org/1998/Math/MathML';
   const MI = {alpha:'α',beta:'β',gamma:'γ',delta:'δ',epsilon:'ϵ',varepsilon:'ε',zeta:'ζ',eta:'η',theta:'θ',vartheta:'ϑ',iota:'ι',kappa:'κ',lambda:'λ',mu:'μ',nu:'ν',xi:'ξ',pi:'π',rho:'ρ',sigma:'σ',tau:'τ',upsilon:'υ',phi:'ϕ',varphi:'φ',chi:'χ',psi:'ψ',omega:'ω',
@@ -687,16 +688,36 @@
     }
     return out;
   };
-  const reveal = (a, text) => {   // the answer fades in word by word (a formula as one), under a second in total; a draft stays exactly as it will paste
-    a.replaceChildren(a.classList.contains('draft') ? text : markdown(text));
-    const units = [], walk = n => [...n.childNodes].forEach(c => {
+  const leaf = c => c.nodeType === 3 || c.namespaceURI === MML || c.classList.contains('w') || c.classList.contains('tex');
+  const merge = (old, now, gone) => {   // keeps the nodes both share from the start (words on screen keep their fade) and swaps in the rest
+    const o = [...old.childNodes], n = [...now.childNodes]; let i = 0;
+    for (; i < o.length && i < n.length && o[i].nodeName === n[i].nodeName && o[i].className === n[i].className; i++)
+      if (!leaf(o[i])) merge(o[i], n[i], gone); else if (o[i].textContent !== n[i].textContent) break;
+    o.slice(i).forEach(c => { gone.push(c); c.remove(); }); old.append(...n.slice(i));
+  };
+  const reveal = (a, text, keep = false) => {   // the answer fades in word by word (a formula as one), under a second in total; a draft stays exactly as it will paste
+    const t = document.createElement('div'); t.append(a.classList.contains('draft') ? text : markdown(text));   // keep: a streamed answer, only its new words fade in
+    const units = [], boxes = [], walk = n => [...n.childNodes].forEach(c => {
       if (c.nodeType === 3) c.replaceWith(...c.data.split(/(\s+)/).filter(Boolean).map(w => { if (/^\s/.test(w)) return w; const s = document.createElement('span'); s.className = 'w'; s.textContent = w; units.push(s); return s; }));
       else if (c.namespaceURI === MML || c.classList.contains('tex')) units.push(c);
-      else walk(c);
+      else { c.first = units.length; boxes.push(c); walk(c); }   // a block's marker, background or border fades in with its first word
     });
-    walk(a);
-    const gap = Math.min(32, 900 / Math.max(1, units.length));
-    units.forEach((u, i) => u.style.animationDelay = `${i * gap}ms`);
+    walk(t);
+    const trim = n => { for (let c; (c = n.childNodes.at(-1))?.nodeType === 1 && !leaf(c);) { if (c.textContent.trim()) return trim(c); c.remove(); } };
+    trim(t);   // a block still without words (a list item, heading or code block just opened) waits for them
+    const gone = [], was = [], take = n => n.at === undefined ? n.childNodes.forEach(take) : was.push(n), bare = u => u.textContent.replace(/[*_`]/g, '');
+    if (keep) merge(a, t, gone); else a.replaceChildren(...t.childNodes);
+    gone.forEach(take);
+    const now = performance.now(); if (!keep) a.next = now;   // one queue per answer: words start in reading order, each after the one before
+    let j = 0;
+    const fresh = units.filter(u => a.contains(u)), queued = fresh.filter(u => {   // a word re-rendered with the same text (a bold lead closing, a list starting) keeps its fade
+      if (j < was.length && bare(was[j]) === bare(u)) { u.at = was[j++].at; return false; }
+      j = was.length; return true;
+    });
+    const gap = Math.min(32, Math.max(0, 900 - (a.next - now)) / Math.max(1, queued.length));   // never more than 0.9 s behind: a long backlog catches up
+    queued.forEach(u => { u.at = Math.max(now, a.next); a.next = u.at + gap; });
+    fresh.forEach(u => u.style.animationDelay = `${u.at - now}ms`);
+    boxes.forEach(b => { if (a.contains(b)) b.style.animationDelay = `${(units[b.first]?.at ?? a.next) - now}ms`; });
   };
 
   let mini = null, miniTarget = null, miniEnd = 0, miniRemove = 0;
@@ -902,7 +923,7 @@
       fit();
     },
     pointCoach() { coachPending = true; if ($('comp').classList.contains('open')) coachShow(); },
-    finished() { clockStop(); miniFinish(false); },
+    finished() { clockStop(); miniFinish(false); unstream(); },
     dictate(on) {   // the last dictation's wave must not show on the next; its empty turn never reaches the box
       document.body.classList.toggle('dictate', !!on); document.body.classList.remove('locked', 'hearing'); $('thread').querySelectorAll('.turn.dict').forEach(e => e.remove());
       for (const b of $('dictwave').children) b.style.height = ''; pill('');
@@ -982,7 +1003,12 @@
     },
     line(l) {
       const tag = l[0], s = l.slice(2);
-      if (tag === '▣') { try { miniUpdate(JSON.parse(s)); } catch {} }
+      let top = null;   // a streamed answer: the box keeps its start in view and never chases the bottom
+      if (tag !== '…' && tag !== '✓') unstream();
+      if (tag === '…') {   // the answer as it arrives; ✓ replaces it
+        const a = part('a'); if (a && !a.dataset.answer) { if (!s) unstream(); else { reveal(a, s.replace(/\u2028/g, '\n').replace(/\S+$/, ''), a.classList.contains('streaming')); a.classList.add('streaming'); top = a; } }   // its last word may still be arriving
+      }
+      else if (tag === '▣') { try { miniUpdate(JSON.parse(s)); } catch {} }
       else if (tag === '@') miniPoint(s);
       else if (tag === '·') status(s, true);
       else if (tag === '▸') {
@@ -1003,7 +1029,7 @@
         miniFinish(); clockStop();
         working = false;
         settle(); part('q')?.classList.remove('live'); status('');
-        const a = part('a'); if (a) { a.dataset.answer = s; reveal(a, s); } setState('breathing');
+        const a = part('a'); if (a) { const shown = a.classList.contains('streaming'); a.classList.remove('streaming'); a.dataset.answer = s; reveal(a, s, shown); if (shown) top = a; } setState('breathing');   // words already on screen do not fade in again
         document.querySelectorAll('.redo').forEach(e => e.remove());   // only the latest answer offers it
         const q = part('q')?.textContent.trim();
         if (q && clock?.closest('.turn') === turn()) {   // "That's wrong" also drops a learned shortcut that did the wrong thing
@@ -1019,7 +1045,11 @@
         turn().append(d);
         setTimeout(() => { d.classList.add('gone'); setTimeout(() => { d.remove(); fit(); }, 400); }, 9000);   // never sticks around
       }
-      fit();
+      fit(!top);
+      if (top && atBottom) {   // grow down to the answer's start, never past it or past where the user scrolled; once it is full they scroll on
+        const t = $('thread'), end = t.scrollHeight - t.clientHeight, start = top.getBoundingClientRect().top - t.getBoundingClientRect().top + t.scrollTop - 16;
+        t.scrollTop = Math.max(t.scrollTop, Math.min(end, start)); atBottom = start >= end;
+      }
     },
     msg(s) {
       if (document.body.classList.contains('dictate')) return window.ui.dictated({ text: s });   // its status line and answer are hidden
@@ -1090,7 +1120,7 @@
     },
     notice(s) { status(s, true); },
     ask([q, cmd, retry, details]) {   // retry: a failure card (Not now / Retry) instead of an approval
-      $('thread').querySelectorAll('.ok').forEach(e => e.remove()); unpin();
+      $('thread').querySelectorAll('.ok').forEach(e => e.remove()); unpin(); unstream();
       const d = document.createElement('div'); d.className = 'ok';
       if (retry) {
         d.className = 'ok offer retry';
@@ -1134,7 +1164,7 @@
       (turn() || $('thread')).append(d); fit();
     },
     pick({ q, options }) {   // "which one?": the index picked (or "" = none of these) goes back to the app, then the card goes
-      $('thread').querySelectorAll('.pk').forEach(e => e.remove());
+      $('thread').querySelectorAll('.pk').forEach(e => e.remove()); unstream();
       const d = document.createElement('div'); d.className = 'pk';
       d.innerHTML = '<b></b><div class="g"></div><input class="other" placeholder="Something else…" aria-label="Something else: type or dictate, then press Return"><div class="bar"><button class="none">None of these</button><button class="back">All choices</button><button class="go">Use this</button></div>';
       d.querySelector('b').textContent = q;
