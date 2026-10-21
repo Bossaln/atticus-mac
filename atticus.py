@@ -1575,8 +1575,8 @@ def shortcut_commands(task, commands, app=''):
             command = f'{HANDS} menu {shlex.quote(app)} {shlex.quote(tokens[3])}'
         elif tokens[0] == 'osascript':
             lines = [re.sub(r'"(?:[^"\\]|\\.)*"', '""', s).strip() for i, t in enumerate(tokens) if i and tokens[i - 1] == '-e' for s in t.split('\n')]
-            # a read: get/count/…, a value coerced "as string", or a bare property "to name of current track"
-            reads = [bool(re.search(r'\b(get|count|exists|return)\b|\bas (string|text|integer|number|real|boolean|list|record)\b|\bto \w+ of\b', s, re.I)) and not re.search(r'\b(set|make|create|delete|click|press|perform|activate|open|close|quit|play|keystroke|key code|do shell script)\b', s, re.I) for s in lines]
+            # a read: get/count/…, a value coerced "as string", a bare property "to name of current track", or a bare test 'application "X" is running'
+            reads = [bool(re.search(r'\b(get|count|exists|return)\b|\bas (string|text|integer|number|real|boolean|list|record)\b|\bto \w+ of\b|^(?!.*\b(tell|if)\b).*\b(is|contains)\b', s, re.I)) and not re.search(r'\b(set|make|create|delete|click|press|perform|activate|open|close|quit|play|keystroke|key code|do shell script)\b', s, re.I) for s in lines]
             # every line reads or only frames one ("tell app" … "end tell"): "-e 'to pause' -e 'get its state'" still acts
             if any(reads) and all(r or re.fullmatch(r'tell (application|process) ""|end\b.*|delay [\d.]+|', s, re.I) for r, s in zip(reads, lines)): continue
         result.append(command)

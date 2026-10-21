@@ -105,6 +105,28 @@ class ReplayTests(unittest.TestCase):
             atticus.main();self.assertEqual(atticus.recent()[0]['a'],'Found them.');self.assertTrue((missing/'log.jsonl').exists())
         brain.assert_called_once()
 
+    def test_bare_running_check_is_dropped_and_a_new_shortcut_or_workflow_shows_the_learned_pill(self):
+        class NoThread:
+            def __init__(self,*a,**kw): pass
+            def start(self): pass
+            def join(self,*a): pass
+        quit,check='osascript -e \'tell application "Fixture" to quit\'','osascript -e \'application "Fixture" is running\''
+        self.assertEqual(atticus.shortcut_commands('close fixture',[quit,check]),[quit])
+        self.assertEqual(atticus.shortcut_commands('close fixture',[f'{quit} && sleep 1 && {check.replace("is","is not")}']),[quit])
+        self.assertIsNone(atticus.shortcut_commands('close fixture',[f'{check} && {quit}']))   # a check before the act still refuses
+        guarded='osascript -e \'tell application "Fixture"\' -e \'if player state is playing then pause\' -e \'end tell\''
+        self.assertEqual(atticus.shortcut_commands('pause fixture',[guarded]),[guarded])
+        def ask(task,reply,cmds):
+            brain=unittest.mock.Mock(return_value=(reply,0,[]));brain.ok=True;brain.cmds=cmds;brain.ran=cmds;brain.observed=[]
+            tip=unittest.mock.Mock()
+            with patch.object(atticus,'DIR',str(self.root)),patch.object(atticus,'RECENT',str(self.root/'recent.jsonl')),patch.object(atticus,'MEMORY',str(self.root/'memory.md')),patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py',task]),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=tip,look=lambda:[],hands_map=lambda *a:None,cached_hands=lambda:None):
+                atticus.main()
+            return tip.call_args.args[1]
+        self.assertEqual(ask('Close fixture','Fixture is closed.',[quit,check]),'Learned: procedure saved for next time.')
+        self.assertEqual(atticus.skills()['close fixture']['cmds'],[quit])
+        self.assertEqual(ask('Close fixture','Fixture is closed.',[quit,check]),'')   # already known: no pill
+        self.assertEqual(ask('Tidy fixture','Tidied. [workflow tidy fixture | Use the View menu.]',[f'{atticus.HANDS} see Fixture']),'Learned: procedure saved for next time.')
+
     def test_reference_ask_receives_recent_target_and_agent_history(self):
         class NoThread:
             def __init__(self,*a,**kw): pass
