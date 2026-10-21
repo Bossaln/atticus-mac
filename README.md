@@ -1,21 +1,12 @@
 <p align="center"><img src="docs/banner.png" alt="Atticus. Your whole Mac, one sentence away." width="100%"></p>
 
-<p align="center">
-  Hold <kbd>⌃ control</kbd> <kbd>⌥ option</kbd> <kbd>space</kbd>, say what you need, let go.<br>
-  Atticus moves your windows, finds your files, reads your screen and gets it done.
-</p>
-
-<p align="center"><a href="https://ko-fi.com/saarthr"><b>☕ Leave a tip</b></a> · Atticus is free; tips keep it going.</p>
+Hi, I'm Saarth, a 9th grader in high school. I built Atticus. It's an insanely fast assistant for your Mac, and the goal is for it to be insanely cheap and insanely useful.
 
 <p align="center">
-  <b>⚡ Fast</b> &nbsp;·&nbsp; <b>🔑 No API key</b> &nbsp;·&nbsp; <b>🧠 Remembers you</b> &nbsp;·&nbsp; <b>Free and open source</b>
+  Hold <kbd>⌃ control</kbd> <kbd>⌥ option</kbd> <kbd>space</kbd>, say what you need, let go. Atticus does it.
 </p>
 
-- **Fast.** Simple asks skip the AI: an app opens in 0.08 s. Ask for an action once and Atticus learns it, so next time it runs in a blink, with no AI and for free.
-- **Use your provider.** Run on a Claude or Devin plan, choose any provider already configured in Pi, or connect Claude Code to a local model server (Settings → AI client).
-- **Remembers you.** Say "remember…" and every ask after that knows it. It picks up who you are (your name, your apps) and fixes its own mistakes when you correct it.
-
-> **On Windows?** [@FindlayHi](https://github.com/FindlayHi) built **[Atticus for Windows](https://github.com/FindlayHi/atticus-windows)**, with integrations for Home Assistant, Jellyfin, Immich and more.
+<p align="center"><a href="#install"><b>Install</b></a> · <a href="https://ko-fi.com/saarthr"><b>☕ Leave a tip</b></a> · Free and open source</p>
 
 <p align="center">
   <img alt="macOS" src="https://img.shields.io/badge/macOS-1d1d1f?style=for-the-badge&logo=apple&logoColor=white">
@@ -30,6 +21,21 @@
 https://github.com/user-attachments/assets/26822ad2-6281-477d-b676-2f490a4a207b
 
 <br>
+
+## What it does
+
+- **Learns.** Ask for something new once and it works out the steps. Ask again and it runs in a blink, with no AI. A green "Learned" pill shows when it saves one.
+- **Instant commands.** Opens apps, moves windows, plays music and searches the web with no AI at all.
+- **Sees your screen.** Ask about anything on screen. Ask "where do I click?" and it points at the spot.
+- **Draws to explain.** "Explain this and draw it" builds a labeled diagram right on your screen.
+- **Dictate anywhere.** Hold fn, talk, let go. Your words land in any text field, cleaned up.
+- **Background agents.** Big jobs run behind your apps while you keep working.
+- **Meeting Copilot.** Answers and notes during calls, saved on your Mac.
+- **Remembers you.** Say "remember…" and every ask after that knows it.
+- **Your plan, no API key.** Runs on Claude, Devin, Pi or a local model.
+- **Private and safe.** Your voice stays on your Mac. Deletes, sends and purchases ask first.
+
+> **On Windows?** [@FindlayHi](https://github.com/FindlayHi) built **[Atticus for Windows](https://github.com/FindlayHi/atticus-windows)**, with integrations for Home Assistant, Jellyfin, Immich and more.
 
 ## Just ask
 
@@ -50,20 +56,9 @@ https://github.com/user-attachments/assets/26822ad2-6281-477d-b676-2f490a4a207b
 
 <p align="center"><img src="docs/demo.gif" alt="Atticus arranging windows across two screens" width="820"></p>
 
-## Why Atticus
+## Safe by default
 
-<table>
-<tr>
-<td width="33%" valign="top"><h3>Fast</h3>Opening apps and sites, moving windows, web searches and music skip the AI entirely (an app opens in 0.08 s). Actions you ask for once (opening apps, moving windows, playing music) become learned shortcuts: "Open Calculator and Chess" went from 5.5 s to 0.4 s, with no AI.</td>
-<td width="33%" valign="top"><h3>No API key</h3>Runs on the Claude plan you already have, through <code>claude -p</code>. About 0.18¢ of plan usage per ask (~550 asks for $1 at API list rates). Atticus itself is free.</td>
-<td width="33%" valign="top"><h3>Remembers you</h3>"Remember: open means bring it to the front." Saved rules go with every ask. It learns lasting facts about you (name, city, favorite apps), and when you correct it, it saves a rule so it gets it right next time. Ask what it remembers about anything, or tell it to forget something. Edit all of it in Settings.</td>
-</tr>
-<tr>
-<td valign="top"><h3>Private ears</h3>Apple's on-device speech turns your voice into text. Audio never leaves your Mac.</td>
-<td valign="top"><h3>Your whole Mac</h3>Apps, windows, files, settings, the web and the screen, with native Accessibility controls for clicking, scrolling and typing inside apps.</td>
-<td valign="top"><h3>Safe by default</h3>Safe mode runs the AI's commands in Claude Code's sandbox: they can only write to a scratch folder. Before anything deletes, sends, buys or changes a file, Atticus asks you first. <code>rm</code>, <code>sudo</code>, disk tools and shutdown are always blocked. Every exact command is in the ask log.</td>
-</tr>
-</table>
+Safe mode runs the AI's commands in Claude Code's sandbox, so they can only write to a scratch folder. Before anything deletes, sends, buys or changes a file, Atticus asks you first. <code>rm</code>, <code>sudo</code>, disk tools and shutdown are always blocked. Every exact command is in the ask log. Apple's on-device speech turns your voice into text, and audio never leaves your Mac.
 
 <details>
 <summary><b>How the shortcut and the box work</b></summary>
