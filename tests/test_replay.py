@@ -127,6 +127,30 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(ask('Close fixture','Fixture is closed.',[quit,check]),'')   # already known: no pill
         self.assertEqual(ask('Tidy fixture','Tidied. [workflow tidy fixture | Use the View menu.]',[f'{atticus.HANDS} see Fixture']),'Learned: procedure saved for next time.')
 
+    def test_instant_quit_uses_bundle_id_verifies_and_beats_old_skill(self):
+        old='osascript -e \'tell application "Fixture Display" to quit\''
+        atticus.save_skills({'close fixture display':{'cmds':[old],'reply':'Old false success.','mine':True},
+                             'end fixture':{'cmds':[old],'reply':'Ended.','mine':True}})
+        resolve=lambda name: 'Fixture' if name == 'fixture display' else None
+        with patch.object(atticus,'app_named',side_effect=resolve),patch.object(atticus,'app_id',return_value='com.example.fixture') as app_id, \
+             patch.object(atticus,'quit_app',return_value=True) as quit_app,patch.object(atticus,'replay') as replay:
+            self.assertEqual(atticus.fast('close fixture display'),'Closed Fixture.')
+            app_id.assert_called_once_with('Fixture');quit_app.assert_called_once_with('com.example.fixture');replay.assert_not_called()
+            self.assertIn('application id "com.example.fixture"',atticus.fast.cmds[0])
+            self.assertIsNone(atticus.fast('close this tab'))
+            self.assertIsNone(atticus.fast('close the window'))
+        with patch.object(atticus,'app_named',side_effect=resolve),patch.object(atticus,'app_id',return_value='com.example.fixture'), \
+             patch.object(atticus,'quit_app',return_value=False):
+            self.assertEqual(atticus.fast('quit fixture display'),'Fixture is still open.')
+            self.assertEqual(atticus.fast.cmds,[])
+        with patch.object(atticus,'app_named',return_value='Fixture'),patch.object(atticus,'app_id',return_value='com.example.fixture') as app_id, \
+             patch.object(atticus,'quit_app',return_value=True) as quit_app,patch.object(atticus.subprocess,'run') as shell:
+            self.assertEqual(atticus.replay('end fixture'),'Ended.')
+            app_id.assert_called_once_with('Fixture');quit_app.assert_called_once_with('com.example.fixture');shell.assert_not_called()
+        with patch.object(atticus,'app_running',side_effect=[True,True,False]),patch.object(atticus,'osa') as osa,patch.object(atticus.time,'sleep'):
+            self.assertTrue(atticus.quit_app('com.example.fixture'))
+        osa.assert_called_once_with('tell application id "com.example.fixture" to quit',timeout=2)
+
     def test_reference_ask_receives_recent_target_and_agent_history(self):
         class NoThread:
             def __init__(self,*a,**kw): pass

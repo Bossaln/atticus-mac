@@ -1489,6 +1489,26 @@ def proc_of(app):
     return osa(f'tell application "System Events" to get name of first process whose bundle identifier is "{osa_quote(bid)}"') or app
 
 
+def app_id(app):
+    return osa(f'id of application "{osa_quote(app)}"')
+
+
+def app_running(bid):
+    return osa(f'tell application "System Events" to exists (first process whose bundle identifier is "{osa_quote(bid)}")') == 'true'
+
+
+def quit_app(bid):
+    """Quit and verify one running app by bundle id; a save dialog may keep it open."""
+    if not app_running(bid):
+        return True
+    osa(f'tell application id "{osa_quote(bid)}" to quit', timeout=2)
+    for _ in range(10):
+        if not app_running(bid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def dashes(text):
     return re.sub(r'[\u2010-\u2015\u2212]', '-', text)   # macOS writes "Wi‑Fi" with a non-breaking hyphen
 
@@ -1658,6 +1678,16 @@ def swapped(cmds, old, new):
     return out if any(new in c for c in out) else None
 
 
+def replay_quit(tokens):
+    """A learned plain AppleScript quit -> bundle id, so display and process names cannot lie."""
+    if len(tokens) != 3 or tokens[:2] != ['osascript', '-e']:
+        return None
+    m = re.fullmatch(r'tell application( id)? "([^"]+)" to quit', tokens[2], re.I)
+    if not m:
+        return None
+    return m[2] if m[1] else app_id(app_named(m[2]) or m[2])
+
+
 def replay(k, swap=None):
     replay.ran = []
     s = skills().get(k)
@@ -1682,6 +1712,12 @@ def replay(k, swap=None):
                     out = place_many(tokens[2:])
                     replay.ran.append(f'{c[:200]}  => {out[:200]} ({time.time() - began:.1f}s)')
                     if FAILED.search(out) or 'no window found' in out or 'could not check' in out: return None
+                elif (bid := replay_quit(tokens)) is not None:
+                    if not bid: return None
+                    began = time.time()
+                    closed = quit_app(bid)
+                    replay.ran.append(f'{c[:200]}  => {"closed" if closed else "still open"} ({time.time() - began:.1f}s)')
+                    if not closed: return None
                 else:
                     if ARRANGE.search(c): free_focus()
                     began = time.time()
@@ -1771,7 +1807,7 @@ def gist(text):
 
 
 def fast(text):
-    """Simple commands with no AI: learned shortcuts, open <app/site>, snap/move <it/app> left/right/full/center, to laptop/monitor.
+    """Simple commands with no AI: learned shortcuts, open <app/site>, close <app>, snap/move <it/app> left/right/full/center, to laptop/monitor.
     Returns a reply, or None to hand the request to Haiku."""
     fast.cmds = []
     named = NAMED.match(text.strip())
@@ -1801,6 +1837,16 @@ def fast(text):
                 'I do not have a verified procedure for that yet. Complete the task successfully first so I can save it.')
     if t in ('no', 'yes', 'ok', 'okay', 'nevermind', 'never mind', 'cancel', 'nothing', 'thanks', 'thank you'):
         return 'Okay.'   # stray word after a turn: no AI call
+    m = re.fullmatch(r'(?:close|quit) (.+)', t)
+    app = app_named(m[1]) if m and not DEICTIC.search(m[1]) else None
+    if app:
+        bid = app_id(app)
+        if not bid:
+            return None
+        if not quit_app(bid):
+            return f'{app} is still open.'
+        fast.cmds = [shlex.join(['osascript', '-e', f'tell application id "{bid}" to quit'])]
+        return f'Closed {app}.'
     sk, g = (skills() if pref('learn', True) else {}), gist(t)
     k, swap = (t, None) if t in sk else (None, None) if DEICTIC.search(t) or not g else like(g, sk)   # same words that matter, any order or filler, or another app
     if k:
