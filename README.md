@@ -11,6 +11,14 @@
   <b>🧠 Learns as you use it</b> &nbsp;·&nbsp; <b>⚡ Fast</b> &nbsp;·&nbsp; <b>🔑 No API key</b> &nbsp;·&nbsp; <b>Free and open source</b>
 </p>
 
+## Quick install
+
+```
+curl -fsSL https://raw.githubusercontent.com/SaarthurR/atticus-mac/main/install.sh | bash
+```
+
+Needs macOS 26 and an AI client: Claude Code on a Claude plan, Devin, Pi or a local model. [Full install steps](#install)
+
 ## What it does
 
 - **Learns.** Ask for something new once and it works out the steps. Ask again and it runs in a blink, with no AI.
