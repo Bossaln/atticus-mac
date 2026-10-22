@@ -217,8 +217,11 @@ enum Hands {
  static func checkStopped()throws { if stopped != 0 { throw Failure("Cancelled") } }
  static let stampLocation:((Event,CGPoint)->Void)? = { e,p in e.stamped = p }
  static let skyPost:((Int32,Event)->Void)? = { pid,e in e.pid = pid; traces.append(e); if cancelDrag && e.type == .leftMouseDragged { stopped = 1 } }
- static var window:UInt32 = 77, front:[String] = []
+ static var window:UInt32 = 77, under:UInt32? = nil, front:[String] = [], focused:[Int] = [], restored = 0
+ static func focusWithoutRaise(_ pid:Int32,_ w:UInt32,on:Bool = true) { precondition(pid == 123); focused.append(on ? Int(w) : -Int(w)) }
+ static func keepOrder(_ pid:Int32)->()->Void { { restored += 1 } }
  static func targetWindow(_ a:TargetApp)->UInt32 { window }
+ static func windowAt(_ p:CGPoint,_ pid:Int32)->UInt32? { under }
  static func keysReachTask(_ pid:Int32)throws {}
  static func webFocused(_ pid:Int32)->Bool { false }
  static func postKey(_ e:Event,pid:Int32,web:Bool) { precondition(!web); e.postToPid(pid) }
@@ -245,10 +248,14 @@ precondition(traces.map(\\.type) == [.mouseMoved,.scrollWheel] && traces[1].whee
 traces=[]; cancelDrag=true
 do { try Hands.mouse(CGPoint(x:10,y:20),a,to:CGPoint(x:50,y:60)); preconditionFailure("Cancelled drag continued") } catch {}
 precondition(traces.last!.type == .leftMouseUp && traces.allSatisfy(routed))
-traces=[]; cancelDrag=false; Hands.stopped=0
+traces=[]; cancelDrag=false; Hands.stopped=0; Hands.under=88
+try Hands.mouse(CGPoint(x:10,y:20),a)
+precondition(traces.count == 5 && traces.allSatisfy { e in [51,91,92].allSatisfy { e.fields[$0] == 88 } }, "a click went to the mapped window, not the one under the point")
+traces=[]; Hands.under=nil
 try Hands.mouse(CGPoint(x:10,y:20),a,front:true); MiniScreen.workInFront=true; try Hands.wheel("down",CGPoint(x:5,y:6),a)
 MiniScreen.workInFront=false; Hands.window=0; try Hands.mouse(CGPoint(x:10,y:20),a,to:CGPoint(x:50,y:60))
 precondition(Hands.front == ["mouse","wheel","mouse"] && traces.isEmpty, "front work or an unknown window posted background events")
+precondition(Hands.focused == [77,-77,77,-77,77,-77,77,-77,88,-88] && Hands.restored == 5, "each background gesture keys the window under the point for that gesture only and puts the app's window order back")
 print("hands Quartz spies ok")
 '''
         path = self.root / 'event-spies.swift'; path.write_text(swift)
@@ -296,7 +303,8 @@ print("hands Quartz spies ok")
         self.assertEqual([r['count'] for r in inside if r['type'] == 1], [1, 1, 2], rows)   # click, then double-click
         self.assertEqual(len([r for r in inside if r['type'] == 3]), 1, rows)   # right-click
         self.assertEqual(''.join(r['chars'] for r in rows if r['type'] == 10), 'hi', rows)
-        self.assertTrue(all(not r['active'] and str(r['front']) == finder for r in rows), rows)   # Finder stayed in front
+        self.assertTrue(all(str(r['front']) == finder for r in rows), rows)   # Finder stayed in front
+        self.assertTrue(not any(r['active'] for r in rows if r['type'] == 10), rows)   # a click keys its window only for that click: the keys after it find the app inactive again
         self.assertEqual(len({tuple(r['pointer']) for r in rows}), 1, rows)   # the pointer never moved
         print('BACKGROUND INPUT (fixture): ' + json.dumps(rows), flush=True)
         front = {'ATTICUS_FOCUS_REQUESTED': '1'}   # the user asked to see the work: the old foreground pointer path
@@ -312,7 +320,7 @@ print("hands Quartz spies ok")
         header = header.replace('ProcessInfo.processInfo.environment', '["ATTICUS_DIR":CommandLine.arguments[1], "ATTICUS_AX_ONLY":"1"]')
         names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu','screenLease',
                  'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','stringValue','selectedRange','insertionTarget','insertAfter','typeText',
-                 'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root','windowNumber','targetWindow','lease','unlock','submitReceipt','keysReachTask',
+                 'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root','windowNumber','userWindowLists','keepTaskWindow','targetWindow','windowAt','windowsAt','lease','unlock','submitReceipt','keysReachTask',
                  'isShortcut','menuShortcut','webFocused']
         matches = list(re.finditer(r'^    static func (\w+)\(', section, re.M))
         methods = ''.join(section[m.start():matches[i+1].start() if i+1<len(matches) else section.rfind('\n}')]
@@ -469,6 +477,46 @@ Hands.pinnedWindow="44"; do { _=try Hands.root(app); preconditionFailure("A miss
 application.attrs[kAXWindowsAttribute]=[] as NSArray; rootHit=userWindow
 cgWindows=[[kCGWindowOwnerPID as String:123,kCGWindowLayer as String:0,kCGWindowNumber as String:43,kCGWindowBounds as String:userWindow.rect.dictionaryRepresentation]]
 do { _=try Hands.root(app); preconditionFailure("The hit-test fallback substituted another window for the pinned one") } catch {}
+// Two windows of one app, no agent pin: every step stays in the window the task first used; the user's other one is never a stand-in.
+Hands.pinnedWindow=nil; rootHit=nil; Hands.userWindowsFile=URL(fileURLWithPath:CommandLine.arguments[1]+"/hands.json.windows")
+func cg(_ n:Int,_ r:CGRect)->[String:Any] { [kCGWindowOwnerPID as String:123,kCGWindowLayer as String:0,kCGWindowNumber as String:n,kCGWindowBounds as String:r.dictionaryRepresentation] }
+cgWindows=[cg(42,window.rect),cg(43,userWindow.rect)]; application.attrs[kAXFocusedUIElementAttribute]=name
+application.attrs[kAXWindowsAttribute]=[userWindow,window] as NSArray; application.attrs[kAXFocusedWindowAttribute]=window; application.attrs[kAXMainWindowAttribute]=window
+// A click at a screen point maps the app's window under it (a canvas in its unfocused window), not the focused one.
+let savedWindows=Hands.userWindowsFile; Hands.userWindowsFile=nil; Hands.aim=CGPoint(x:600,y:100)
+precondition(try! Hands.root(app).1 === userWindow && (try! Hands.capture(app)).windowID == "43", "a point in the app's other window mapped its focused one")
+precondition((try! Hands.resolve("600,100",map:try! Hands.capture(app),a:app)).0.label.hasPrefix("Unidentified screen point"), "a point in the window under it was refused")
+Hands.aim=nil; Hands.userWindowsFile=savedWindows
+// Reads never claim (the ask's key-down read of the front window 42); a task's first action claims the window it targets.
+precondition(try! Hands.root(app).1 === window && (try! Hands.identify(app))["window"] as? String == "Fixture" && Hands.userWindowLists().isEmpty, "a read claimed the front window")
+Hands.claims=true; Hands.aim=CGPoint(x:600,y:100)
+precondition(try! Hands.root(app).1 === userWindow && Hands.userWindowLists()["123"] == ["42"], "the first click did not claim the window under its point")
+precondition((try! Hands.resolve("600,100",map:try! Hands.capture(app),a:app)).0.label.hasPrefix("Unidentified screen point"), "the first click in the claimed window was refused")
+Hands.aim=CGPoint(x:100,y:100)
+do { _=try Hands.root(app); preconditionFailure("A later step reached the window open beside the claimed one") }
+catch let failure as Hands.Failure { precondition(failure.message.contains("the user's other"), failure.message) } catch { preconditionFailure("Not a hands failure") }
+// A new task whose first action is by label in the focused window 42 claims 42; a later point in 43 is refused.
+Hands.aim=nil; try! FileManager.default.removeItem(at:savedWindows!)
+precondition(try! Hands.resolve("Export",map:try! Hands.capture(app),a:app).1 === export && Hands.userWindowLists()["123"] == ["43"], "the first action by label did not claim its mapped window")
+Hands.aim=CGPoint(x:600,y:100)
+do { _=try Hands.root(app); preconditionFailure("A point click reached the user's other window") }
+catch let failure as Hands.Failure { precondition(failure.message.contains("the user's other"), failure.message) } catch { preconditionFailure("Not a hands failure") }
+Hands.aim=CGPoint(x:100,y:100); precondition(try! Hands.root(app).1 === window); Hands.aim=nil
+application.attrs[kAXFocusedWindowAttribute]=userWindow; application.attrs[kAXMainWindowAttribute]=userWindow   // the user clicks their other window
+precondition(try! Hands.root(app).1 === window && (try! Hands.capture(app)).windowID == "42" && Hands.targetWindow(app) == 42, "a later step moved to the user's other window")
+precondition(try! Hands.resolve("Export",map:try! Hands.capture(app),a:app).1 === export)
+application.attrs[kAXFocusedUIElementAttribute]=userField
+do { try Hands.keysReachTask(123); preconditionFailure("Keys went to the user's other window") } catch {}
+do { _=try Hands.menu("File > Export To > PDF…",app,act:true); preconditionFailure("A menu command went to the user's other window") } catch {}
+precondition(!menuPressed)
+let opened=TestElement("AXWindow","New message",CGRect(x:0,y:500,width:300,height:200)); opened.attrs["AXWindowNumber"]=NSNumber(value:45)
+application.attrs[kAXWindowsAttribute]=[opened,userWindow,window] as NSArray; application.attrs[kAXFocusedWindowAttribute]=opened
+precondition(try! Hands.root(app).1 === opened, "a window the task opened is its own")
+application.attrs[kAXWindowsAttribute]=[userWindow] as NSArray; application.attrs[kAXFocusedWindowAttribute]=userWindow
+cgWindows=[cg(43,userWindow.rect)]; rootHit=userWindow
+do { _=try Hands.root(app); preconditionFailure("The closed task window fell back to the user's other window") }
+catch let failure as Hands.Failure { precondition(failure.message.contains("window closed. Nothing was done"), failure.message) } catch { preconditionFailure("Not a hands failure") }
+Hands.userWindowsFile=nil; application.attrs[kAXFocusedUIElementAttribute]=name; application.attrs[kAXMainWindowAttribute]=application
 Hands.pinnedWindow=nil; rootHit=nil; application.attrs[kAXWindowsAttribute]=[window] as NSArray; application.attrs[kAXFocusedWindowAttribute]=application
 window.attrs.removeValue(forKey:"AXWindowNumber")
 cgWindows=[[kCGWindowOwnerPID as String:123,kCGWindowLayer as String:0,kCGWindowNumber as String:77,kCGWindowBounds as String:window.rect.dictionaryRepresentation]]
@@ -541,6 +589,9 @@ let warning=TestElement("AXStaticText","Delete 3 items?",CGRect(x:10,y:80,width:
 dialog=try Hands.capture(app)
 precondition((try! Hands.checked(["click","Cancel"],dialog,app))["risky"] as? Bool == false)
 precondition((try! Hands.checked(["click","OK"],dialog,app))["risky"] as? Bool == true)
+let receipt=NSDictionary(dictionary:try Hands.checked(["click","Cancel"],dialog,app)); window.add(TestElement("AXStaticText","0:07",CGRect(x:10,y:110,width:60,height:20)))
+precondition(receipt.isEqual(to:try! Hands.checked(["click","Cancel"],try! Hands.capture(app),app)))   // a change elsewhere in the window keeps the approval
+cancel.rect.origin.x += 40; precondition(!receipt.isEqual(to:try! Hands.checked(["click","Cancel"],try! Hands.capture(app),app))); cancel.rect.origin.x -= 40; window.kids.removeLast()
 window.attrs[kAXTitleAttribute]="Changed" as NSString
 let fresh=try Hands.capture(app)
 do { try Hands.freshIDs(["click",String(id)],initial,fresh); preconditionFailure("Stale ID accepted") } catch {}

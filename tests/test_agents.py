@@ -71,7 +71,8 @@ class AgentTests(unittest.TestCase):
     def until(self, predicate):
         deadline=time.monotonic()+3
         while time.monotonic()<deadline:
-            if predicate(): return
+            with self.manager.lock:   # finish() sets status before made/summary under this lock
+                if predicate(): return
             time.sleep(.01)
         self.fail('Timed out waiting for fake agent')
 
@@ -97,6 +98,10 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(atticus.parse_handoff('[agent {"title":"One two three four five","brief":"Task"}]')['title'],'One two three four')
         for bad in ('hello\n'+marker,marker[:-1],'[agent {}]','[agent {"title":3,"brief":"x"}]','[agent broken]','[agent ["x"]]'):
             self.assertIsNone(atticus.parse_handoff(bad),bad)
+        self.assertEqual(atticus.parse_handoffs('Sure, starting an agent.\n'+marker)[0]['title'],row['title'])
+        for quoted in ('Here is an example:\n```\n'+marker+'\n```','Example follows.\n> '+marker,
+                       'First, an explanation.\nMore answer text.\n'+marker):
+            self.assertEqual(atticus.parse_handoffs(quoted),[],quoted)
 
     def test_named_agent_is_saved_model_selected_used_deleted_and_unknown_asks(self):
         self.prefs['draw'] = True   # explicit saved-agent commands still work with the default drawing prompt
@@ -145,6 +150,18 @@ class AgentTests(unittest.TestCase):
         for i in range(12):
             row=self.manager.new();row.update(status='done',title='Old task',brief='Done',created=i+2);self.manager.save(row)
         self.assertIn(live['id'],atticus.agent_context())   # recent history cannot crowd out the steering target
+
+    def test_agents_cleared_from_the_shelf_still_route_by_voice(self):
+        made={}
+        for key,title,brief in [('mail','Draft the reply email','Answer the vendor'),('trip','Plan the weekend trip','Find hotels'),('laptop','Compare laptop prices','Three picks under budget')]:
+            row=self.manager.new();row.update(status='done',title=title,brief=brief,created=len(made)+1,ended=time.time());self.manager.rows[row['id']]=row;self.manager.save(row);made[key]=row['id']
+        self.manager.command({'action':'seen','id':made['laptop']})   # the shelf's × (and × all done) send only this
+        self.assertNotIn('cleared',self.manager.rows[made['laptop']])
+        self.assertTrue(all(made[k] in atticus.agent_context('what did that agent find') for k in made))   # "that agent": every recent one
+        email=atticus.agent_context('what did the email one say');self.assertIn(made['mail'],email);self.assertNotIn(made['trip'],email)
+        self.assertIn(made['laptop'],atticus.agent_context('the laptop prices, which was cheapest'))   # its title words
+        card=atticus.agent_context('and the second one?',card=made['laptop'])
+        self.assertIn(made['laptop'],card);self.assertIn(f'done card of task {made["laptop"]}',card)
 
     def test_matching_old_task_is_context_for_a_new_brief_not_its_result(self):
         brief='WAIT compare the best rated items under the requested budget and create a new report'
@@ -347,6 +364,151 @@ class AgentTests(unittest.TestCase):
         decision,_=self.gate('Bash',{'command':'echo no'})
         self.assertEqual(decision['permissionDecision'],'deny')
 
+    def test_work_in_another_apps_page_is_handed_with_its_identity_and_only_that_tab_is_acted_on(self):
+        marker='[agent {"title":"Fill the form","brief":"Fill the signup form with my details","context":"Asked from Notes","app":"chrome","page":"Signup"}]'
+        p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask=self.root.name;p.returncode=0
+        p.stdout=[json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':marker}]}}),json.dumps({'type':'result','result':marker,'total_cost_usd':.001})]
+        found='10\t7\tSignup – Fixture\thttps://forms.fixture.test/signup'
+        with patch.dict(os.environ,{'ATTICUS_UI':'1','ATTICUS_FRONT':'Notes'}),patch.object(atticus,'stop_claude'),patch.object(atticus.threading,'Thread'), \
+             patch.object(atticus.threading,'Timer'),patch.object(atticus,'running_app',return_value='Browser Fixture') as named, \
+             patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'osa',return_value=found) as osa,contextlib.redirect_stdout(io.StringIO()):
+            atticus.run('Context: Front app: Notes.\nRequest: do that form in Chrome',p,request='do that form in Chrome')
+        named.assert_called_once_with('chrome')
+        self.assertIn('title of t contains item 1 of argv',osa.call_args.args[0]);self.assertEqual(osa.call_args.args[1:],('Signup','',''))
+        self.assertEqual(atticus.run.handoff['app'],'Browser Fixture')
+        self.assertEqual({k:atticus.run.handoff['page'][k] for k in ('window','tab','url')},{'window':10,'tab':7,'url':'https://forms.fixture.test/signup'})
+        row=self.manager.prepare(atticus.run.handoff);self.manager.start(row['id'])
+        grant=Path(atticus.agent_gate_dir(row['directory']))/'work-page.json'
+        self.assertEqual(json.loads(grant.read_text())['tab'],7)
+        self.assertEqual(json.loads((Path(row['directory'])/'web.json').read_text()),{'app':'Browser Fixture','adapter':'chromium','window':10,'tab':7,'target':None})
+        sent=next(e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup')
+        self.assertIn("The user's open window when they asked",sent);self.assertIn('https://forms.fixture.test/signup',sent)
+        self.assertIn('only when the brief is to change that page',sent)   # a research agent sent over this tab reads it at most
+        host=['forms.fixture.test'];targets=[];closed=[False]
+        def browser(args,**kwargs):
+            if 'get {name, bounds}' in args[2]: return subprocess.CompletedProcess(args,0,'Signup, 0, 0, 800, 600','')
+            if closed[0]: return subprocess.CompletedProcess(args,1,'','No such tab')
+            targets.append(args[2]);expression=args[-1]
+            out=(json.dumps({'ready':True,'signature':f'https://{host[0]}/signup|1'}) if ')("ready"' in expression else
+                 json.dumps({'what':'Submit','short':'Submit','url':f'https://{host[0]}/signup','submit':True}) if ')("name"' in expression else
+                 'Filled 2' if ')("fill"' in expression else 'Clicked 3: Submit' if ')("click"' in expression else '{}')
+            return subprocess.CompletedProcess(args,0,out,'')
+        with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}),patch.object(atticus,'browser_adapter',return_value='chromium'), \
+             patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus.subprocess,'run',side_effect=browser):
+            self.assertTrue(atticus.web('fill','2','Sam Example').startswith('Filled 2'))
+            self.assertTrue(targets and all('first tab of window id 10 whose id is 7' in t for t in targets))
+            with patch.object(atticus,'ask_user',return_value='n') as ask:
+                self.assertIn('user said no',atticus.web('click','3'))
+            ask.assert_called_once()
+            host[0]='elsewhere.test'   # the user took that tab to another site
+            self.assertIn('not on the requested source',atticus.web('fill','2','Sam Example'))
+            (Path(row['directory'])/'web.json').write_text(json.dumps({'app':'Browser Fixture','adapter':'chromium','window':10,'tab':8,'target':None}))
+            targets.clear();self.assertIn("user's own window",atticus.web('fill','2','Sam Example'));self.assertEqual(targets,[])
+        self.until(lambda:self.manager.rows[row['id']]['status']=='done')
+        self.manager.command({'action':'followup','id':row['id'],'text':'Also tick the newsletter box'})
+        self.assertEqual(self.manager.rows[row['id']]['page']['tab'],7);self.assertTrue(grant.exists())
+        (Path(row['directory'])/'web.json').write_text(json.dumps({'app':'Browser Fixture','adapter':'chromium','window':10,'tab':7,'target':None}))
+        with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}),patch.object(atticus,'browser_adapter',return_value='chromium'), \
+             patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus.subprocess,'run',side_effect=browser):
+            host[0]='forms.fixture.test';self.assertTrue(atticus.web('fill','2','Sam Example').startswith('Filled 2'))
+            host[0]='elsewhere.test';self.assertIn('not on the requested source',atticus.web('fill','2','Sam Example'))
+            host[0]='forms.fixture.test';closed[0]=True;self.assertIn('Could not use the page',atticus.web('fill','2','Sam Example'))
+        self.until(lambda:row['status']=='done')
+        self.prepare('WAIT separate task',resume=row['id'],request='separate task',handoffId='f'*32);self.manager.start(row['id'],row['followup'])
+        self.assertEqual(row['page'],{});self.assertFalse(grant.exists())   # a fresh handoff replaces the old task's page
+
+    def test_a_form_in_the_front_tab_is_handed_when_the_handoff_names_no_app(self):
+        for adapter,(window,tab),where in (('chromium',(10,7),'first tab of window id 10 whose id is 7'),('webkit',(3,2),'tab 2 of window id 3')):
+            with self.subTest(adapter=adapter):
+                marker='[agent {"title":"Fill out form","brief":"Fill out the form in the front page with my details"}]'
+                p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask=self.root.name;p.returncode=0
+                p.stdout=[json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':marker}]}}),json.dumps({'type':'result','result':marker,'total_cost_usd':.001})]
+                with patch.dict(os.environ,{'ATTICUS_UI':'1','ATTICUS_FRONT':'Browser Fixture'}),patch.object(atticus,'stop_claude'),patch.object(atticus.threading,'Thread'), \
+                     patch.object(atticus.threading,'Timer'),patch.object(atticus,'running_app') as named,patch.object(atticus,'browser_adapter',return_value=adapter), \
+                     patch.object(atticus,'osa',return_value=f'{window}\t{tab}\tApply – Fixture\thttps://jobs.fixture.test/apply'),contextlib.redirect_stdout(io.StringIO()):
+                    atticus.run('Context: Front app: Browser Fixture.\nRequest: fill this out for me',p,request='fill this out for me')
+                named.assert_not_called()
+                self.assertEqual({k:atticus.run.handoff['page'][k] for k in ('app','window','tab')},{'app':'Browser Fixture','window':window,'tab':tab})
+                row=self.manager.prepare(atticus.run.handoff);self.manager.start(row['id'])
+                self.assertEqual(json.loads((Path(atticus.agent_gate_dir(row['directory']))/'work-page.json').read_text())['tab'],tab)
+                targets=[]
+                def browser(args,**kwargs):
+                    if 'get {name, bounds}' in args[2]: return subprocess.CompletedProcess(args,0,'Apply, 0, 0, 800, 600','')
+                    targets.append(args[2]);expression=args[-1]
+                    out=(json.dumps({'ready':True,'signature':'https://jobs.fixture.test/apply|1'}) if ')("ready"' in expression else
+                         json.dumps({'what':'Submit','short':'Submit','url':'https://jobs.fixture.test/apply','submit':True}) if ')("name"' in expression else
+                         'Filled 2' if ')("fill"' in expression else 'Clicked 3: Submit' if ')("click"' in expression else '{}')
+                    return subprocess.CompletedProcess(args,0,out,'')
+                with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}),patch.object(atticus,'browser_adapter',return_value=adapter), \
+                     patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'page_ready',return_value=True),patch.object(atticus.subprocess,'run',side_effect=browser):
+                    self.assertTrue(atticus.web('fill','2','Sam Example').startswith('Filled 2'))   # first try, in the user's front tab
+                    self.assertTrue(targets and all(where in t for t in targets))
+                    with patch.object(atticus,'ask_user',return_value='n') as ask: self.assertIn('user said no',atticus.web('click','3'))
+                    ask.assert_called_once()   # submitting still asks
+                self.until(lambda:self.manager.rows[row['id']]['status']=='done')
+
+    def test_a_research_agent_sent_over_a_browser_tab_works_only_in_its_own_window(self):
+        for adapter,(window,tab),own in (('chromium',(10,7),'55\t9\tnew'),('webkit',(3,2),'56\t1\tnew')):
+            with self.subTest(adapter=adapter):
+                page={'app':'Browser Fixture','adapter':adapter,'window':window,'tab':tab,'title':'Ebikes – Shop','url':'https://shop.fixture.test/ebikes'}
+                row=self.prepare('WAIT research the best ebikes',request='research the best ebikes',app='Browser Fixture',page=page);self.manager.start(row['id'])
+                targets=[]
+                def browser(args,**kwargs):
+                    if 'get {name, bounds}' in args[2]: return subprocess.CompletedProcess(args,0,'Own, 0, 0, 800, 600','')
+                    if 'make new' in args[2]: return subprocess.CompletedProcess(args,0,own,'')
+                    targets.append(args[2]);expression=args[-1]
+                    out=(json.dumps({'ready':True,'signature':'https://reviews.fixture.test/|1'}) if ')("ready"' in expression else
+                         json.dumps({'what':'Next','short':'Next','url':'https://reviews.fixture.test/'}) if ')("name"' in expression else
+                         'Clicked 3: Next' if ')("click"' in expression else 'Reviews')
+                    return subprocess.CompletedProcess(args,0,out,'')
+                with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}),patch.object(atticus,'browser_adapter',return_value=adapter), \
+                     patch.object(atticus,'running_app',return_value='Browser Fixture'),patch.object(atticus,'agent_url_allowed',return_value=True),patch.object(atticus,'keep_behind'), \
+                     patch.object(atticus,'osa',return_value='Orca'),patch.object(atticus,'preview_app',return_value=None),patch.object(atticus,'page_ready',return_value=True), \
+                     patch.object(atticus.subprocess,'run',side_effect=browser):
+                    self.assertEqual(atticus.web('read','https://reviews.fixture.test/'),'Reviews')
+                    self.assertTrue(atticus.web('click','3').startswith('Clicked 3'))
+                self.assertTrue(targets);self.assertFalse([t for t in targets if f'window id {window}\n' in t+'\n' or f'window id {window} ' in t])   # the user's tab is never a target
+                self.manager.command({'action':'stop','id':row['id']})
+        row=self.prepare('WAIT fill the expense form',request='fill this out',app='Form Fixture',page={'app':'Form Fixture','title':'Expense report','windows':{'123':['43']}});self.manager.start(row['id'])
+        self.assertFalse((Path(atticus.agent_gate_dir(row['directory']))/'work-page.json').exists())   # no page to grant: its --hands work in that app's window
+        self.assertEqual(json.loads((Path(row['directory'])/'hands.json.windows').read_text()),{'123':['43']})   # ...and never in the user's other window of it
+        self.assertIn('"Form Fixture"',next(e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup'))
+
+    def test_words_to_a_working_page_agent_keep_its_page(self):
+        page={'app':'Browser Fixture','adapter':'chromium','window':10,'tab':7,'url':'https://forms.fixture.test/signup'}
+        row=self.prepare('WAIT fill the signup form',request='fill the signup form',app='Browser Fixture',page=page);self.manager.start(row['id'])
+        grant=Path(atticus.agent_gate_dir(row['directory']))/'work-page.json'
+        self.until(lambda:self.manager.rows[row['id']]['status']=='running');self.assertTrue(grant.exists())
+        self.manager.steer({'steer':row['id'],'brief':'Use my work email','request':'use my work email'})
+        self.assertEqual(json.loads(grant.read_text())['tab'],7)   # the same task, corrected mid-fill: it still acts in that tab
+
+    def test_a_play_this_game_ask_hands_its_window_to_an_agent_that_acts_there(self):
+        # The game sat in a browser tab on another display while the user worked in Notes; the main ask clicked twice and stopped.
+        self.assertIn('look-act loops to a goal',atticus.AGENT_HANDOFF);self.assertIn('go on until the goal or a real block',atticus.AGENT_SYSTEM)
+        self.assertIn('--front "<app>" ["title words"] (it never raises it; works covered or unfocused)',atticus.AGENT_SYSTEM)
+        marker='[agent {"title":"Play Mines","brief":"Play the game in that tab until it is won or lost","app":"chrome","page":"Mines"}]'
+        p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask=self.root.name;p.returncode=0
+        p.stdout=[json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':marker}]}}),json.dumps({'type':'result','result':marker,'total_cost_usd':.001})]
+        with patch.dict(os.environ,{'ATTICUS_UI':'1','ATTICUS_FRONT':'Notes'}),patch.object(atticus,'stop_claude'),patch.object(atticus.threading,'Thread'), \
+             patch.object(atticus.threading,'Timer'),patch.object(atticus,'running_app',return_value='Browser Fixture'), \
+             patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'osa',return_value='10\t7\tMines\thttps://games.fixture.test/mines'), \
+             contextlib.redirect_stdout(io.StringIO()):
+            atticus.run('Context: Front app: Notes.\nRequest: I have the game open, can you play it',p,request='I have the game open, can you play it')
+        self.assertEqual({k:atticus.run.handoff['page'][k] for k in ('app','window','tab')},{'app':'Browser Fixture','window':10,'tab':7})
+        row=self.manager.prepare(atticus.run.handoff);self.manager.start(row['id'])
+        self.assertFalse((Path(atticus.agent_gate_dir(row['directory']))/'focus-requested').exists())   # "play it" never brings the window forward
+        calls=[]
+        def mac(args,**kwargs):
+            calls.append(args)
+            if args[0]=='osascript': return subprocess.CompletedProcess(args,0,'0, 0, 800, 600\n','')
+            return subprocess.CompletedProcess(args,0,json.dumps({'windowID':'4242'}),'')
+        with patch.dict(os.environ,{'ATTICUS_AGENT':row['id'],'ATTICUS_ASK':row['directory']}),patch.object(atticus.subprocess,'run',side_effect=mac), \
+             patch.object(atticus,'cached_hands',return_value={'app':'Browser Fixture','windowID':'99'}):
+            self.assertEqual(atticus.hands_pin(['click','400,300']),('4242',True))   # its clicks go to the handed game window, not the browser's last mapped one
+            self.assertIn('window id 10',calls[0][2]);self.assertEqual(calls[1][:2],[atticus.APP,'--window-target'])
+            self.assertEqual(atticus.agent_window_id('Other App'),'')
+        self.manager.command({'action':'stop','id':row['id']})
+
     def test_handoff_after_a_pick_carries_the_answer(self):
         marker='[agent {"title":"Find likely repo users","brief":"Find users who might star or use the repo"}]'
         pick=atticus.ME+' --pick "What do you want to do?" "Find users who might star or use the repo"'
@@ -366,14 +528,19 @@ class AgentTests(unittest.TestCase):
 
     def test_unhonoured_handoff_line_is_not_shown(self):
         marker='[agent {"title":"Find users","brief":"Find likely users"}]'
+        pretty='[agent '+json.dumps({"title":"Find users","brief":"Find likely users"},indent=2)+']'
         p=unittest.mock.Mock();p.stdin=io.StringIO();p.ask='';p.returncode=0
-        p.stdout=map(json.dumps,[{'type':'result','result':marker+'\n\nI could not start the agent.'}])
+        p.stdout=map(json.dumps,[{'type':'result','result':pretty+'\n\nI could not start the agent.'}])
         with patch.dict(os.environ,{'ATTICUS_UI':'0'}):
             reply,_,_=atticus.run('Find users',p)
         self.assertEqual(reply,'I could not start the agent.');self.assertNotIn('[agent ',reply)
+        pretty='[agent '+json.dumps({'title':'Find users','brief':'Find likely users'},indent=2)+']'
+        for answer in (pretty+'\nVisible answer.',pretty+' Visible answer.'):
+            self.assertEqual(atticus.without_handoff_line(answer),'Visible answer.')
         for tag in ('[steer {"id":"x","text":"y"}]','[agent-profile {"action":"list"}]'):
             self.assertEqual(atticus.without_handoff_line(tag+'\nVisible answer.'),'Visible answer.')
         self.assertEqual(atticus.without_handoff_line('Visible answer.\n'+marker),'Visible answer.')
+        self.assertEqual(atticus.without_handoff_line('Visible answer. '+marker),'Visible answer.')
 
     def test_agent_routing_controls_continue_on_the_agent_model_in_every_mode(self):
         tokens={'sonnet':'[sonnet]','done':'[done]','offer':atticus.MODEL_OFFER}
@@ -544,10 +711,12 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(steer['steer'],'abc');self.assertEqual(steer['ack'],'Got it: 12×24, not 24×24')
         self.assertIsNone(atticus.parse_handoff('[steer {"id":"abc"}]'))
         row=self.prepare();self.manager.start(row['id']);p=self.manager.processes[row['id']];offers=len([e for e in self.events if e.get('event')=='offer'])
-        self.manager.prepare({**steer,'steer':row['id'],'context':words})
+        self.manager.prepare({**steer,'steer':row['id'],'context':'Context: Front app: Fixture.\nMemory: private note\nRequest: '+words,'request':words})   # as run() hands it
         self.assertIs(self.manager.processes[row['id']],p);self.assertEqual(self.manager.outstanding[row['id']],2)   # same process, no new agent
         self.assertEqual(len([e for e in self.events if e.get('event')=='offer']),offers)
         self.assertEqual(row['timeline'][-1],{'user':words});self.assertEqual(self.events[-1]['event'],'steered')
+        sent=[e['text'] for e in atticus.read_rows(str(Path(row['directory'])/'log.jsonl')) if e.get('event')=='followup'][-1]
+        self.assertTrue(sent.endswith('The user said (data): '+words));self.assertNotIn('private note',sent)   # their words, not the whole ask context
         self.assertEqual(self.events[-1]['agent']['steer']['ack'],'Got it: 12×24, not 24×24')
         done=self.prepare('DONE fixture');self.manager.start(done['id']);self.until(lambda:done['status']=='done')
         self.manager.prepare({'steer':done['id'],'brief':'WAIT also check Home Depot','title':'','ack':'Got it'})
@@ -590,7 +759,8 @@ class AgentTests(unittest.TestCase):
 
     def test_a_new_request_to_a_finished_agent_shows_only_what_it_made(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')
-        old=[{'title':'Earlier doc','url':'https://docs.example/d/1','type':'document'}];row.update(made=list(old),wrote=['notes.md'])
+        old=[{'title':'Earlier doc','url':'https://docs.example/d/1','type':'document'}]
+        with self.manager.lock: row.update(made=list(old),wrote=['notes.md'])   # finish() sets status before it rewrites made, under this lock
         self.manager.start(row['id'])   # Retry: same request, its results stay
         self.until(lambda:row['status']=='done');self.assertIn(old[0],row['made'])
         self.manager.command({'action':'followup','id':row['id'],'text':'Which one is cheapest?'})
@@ -604,6 +774,15 @@ class AgentTests(unittest.TestCase):
         self.prepare('New instruction',resume=second['id'])
         self.manager.command({'action':'cancel','id':second['id']})
         self.assertEqual(second['status'],'running');self.assertIs(self.manager.processes[second['id']],p)
+
+    def test_agents_from_one_ask_all_stay_and_a_new_ask_supersedes_them(self):
+        ask='Research the best ebikes and, second, the best helmets'
+        bikes=self.prepare(title='Ebikes',request=ask);helmets=self.prepare(title='Helmets',request=ask)
+        self.assertEqual([bikes['status'],helmets['status']],['offered','offered'])
+        for row in (bikes,helmets): self.manager.command({'action':'start','id':row['id']})
+        self.assertEqual([bikes['status'],helmets['status']],['running','running'])
+        first=self.prepare(request=ask);later=self.prepare(request='Something else')
+        self.assertEqual(first['status'],'stopped');self.assertEqual(later['status'],'offered')
 
     def test_completed_followup_warms_resume_before_start_and_not_now_keeps_result(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')
@@ -809,13 +988,36 @@ class AgentTests(unittest.TestCase):
 
     def test_done_ping_waits_for_box_and_typing_pause(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')
-        self.assertFalse(any(e.get('event')=='ping' for e in self.events))
-        self.manager.command({'action':'box','busy':True,'visible':True});self.assertFalse(any(e.get('event')=='ping' for e in self.events))
-        self.manager.command({'action':'box','busy':False,'typing':True,'visible':True});self.assertFalse(any(e.get('event')=='ping' for e in self.events))
-        self.manager.command({'action':'box','busy':False,'visible':False,'lastKey':time.time()});self.assertFalse(any(e.get('event')=='ping' for e in self.events))
-        self.manager.command({'action':'box','busy':False,'visible':False,'lastKey':time.time()-2})
-        self.assertEqual(sum(e.get('event')=='ping' for e in self.events),1)
-        self.assertFalse(atticus.agent_ping_ready({'quiet':True,'visible':True}));self.assertFalse(atticus.agent_ping_ready({'listening':True,'visible':True}))
+        pings=lambda:[e['agent']['id'] for e in self.events if e.get('event')=='ping']
+        self.assertEqual(pings(),[])   # the box counts as busy until Swift reports
+        for busy in ('busy','typing','listening','quiet'):
+            self.manager.command({'action':'box',busy:True});self.assertEqual(pings(),[])
+        self.manager.command({'action':'box','busy':False})   # the key pause is Swift's: its tick rechecks it every 0.1 s
+        self.assertEqual(pings(),[row['id']])
+
+    def test_finish_pings_at_once_on_a_free_box(self):
+        # Oct 21: an agent ended 12:38:19 and showed at 12:38:49. The 1.5 s key pause was checked only when a box message came,
+        # and every key sent one, so it failed each time and nothing checked again after the typing stopped.
+        self.manager.command({'action':'box','busy':False,'typing':False,'listening':False,'quiet':False})
+        pings=lambda:[e['agent']['id'] for e in self.events if e.get('event')=='ping']
+        first=self.prepare('DONE first');self.manager.start(first['id'])
+        self.until(lambda:pings()==[first['id']])   # sent from finish(), no further box message needed
+        second=self.prepare('DONE second');self.manager.start(second['id'])
+        self.until(lambda:pings()==[first['id'],second['id']])   # one card at a time is Swift's pending queue; none is held back here
+        self.manager.command({'action':'box','busy':False});self.assertEqual(len(pings()),2)   # never twice
+        self.assertFalse(first['seen'])   # a ping alone never marks it seen; only the user acting on the card does
+
+    def test_a_finish_pings_once_across_relists_and_restarts_and_a_followup_pings_again(self):
+        # Oct 21: the app relaunched 29 s after a finish and the new supervisor chimed again for every unseen done agent.
+        free={'action':'box','busy':False,'typing':False,'listening':False,'quiet':False}
+        pings=lambda events:[e['agent']['id'] for e in events if e.get('event')=='ping']
+        self.manager.command(free);row=self.prepare('DONE fixture');self.manager.start(row['id'])
+        self.until(lambda:pings(self.events)==[row['id']])
+        self.manager.command({'action':'list'});self.manager.command(free);self.assertEqual(pings(self.events),[row['id']])
+        events=[];restored=atticus.Agents(emit=events.append,launch=self.manager.launch);self.addCleanup(restored.close)
+        restored.command(free);self.assertEqual(pings(events),[])
+        self.manager.command({'action':'followup','id':row['id'],'text':'DONE again'})
+        self.until(lambda:pings(self.events)==[row['id'],row['id']])
 
     def test_metadata_is_invalidated_when_process_restarts(self):
         row=self.manager.new();self.manager.metadata(row,{'mcpServers':[{'name':'fixture','status':'connected','tools':[{'name':'inspect','annotations':{'readOnly':True}}]}]})
@@ -948,15 +1150,16 @@ class AgentTests(unittest.TestCase):
 
     def test_parallel_permission_hooks_do_not_share_answers(self):
         answers=[];card=Path(atticus.question_path(self.root.name))
+        def answer(path,text): Path(str(path)+'.tmp').write_text(text);os.replace(str(path)+'.tmp',path)   # whole, as the app writes it: a half-written file read as ''
         with patch.dict(os.environ,{'ATTICUS_ASK':self.root.name}):
             first=threading.Thread(target=lambda:answers.append(('first',atticus.ask_user({'q':'First'},3))))
             second=threading.Thread(target=lambda:answers.append(('second',atticus.ask_user({'q':'Second'},3))))
             first.start();self.until(lambda:card.exists());second.start();time.sleep(.1)
             self.assertEqual(json.loads(card.read_text())['q'],'First')
-            first_path=Path(json.loads(card.read_text())['_a']);card.unlink();first_path.write_text('y');first.join(timeout=2)
+            first_path=Path(json.loads(card.read_text())['_a']);card.unlink();answer(first_path,'y');first.join(timeout=2)
             self.until(lambda:card.exists());self.assertEqual(json.loads(card.read_text())['q'],'Second')
             second_path=Path(json.loads(card.read_text())['_a']);self.assertNotEqual(first_path,second_path)
-            card.unlink();second_path.write_text('n');second.join(timeout=2)
+            card.unlink();answer(second_path,'n');second.join(timeout=2)
         self.assertEqual(answers,[('first','y'),('second','n')])
 
 
@@ -977,6 +1180,32 @@ const titles = agentMade({ result: 'Doc: ' + doc + '\nPage: ' + made.replace('ne
 if (JSON.stringify(titles) !== JSON.stringify(['Plan|Document · docs.google.com', 'a.csv|Spreadsheet · In its folder', 'example.org|Link · example.org'])) fail('made things: ' + JSON.stringify(titles));
 const issue = 'https://tracker.example.com/issues/12';
 if (agentMade({ result: 'Filed it: ' + issue, made: [{ url: issue, title: 'Login fails', type: '' }] }).length !== 1) fail('a titled thing a tool made was hidden because the answer links to it');
+'''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_finished_agents_fold_into_a_done_pill_and_expire_after_ten_minutes_on_screen(self):
+        page = (Path(__file__).resolve().parents[1] / 'ui' / 'agents.html').read_text()
+        cut = lambda a, b: page[page.index(a):page.index(b, page.index(a))]
+        code = cut('const ACTIVE=', 'const word=') + cut('const shelfRows=', 'const tops=') + cut('const steered=', '\n') + '\n' + cut('function paintPill(', 'function renderShelf(')
+        script = 'let rows=[],dismissed=new Set(),stack="",held="",expanded="";const el=()=>({append(){},dataset:{},style:{}}),hue=()=>"",tint=()=>"";\n' + code + r'''
+const fail = m => { console.error(m); process.exit(1); }, now = Date.now() / 1000;
+const label = (folded, total) => { const p = { dataset: {}, setAttribute(k, v) { this[k] = v; }, replaceChildren() {} }; paintPill(p, folded, total); return p['aria-label'].replace('. Show agents', ''); };
+const view = () => { const [shown, folded] = split(shelfRows()); return [shown.map(r => r.id).join(), folded.length ? label(folded, shelfRows().length) : '']; };
+const same = (got, want, what) => { if (JSON.stringify(got) !== JSON.stringify(want)) fail(what + ': ' + JSON.stringify(got)); };
+rows = [{ id: 'w', status: 'running', started: now - 9 }, { id: 'd1', status: 'done', ended: now - 120 }, { id: 'd2', status: 'done', ended: now - 30 },
+        { id: 'f', status: 'failed', ended: now - 60 }, { id: 's', status: 'stopped', ended: now - 5 }, { id: 'old', status: 'done', ended: now - 3600, seenAt: now - 700 }];
+for (const r of rows) if (fin(r)) onScreen.set(r.id, age(r));   // first sight after a restart: the wall clock since it finished or was last seen
+if (Math.round(onScreen.get('d1')) !== 120 || onScreen.get('old') !== LINGER) fail('restart age: ' + [...onScreen]);
+same(view(), ['w', '1 failed · 2 done'], 'working shows, finished fold; failed lingers and is counted apart, stopped and old ones do not');
+stack = 'open'; same(view(), ['w,d2,f,d1', ''], 'opened: working first, then newest finished');
+stack = 'min'; same(view(), ['', '1 agent · 1 failed · 2 done'], 'minimized hides all');
+stack = ''; onScreen.set('d2', LINGER); same(view(), ['w', '1 failed · 1 done'], '10 minutes on screen: it leaves');
+rows.push({ id: 'w2', status: 'running', started: now - 5 }, { id: 'w3', status: 'needs-you', started: now - 4, question: { q: 'ok?' } });
+same(view(), ['w3', '2 more · 1 failed · 1 done'], 'three working: the newest, plus the one asking');
+rows = [{ id: 'd', status: 'done', ended: now - 300 }]; onScreen.set('d', 0); same(view(), ['', '✓ 1 done'], 'only finished: just the pill');
+same(state(rows[0]), 'Done · 5m ago', 'finished chip line');
+rows = [{ id: 'f', status: 'failed', ended: now - 60 }]; onScreen.set('f', 0); same(view(), ['', '1 failed'], 'only failed: no check mark');
 '''
         result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)

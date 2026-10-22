@@ -78,9 +78,9 @@ struct Harness {
  static func selectedRange(_ e: CFTypeRef) -> CFRange? { currentRange }
  func replace(_ text: String) -> Bool { if directOK { directWrites += 1; field = text }; return directOK }
 ''' + apply + '''}
-func pump(_ seconds: Double) {
+func pump(_ seconds: Double, until done: () -> Bool = { false }) {   // a loaded machine runs the async steps late: stop at done, else the deadline
  let end = Date().addingTimeInterval(seconds)
- while Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.005)) }
+ while Date() < end && !done() { RunLoop.current.run(until: Date().addingTimeInterval(0.005)) }
 }
 let h = Harness(), pb = NSPasteboard.general
 let old = NSPasteboardItem(); old.setData(Data("rich original".utf8), forType: .rich)
@@ -97,7 +97,7 @@ for scenario in 0..<6 {
  case 4: h.app.isTerminated = true
  default: allowed = false
  }
- pump(0.2); precondition(result == false && events == before, "stale/cancelled target received keys")
+ pump(2, until: { result != nil }); precondition(result == false && events == before, "stale/cancelled target received keys")
  precondition(pb.pasteboardItems?.first?.data(forType: .rich) == Data("rich original".utf8), "aborted paste touched clipboard")
 }
 reset(); var ok = false
@@ -111,26 +111,26 @@ reset(); let count = pb.changeCount; h.apply("", valid: { true }) { ok = $0 }; p
 precondition(ok && pb.changeCount == count && Array(keys.suffix(2)) == [51, 51], "delete key/clipboard regressed")
 reset(); pb.failWrite = true; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.2)
 precondition(!ok && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "failed write lost clipboard")
-reset(); deaf = true; ok = true; let hidBefore = hidEvents; h.apply("draft", valid: { true }) { ok = $0 }; pump(0.9)
-precondition(!ok && hidEvents == hidBefore + 2 && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "ignored paste reported success or kept the draft on the clipboard")
+reset(); deaf = true; ok = false; var answered = false; let hidBefore = hidEvents; h.apply("draft", valid: { true }) { ok = $0; answered = true }; pump(2, until: { answered })
+precondition(ok && hidEvents == hidBefore + 2 && pb.pasteboardItems?.first?.data(forType: .rich) == Data("rich original".utf8), "a sent paste whose field reads back stale was not counted, was retried, or kept the draft on the clipboard")
 var readonly = h; readonly.pastable = false; let before = events
-readonly.apply("", valid: { true }) { ok = $0 }; pump(0.2); precondition(!ok && events == before, "read-only delete posted")
+answered = false; readonly.apply("", valid: { true }) { ok = $0; answered = true }; pump(2, until: { answered }); precondition(!ok && events == before, "read-only delete posted")
 var editable = h; editable.editable = true; editable.pastable = false
 editable.apply("direct", valid: { true }) { ok = $0 }
  pump(0.1)
 precondition(ok && directWrites == 1 && events == before, "editable custom role rejected")
 reset(); editable.pastable = true; directOK = false
-editable.apply("fallback", valid: { true }) { ok = $0 }; pump(0.6)
+ok = false; answered = false; editable.apply("fallback", valid: { true }) { ok = $0; answered = true }; pump(2, until: { answered })
 precondition(ok && events == before + 2, "failed AX write did not fall back to paste")
 reset(); directOK = false; let other = FakeApp(); NSWorkspace.shared.frontmostApplication = other; let eventCount = events, activationCount = activations
-h.apply("private", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication === h.app }) { ok = $0 }; pump(0.2)
+answered = false; h.apply("private", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication === h.app }) { ok = $0; answered = true }; pump(2, until: { answered })
 precondition(!ok && events == eventCount && activations == activationCount && NSWorkspace.shared.frontmostApplication === other, "focus-preserving insert raised the old app or typed there")
 reset(); clipboardBusy = true; ok = false; let busyEvents = events
 h.apply("draft", valid: { true }) { ok = $0 }; pump(0.3)
 precondition(!ok && events == busyEvents && pb.pasteboardItems?.first?.data(forType: .rich) != nil, "pasted while another Atticus process held the clipboard")
-clipboardBusy = false; pump(0.6); precondition(ok && leases == unlocks, "paste did not resume after the clipboard freed, or kept the lock")
+clipboardBusy = false; pump(2, until: { ok }); precondition(ok && leases == unlocks, "paste did not resume after the clipboard freed, or kept the lock")
 reset(); NSApp.keyWindow = 1; ok = false; let hidKeyed = hidEvents, pidKeyed = events
-h.apply("draft", valid: { true }) { ok = $0 }; pump(0.6); NSApp.keyWindow = nil
+answered = false; h.apply("draft", valid: { true }) { ok = $0; answered = true }; pump(2, until: { answered }); NSApp.keyWindow = nil
 precondition(ok && hidEvents == hidKeyed && events == pidKeyed + 2, "with the box holding the keyboard, ⌘V went to the box instead of the target app")
 print("paste safety ok")
 '''
@@ -223,20 +223,20 @@ final class Harness {
  func spawn() -> Int? { respawns += 1; warmSel = selection?.text ?? ""; return 1 }
  func js(_ call: String, _ text: String) { messages.append(text) }
 ''' + capture + finish + '''}
-func pump(_ seconds: Double) {
+func pump(_ seconds: Double, until done: () -> Bool = { false }) {   // a loaded machine runs the async steps late: stop at done, else the deadline
  let end = Date().addingTimeInterval(seconds)
- while Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.005)) }
+ while Date() < end && !done() { RunLoop.current.run(until: Date().addingTimeInterval(0.005)) }
 }
 let h = Harness(), start = Date()
 h.captureSelection(); h.finish(); precondition(h.finished == 0, "short key-up submitted before capture")
 precondition(Date().timeIntervalSince(start) < 0.05 && h.selectionPending, "AX capture blocked shortcut")
-NSWorkspace.shared.frontmostApplication = "Moved"; pump(0.2)
+NSWorkspace.shared.frontmostApplication = "Moved"; pump(2, until: { !h.selectionPending })
 precondition(h.selection?.text == "Original" && !h.selectionPending, "captured wrong app")
-pump(0.1); precondition(h.finished == 1, "pending key-up did not resume")
+pump(2, until: { h.finished == 1 }); precondition(h.finished == 1, "pending key-up did not resume")
 precondition(h.respawns == 1 && h.warmSel == "Original", "warm worker did not refresh before request")
 h.captureSelection(); h.selectionID += 1; h.selectionPending = false; h.selection = nil; pump(0.2)
 precondition(h.selection == nil && h.messages == ["Original"], "cancelled capture returned")
-h.captureSelection(); NSWorkspace.shared.frontmostApplication = "New"; h.captureSelection(); pump(0.2)
+h.captureSelection(); NSWorkspace.shared.frontmostApplication = "New"; h.captureSelection(); pump(2, until: { !h.selectionPending })
 precondition(h.selection?.text == "New" && h.messages == ["Original", "New"], "stale capture contaminated new request")
 let reply = Harness(); reply.offerText = "Original request"; reply.text = "retry"; reply.finish()
 precondition(reply.text == "Original request" && reply.offerText == nil && reply.messages == ["retry"] && reply.finished == 0, "card reply became a new task or lost its original request")

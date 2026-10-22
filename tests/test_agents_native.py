@@ -19,6 +19,7 @@ def native_fixture(body, real_mini=False):
     lease=source[source.index('    static func screenLease()'):source.index('    static func fingerprint',source.index('    static func screenLease()'))]
     defaults=source[source.index('    func defaultKey('):source.index('    func gone()',source.index('    func defaultKey('))]
     keys=source[source.index('var specs = [EventTypeSpec'):source.index('var ref: EventHotKeyRef?',source.index('var specs = [EventTypeSpec'))]
+    frames=source[source.index('    static func clamp(',source.index('enum MeetingFrame')):source.index('    static func key(',source.index('enum MeetingFrame'))]
     mini=source[source.index('final class PassView'):source.index('\n}\n',source.index('final class MiniScreen'))+3]
     harness='''import Cocoa
 import Carbon
@@ -33,6 +34,7 @@ enum Prefs {
  static func set(_ k:String,_ v:Any){d[k]=v}
  static func bool(_ k:String)->Bool{d[k] as? Bool ?? false}
  static func str(_ k:String)->String{d[k] as? String ?? ""}
+ static func num(_ k:String)->Double{(d[k] as? NSNumber)?.doubleValue ?? 0}
 }
 final class KeyPanel:NSPanel{override var canBecomeKey:Bool{true}}
 final class MiniScreen {
@@ -41,8 +43,7 @@ final class MiniScreen {
 }
 enum MeetingFrame {
  static func key(_ s:NSScreen)->String{"fixture"}
- static func clamp(_ f:NSRect,_ b:NSRect)->NSRect{var f=f;f.size.width=min(f.width,b.width);f.size.height=min(f.height,b.height);f.origin.x=min(max(f.minX,b.minX),b.maxX-f.width);f.origin.y=min(max(f.minY,b.minY),b.maxY-f.height);return f}
-}
+''' + frames + '''}
 func axAttribute(_ e:AXUIElement,_ key:String)->CFTypeRef?{nil}
 func currentMeetingEvent(_ store:EKEventStore)->[String:Any]?{nil}
 let calendar=EKEventStore()
@@ -55,15 +56,15 @@ final class EngineStub{var isRunning=false}
 final class AppStub{
  let web=WKWebView()
  let panel=KeyPanel(contentRect:NSRect(x:40,y:40,width:340,height:120),styleMask:[.nonactivatingPanel,.borderless],backing:.buffered,defer:false)
- let mini=MiniScreen(),engine=EngineStub();var busy=false,composing=false,pinned=false,gen=0,escRef:EventHotKeyRef?,agentCard=""
+ let mini=MiniScreen(),engine=EngineStub();var busy=false,composing=false,pinned=false,stuck=false,dragging=false,hovering=false,pillOn=false,gen=0,escRef:EventHotKeyRef?,agentCard=""
  var calls:[String]=[],defaultKeys:[EventHotKeyRef]=[],allowUntil=Date.distantPast,allowUserApp=false
  var askFile="",retryOffer=false,moveRef:EventHotKeyRef?
  var agentMoveFile=""{didSet{moveKey()}}
  var defaultWanted=false,defaultObservers:[NSObjectProtocol]=[]
  func js(_ call:String,_ data:Any?=nil){calls.append(call)}
  func modelChoices()->[String:Any]{[:]}
- func frame(_ f:NSRect){panel.setFrame(f,display:true)}
- func cue(_ name:String){}
+ func frame(_ f:NSRect,animate:Bool=false){panel.setFrame(f,display:true)}
+ func cue(_ name:String){};func sound(_ name:String,_ v:Float){};func startFollowingPointerScreen(){}
  func hide(after:Double){}
  func escape(){};func shortcut(_ pressed:Bool){};func dictateShortcut(_ pressed:Bool){}
  struct DrawingStub{var active=false};let drawing=DrawingStub();func avoidDrawing(){}
@@ -164,17 +165,14 @@ Timer.scheduledTimer(withTimeInterval:0.05,repeats:true){_ in
    for saved in [nil,[9000.0,-9000.0],[Double.nan,0]] as [[Double]?]{let f=AgentPanels.shelfFrame(NSRect(x:9000,y:9000,width:260,height:0),bounds,saved);guard bounds.contains(f),f.height==52 else{fail("Two-display saved geometry escaped its display")}}
   }
   for screen in NSScreen.screens{agentsUI.placeShelf(screen);guard screen.visibleFrame.contains(agentsUI.shelf!.frame),agentsUI.shelf!.frame.height>=52 else{fail("Shelf placement escaped display bounds")}}
-  let wide=NSRect(x:0,y:0,width:1512,height:945),boxAt=NSRect(x:14,y:500,width:500,height:200)
-  guard AgentPanels.doneFrame(boxAt,shelf:NSRect(x:1240,y:800,width:260,height:120),shelfShown:true,bounds:wide)==NSRect(x:1000,y:592,width:500,height:200),
-        AgentPanels.doneFrame(boxAt,shelf:NSRect(x:12,y:800,width:260,height:52),shelfShown:false,bounds:wide)==NSRect(x:12,y:652,width:500,height:200),
-        AgentPanels.doneFrame(boxAt,shelf:NSRect(x:1240,y:8,width:260,height:52),shelfShown:true,bounds:wide)==NSRect(x:1000,y:68,width:500,height:200) else{fail("The done card did not open where its agent was")}
   guard agentsUI.shelf!.collectionBehavior.contains(.canJoinAllSpaces),agentsUI.shelf!.collectionBehavior.contains(.fullScreenAuxiliary) else{fail("Shelf cannot join full-screen Spaces")}
   print("Placement checked on \\(NSScreen.screens.count) VM display(s)");stage=1;at=Date()
-  agentsUI.moveFrom=[10,10,30,30]
+  agentsUI.moveFrom=["":[10,10,30,30]]
   agentsUI.receive(["event":"offer","start":true,"agent":["id":id,"title":"Flight","brief":"Research task","status":"offered","created":Date().timeIntervalSince1970]])
  case 1:
   // One transient panel; the orb swims a curved path on Core Animation (nothing per frame in the app), then the panel goes.
-  guard let panel=agentsUI.flight,panel.isVisible else{fail("No orb flight")}
+  guard let panel=agentsUI.flight,panel.isVisible else{   // it starts once the page answers agents.slot
+   if Date().timeIntervalSince(at)>3{stage=9;agentsUI.shelfWeb?.evaluateJavaScript("JSON.stringify([document.querySelectorAll('.chip.waiting').length,agents.slot('\\(id)')])"){v,e in fail("No orb flight (waiting chips, slot: \\(v ?? e ?? "nil"); launches queued \\(agentsUI.flying.count), quiet \\(agentsUI.quiet))")}};return}
   guard !panel.canBecomeKey,panel.ignoresMouseEvents else{fail("Flight took input")}
   let groups=(panel.contentView?.layer?.sublayers ?? []).compactMap{$0.animation(forKey:"swim") as? CAAnimationGroup}
   guard groups.count==6,let swim=groups.last?.animations?.first as? CAKeyframeAnimation,swim.path != nil,abs(groups.last!.duration-0.62)<0.01 else{fail("Orb does not swim a curved path")}
@@ -295,7 +293,7 @@ Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
   guard !shelf.canBecomeKey,!shelf.isKeyWindow else{fail("Shelf took keyboard focus")}
   evaluate("document.querySelector('.chip .title').textContent"){value in
    guard value as? String=="Prepare report" else{fail("Shelf chip missing")}
-   stage=1;evaluate("document.querySelector('.chip').dispatchEvent(new MouseEvent('mouseenter'))"){_ in}
+   stage=1;evaluate("document.querySelector('.chip').click()"){_ in}
   }
  case 1:
   evaluate("document.querySelector('.chip').classList.contains('expanded')"){value in
@@ -304,14 +302,16 @@ Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
    let b=CGDisplayBounds(display);CGWarpMouseCursorPosition(CGPoint(x:shelf.frame.minX-20,y:b.maxY-shelf.frame.midY));nearAt=Date()
   }
  case 2:
-  guard Date().timeIntervalSince(nearAt)>0.8 else{return}   // the fade now eases over 0.2 s
-  guard agentsUI.shelf?.ignoresMouseEvents==true,abs((agentsUI.shelf?.alphaValue ?? 1)-0.25)<0.01 else{fail("Shelf did not yield near the mouse")}
+  guard let shelf=agentsUI.shelf,shelf.ignoresMouseEvents,abs(shelf.alphaValue-0.25)<0.01 else{   // waits 0.3 s near, then eases over 0.2 s: a busy guest can take longer
+   if Date().timeIntervalSince(nearAt)>3{fail("Shelf did not yield near the mouse: alpha \\(agentsUI.shelf?.alphaValue ?? -1), ignores \\(agentsUI.shelf?.ignoresMouseEvents ?? false), mouse \\(NSEvent.mouseLocation), frame \\(agentsUI.shelf?.frame ?? .zero)")};return}
   stage=3;app.busy=true;row["status"]="done";row["summary"]="The report is ready.";row["ended"]=Date().timeIntervalSince1970
   agentsUI.receive(["event":"done","agent":row]);agentsUI.receive(["event":"ping","agent":row])
  case 3:
-  guard !app.calls.contains("agentDone") else{fail("Done ping interrupted a busy answer")};app.busy=false;agentsUI.lastKey=Date().addingTimeInterval(-2);stage=4
+  app.busy=false;stage=4
  case 4:
-  guard app.calls.contains("agentDone") else{return}
+  evaluate("agents.expanded()"){value in guard value as? String==id,stage==4 else{return};stage=40}
+ case 40:
+  guard !app.calls.contains("agentDone"),!app.panel.isVisible else{fail("A finish popped up the box")}   // its own chip opens instead
   guard !app.panel.isKeyWindow,NSWorkspace.shared.frontmostApplication?.processIdentifier==original else{fail("Done ping took focus")}
   stage=5;row["status"]="running";row["step"]="Reading source material"
   row["timeline"]=[["tool":"WebFetch","text":"Reading source material"]]
@@ -344,25 +344,32 @@ nsapp.run()''','agent native checks ok')
 let agentsUI=AgentPanels()
 let id="11111111111111111111111111111111"
 let row:[String:Any]=["id":id,"title":"Cheapest e-bikes","brief":"Find the five cheapest e-bikes.","status":"running","step":"Reading amazon.com","created":Date().timeIntervalSince1970-40,"started":Date().timeIntervalSince1970-40,"steps":["Searching the web"],"timeline":[["tool":"WebSearch","text":"Searching the web"]],"sources":[["title":"Amazon","url":"https://www.amazon.com/s?k=e-bike","domain":"www.amazon.com"]],"target":["pid":123,"windowID":"77","windowFrame":[10.0,20.0,600.0,400.0],"window":"Deals","app":"Browser Fixture"] as [String:Any]]
-var stage=0,tries=0
+var stage=0,tries=0,clicked=Date.distantFuture
 func fail(_ text:String)->Never{print(text);agentsUI.process?.terminate();exit(1)}
 func click(_ p:CGPoint){for type in [CGEventType.mouseMoved,.leftMouseDown,.leftMouseUp]{let e=CGEvent(mouseEventSource:CGEventSource(stateID:.privateState),mouseType:type,mouseCursorPosition:p,mouseButton:.left);e?.flags=[];e?.setIntegerValueField(.mouseEventClickState,value:1);e?.post(tap:.cghidEventTap);usleep(type == .mouseMoved ? 900_000 : 100_000)}}
+func clickHead(_ then:@escaping()->Void){   // measured each time: the first click resizes the shelf
+ agentsUI.shelfWeb?.evaluateJavaScript("(r=>[r.x,r.y,r.width,r.height])(document.querySelector('.chip .head').getBoundingClientRect())"){value,_ in
+  guard let r=value as? [Double],r.count==4,let f=agentsUI.shelf?.frame else{fail("Chip missing")}
+  let top=NSScreen.screens[0].frame.maxY,point=CGPoint(x:f.minX+r[0]+r[2]/2,y:top-(f.maxY-r[1]-r[3]/2))
+  DispatchQueue.global().async{click(point);DispatchQueue.main.async(execute:then)}
+ }
+}
 agentsUI.receive(["event":"state","agent":row])
 Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
- tries+=1;if tries>120{fail("Real click test timed out at stage \\(stage)")}
+ tries+=1;if tries>200{fail("Real click test timed out at stage \\(stage)")}
  switch stage {
  case 0:
-  guard agentsUI.ready.contains("shelf"),let shelf=agentsUI.shelf,shelf.isVisible else{return};stage=1
-  agentsUI.shelfWeb?.evaluateJavaScript("(r=>[r.x,r.y,r.width,r.height])(document.querySelector('.chip .head').getBoundingClientRect())"){value,_ in
-   guard let r=value as? [Double],r.count==4 else{fail("Chip missing")}
-   let f=shelf.frame,top=NSScreen.screens[0].frame.maxY
-   let point=CGPoint(x:f.minX+r[0]+r[2]/2,y:top-(f.maxY-r[1]-r[3]/2));stage=2
-   DispatchQueue.global().async{click(point)}
+  guard agentsUI.ready.contains("shelf"),agentsUI.shelf?.isVisible==true else{return};stage=1
+  clickHead{clicked=Date();stage=2}
+ case 2:
+  agentsUI.shelfWeb?.evaluateJavaScript("agents.expanded()"){value,_ in
+   guard stage==2 else{return}
+   guard value as? String==id else{if Date().timeIntervalSince(clicked)>6{fail("The first click did not open the chip in place")};return}
+   guard agentsUI.view?.isVisible != true else{fail("The first click opened the Agent view instead of the chip")}
+   stage=3;clickHead{clicked=Date();stage=4}
   }
- case 2,3:
-  stage+=1
- default:
-  guard let view=agentsUI.view,view.isVisible,agentsUI.ready.contains("view") else{if tries>60{fail("Clicking the chip did not open the Agent view")};return}
+ case 4:
+  guard let view=agentsUI.view,view.isVisible,agentsUI.ready.contains("view") else{if Date().timeIntervalSince(clicked)>6{fail("Clicking the chip did not open the Agent view")};return}   // 6 s from the click, not from launch: the shelf's own first load can take most of that on a guest
   let windows=CGWindowListCopyWindowInfo([.optionOnScreenOnly,.excludeDesktopElements],kCGNullWindowID) as? [[String:Any]] ?? []
   let front=windows.first{($0[kCGWindowLayer as String] as? Int)==0}?[kCGWindowNumber as String] as? Int
   guard front==view.windowNumber else{fail("Agent view opened behind other windows")}
@@ -378,59 +385,56 @@ Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
     }
    }
   }
+ default:break
  }
 }
 nsapp.run()''','real click and close checks ok')
 
-    def test_hover_expand_is_smooth_and_resizes_once_per_change(self):
-        # Real mouse hovers across chips: frames are timed in WebKit, native panel resizes are counted.
+    def test_click_expand_is_smooth_and_resizes_once_per_change(self):
+        # Clicks across chips and off the shelf (Esc/click elsewhere): frames are timed in WebKit, native panel resizes are counted.
         run_fixture(self,'''let nsapp=NSApplication.shared;nsapp.setActivationPolicy(.accessory)
-Prefs.set("agentStack","open")
 let agentsUI=AgentPanels()
 let now=Date().timeIntervalSince1970
 var rows:[[String:Any]]=[]
-for i in 0..<3{
+for i in 0..<2{
  var row:[String:Any]=["id":String(repeating:String(i+1),count:32),"title":"Task \\(i+1)","brief":"b","status":"running","step":"Reading source \\(i+1)"]
  row["created"]=now-Double(i*10);row["started"]=now-Double(i*10);row["steps"]=["Searching the web","Reading a.example","Reading source \\(i+1)"];row["timeline"]=[] as [Any]
  row["sources"]=[["title":"A","url":"https://a.example/x","domain":"a.example"],["title":"B","url":"https://b.example/y","domain":"b.example"]];rows.append(row)
 }
 agentsUI.receive(["event":"list","agents":rows]);agentsUI.ensureShelf()
 CGWarpMouseCursorPosition(CGPoint(x:60,y:400))
-var resizes=0,stage=0,tries=0,heads:[CGPoint]=[]
+var resizes=0,stage=0,tries=0
 NotificationCenter.default.addObserver(forName:NSWindow.didResizeNotification,object:nil,queue:.main){n in if (n.object as? NSWindow)===agentsUI.shelf{resizes+=1}}
 func fail(_ text:String)->Never{print(text);fflush(stdout);agentsUI.process?.terminate();exit(1)}
-func move(_ p:CGPoint){let e=CGEvent(mouseEventSource:CGEventSource(stateID:.privateState),mouseType:.mouseMoved,mouseCursorPosition:p,mouseButton:.left);e?.flags=[];e?.post(tap:.cghidEventTap)}
 Timer.scheduledTimer(withTimeInterval:0.1,repeats:true){_ in
  tries+=1;if tries>200{fail("Frame fixture timed out at stage \\(stage)")}
- guard stage==0,tries>25,agentsUI.ready.contains("shelf"),let shelf=agentsUI.shelf,shelf.isVisible else{return};stage=1
- agentsUI.shelfWeb?.evaluateJavaScript("JSON.stringify([...document.querySelectorAll('.chip .head')].map(h=>{const r=h.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]}))"){v,_ in
-  guard let text=v as? String,let points=try? JSONSerialization.jsonObject(with:Data(text.utf8)) as? [[Double]],points.count==3 else{fail("Chips missing")}
-  let top=NSScreen.screens[0].frame.maxY,f=shelf.frame
-  heads=points.map{CGPoint(x:f.minX+$0[0],y:top-(f.maxY-$0[1]))}
+ guard stage==0,tries>25,agentsUI.ready.contains("shelf"),agentsUI.shelf?.isVisible==true else{return}
+ stage=1   // 2 working: both show
+ agentsUI.shelfWeb?.evaluateJavaScript("document.querySelectorAll('.chip .head').length"){v,_ in
+  guard v as? Int==2 else{fail("Chips missing")}
   agentsUI.shelfWeb?.evaluateJavaScript("window.__f=[];window.__x=new Set();let last=performance.now();(function tick(t){__f.push(t-last);last=t;const e=document.querySelector('.chip.expanded');if(e)__x.add(e.dataset.id);requestAnimationFrame(tick)})(last)")
   resizes=0
-  // Each hover: 90 ms intent, expand, then the next chip (read live: chips move as others open); finally leave.
+  // Each click opens that chip at once (read live: chips move as others open); -1 is Esc or a click off the shelf.
   func finish(){
    do{
     agentsUI.shelfWeb?.evaluateJavaScript("JSON.stringify(__f.slice(5))"){v,_ in
      let frames=((try? JSONSerialization.jsonObject(with:Data((v as? String ?? "[]").utf8))) as? [Double] ?? []).sorted()
      guard frames.count>60 else{fail("Too few frames: \\(frames.count)")}
      let median=frames[frames.count/2],p95=frames[Int(Double(frames.count)*0.95)],long=frames.filter{$0>25}.count
-     print(String(format:"frames %d, median %.1f ms, p95 %.1f ms, over 25 ms %d (%.1f%%), panel resizes %d for 7 hover changes",frames.count,median,p95,long,Double(long)*100/Double(frames.count),resizes))
-     guard resizes<=8 else{fail("Panel resized per frame: \\(resizes)")}
-     guard median<=20,Double(long)/Double(frames.count)<0.1 else{fail("Hover motion is not smooth")}
+     print(String(format:"frames %d, median %.1f ms, p95 %.1f ms, over 25 ms %d (%.1f%%), panel resizes %d for 6 click changes",frames.count,median,p95,long,Double(long)*100/Double(frames.count),resizes))
+     guard resizes<=6 else{fail("Panel resized per frame: \\(resizes)")}
+     guard median<=20,Double(long)/Double(frames.count)<0.1 else{fail("Click motion is not smooth")}
      agentsUI.shelfWeb?.evaluateJavaScript("__x.size"){v,_ in
-      print("chips expanded by hover: \\(v ?? 0)");do{guard (v as? Int ?? 0)>=3 else{fail("Hover did not expand the chips")}
+      print("chips expanded by click: \\(v ?? 0)");do{guard (v as? Int ?? 0)>=2 else{fail("Clicks did not expand the chips")}
       agentsUI.process?.terminate();print("frame checks ok");exit(0)}}
     }
    }
   }
-  let plan=[0,1,2,0,-1,1,-1]
+  let plan=[0,1,0,-1,1,-1]
   func step(_ i:Int){
    guard i<plan.count else{finish();return}
-   if plan[i]<0{move(CGPoint(x:60,y:400));DispatchQueue.main.asyncAfter(deadline:.now()+0.8){step(i+1)};return}
-   agentsUI.shelfWeb?.evaluateJavaScript("(r=>[r.x+r.width/2,r.y+r.height/2])(document.querySelectorAll('.chip .head')[\\(plan[i])].getBoundingClientRect())"){v,_ in
-    let r=v as? [Double] ?? [0,0],f=shelf.frame;move(CGPoint(x:f.minX+r[0],y:top-(f.maxY-r[1])));DispatchQueue.main.asyncAfter(deadline:.now()+0.8){step(i+1)}}
+   if plan[i]<0{agentsUI.js("shelf","blur");DispatchQueue.main.asyncAfter(deadline:.now()+0.8){step(i+1)};return}
+   agentsUI.shelfWeb?.evaluateJavaScript("document.querySelectorAll('.chip .head')[\\(plan[i])].click()"){_,_ in DispatchQueue.main.asyncAfter(deadline:.now()+0.8){step(i+1)}}
   }
   step(0)
  }

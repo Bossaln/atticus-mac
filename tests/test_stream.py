@@ -76,6 +76,10 @@ class StreamTests(unittest.TestCase):
         self.assertEqual(atticus.streamed_answer(long + '\nSources: https://x.example'), ANSWER)
         self.assertEqual(atticus.streamed_answer(long + '\nSour'), ANSWER)   # may still become "Sources:"
         self.assertEqual(atticus.streamed_answer(ANSWER + '\n- More'), ANSWER + '\n- More')
+        for text in ('See [1], [ ] and a[0].', 'See [the guide](https://x.example) and [Apple](https://apple.example).'):
+            self.assertEqual(atticus.streamed_answer(long + text), long + text)   # not a tag: the rest keeps streaming
+        self.assertEqual(atticus.streamed_answer(long + 'See [the guide'), long + 'See')   # may still be a tag until it closes as a link
+        self.assertEqual(atticus.streamed_answer(long + '[agent {"brief":"read [x](y)"}] after'), ANSWER)
 
     def test_plain_answer_streams_and_the_final_reply_replaces_it(self):
         reply, lines, shown = self.run_stream(message(ANSWER), ANSWER)
@@ -193,6 +197,11 @@ ui.line('… First words here');check(words()==='First words'&&a.classList.conta
 ui.line('… First words\u2028- a list item');check(a.childNodes.map(c=>c.nodeName).join()==='P,UL'&&words()==='First words a list','keeps its line breaks');
 ui.line('· Checking the weather');check(a.textContent===''&&!a.classList.contains('streaming'),'a note clears it');
 ui.line('… Again and');ui.line('… ');check(a.textContent==='','an empty line clears it');
+for(const open of ['… It **moves heat from','… It `comp and so','… It [the link](https://x.co']){ui.line(open);check(a.textContent.trim()==='It','an open '+open.split(' ')[2][0]+' waits, never shown as a symbol');}
+ui.line('… It **moves heat** via `gas` and [a link](https://x.co) then');check(words()==='It moves heat via gas and a link'&&!a.textContent.includes('*'),'closed marks show as bold, code and a link');
+ui.line('… See [1] and a[0]\u2028- [ ] a task and');check(words()==='See [1] and a[0] [ ] a task','a bracket that is not a link shows at once');
+ui.line('… ```\u2028x = a[0] and');check(a.textContent.includes('a[0]'),'inside a code block a bracket is text');
+ui.line('… ');
 ui.line('… Final answer');ui.line('✓ Final answer');check(words()==='Final answer'&&!a.classList.contains('streaming')&&a.dataset.answer==='Final answer','the final reply replaces it');
 ui.line('… Late words');check(words()==='Final answer','a finished answer stays');
 a.dataset={};a.replaceChildren();ui.line('✓ Fresh reply');check(a.words().length===2&&a.words().every(w=>w.className==='w'&&w.style.animationDelay),'an answer that did not stream still fades in');

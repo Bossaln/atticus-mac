@@ -42,10 +42,12 @@ class UIReviewFixTests(unittest.TestCase):
         tap = self.box[self.box.index('    tap([x, y])'):self.box.index('    size(h)')]
         node(self, r'''let clicked = '';
 const make = key => { const el = { closest: s => s.split(', ').includes(key) ? el : null, click() { clicked = key; } }; return el; };
-const document = { elementFromPoint: () => current }; let current;
-const $ = () => ({ classList: { contains: () => false }, value: '' }), drop = () => {}, comp = () => { clicked = 'typing box'; }, post = () => {}, status = () => {}, fit = () => {};
+let dictating = false;
+const document = { elementFromPoint: () => current, body: { classList: { contains: c => c === 'dictate' && dictating } } }; let current;
+const $ = () => ({ classList: { contains: () => false }, value: '' }), drop = () => { clicked = 'typing'; }, comp = () => { clicked = 'typing box'; }, post = () => {}, status = () => {}, fit = () => {};
 const ui = {''' + tap + r'''};
 for (const key of ['.redo', '#agents-pill', '.dn button']) { current = make(key); clicked = ''; ui.tap([0, 0]); if (clicked !== key) { console.error(key + ' opened the ' + clicked); process.exit(1); } }
+dictating = true; current = make('.dn'); clicked = ''; ui.tap([0, 0]); if (clicked) { console.error('a click on the dictation pill opened the ' + clicked); process.exit(1); }
 ''')
 
     def test_typing_row_animates_everything_it_changes(self):
@@ -190,7 +192,7 @@ if (apiCost(.0412) !== '≈4.12¢ at API prices' || apiCost(.1861) !== '≈18.6�
         self.assertIn("querySelectorAll('.rewrite, .paused, .worker').forEach(e => e.remove())", listen)
 
     def test_rewrite_buttons_answer_hover_and_press_like_card_buttons(self):
-        self.assertIn('.rewrite button:not(:disabled):hover { transform: scale(1.03); }', self.box)
+        self.assertIn('.rewrite button:not(:disabled):is(:hover,.hot) { transform: scale(1.03); }', self.box)
         self.assertIn('.rewrite button:not(:disabled):active { transform: scale(.96); }', self.box)
 
     def test_box_status_markers_share_compact_centered_rows(self):

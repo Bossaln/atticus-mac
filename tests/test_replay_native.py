@@ -12,7 +12,8 @@ ROOT=Path(__file__).resolve().parents[1]
 class ReplayNativeTests(unittest.TestCase):
     def test_menu_success_has_no_post_press_accessibility_queries(self):
         source=(ROOT/'Atticus.swift').read_text()
-        branch=source[source.index('            if input[0] == "menu" {'):source.index('            let old = try load(), a = try app',source.index('            if input[0] == "menu" {'))]
+        start=source.index('            if input[0] == "menu" {')
+        branch=source[start:source.index('\n            }\n',start)+15]
         swift='''import Foundation
 var presses=0
 struct FixtureApp {}
@@ -25,6 +26,8 @@ enum MiniScreen {
 enum Prefs { static func bool(_ key:String)->Bool { true } }
 enum Hands {
  struct Failure:Error { init(_ text:String) {} }
+ static var claims=false,userWindowsFile:URL?=nil
+ static func root(_ a:FixtureApp)throws->Int { 0 }
  static func app(_ name:String)throws->FixtureApp { FixtureApp() }
  static func menu(_ path:String,_ app:FixtureApp,act:Bool)throws->String { if act { presses+=1 };return "Start meeting" }
  static func riskyLabel(_ label:String)->Bool { false }

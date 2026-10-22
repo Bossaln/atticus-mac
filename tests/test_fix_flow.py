@@ -140,6 +140,40 @@ class FlowTests(unittest.TestCase):
         self.assertNotIn('main-window delivery', p.stdin.write.call_args.args[0])
         self.assertEqual(output.getvalue().count('⤴ '), 1); self.assertEqual(atticus.run.handoff['title'], 'Desk research')
 
+    def test_each_separate_task_in_one_ask_is_its_own_handoff(self):
+        marker = '[agent {"title":"Ebike research","brief":"Best ebikes","app":"Alpha"}]\n[agent {"title":"Helmet research","brief":"Best helmets","app":"Beta"}]'
+        reply = 'Sure, starting two agents.\n' + marker
+        p = Mock(ask=self.root.name, returncode=0, stdin=Mock(), stdout=[json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': reply}]}}),
+                                                                          json.dumps({'type': 'result', 'result': reply, 'total_cost_usd': .001})])
+        resolved = []
+        def work_page(app, *_):
+            if resolved:
+                first = [json.loads(l[2:]) for l in output.getvalue().splitlines() if l.startswith('⤴ ')]
+                self.assertEqual([h['title'] for h in first], ['Ebike research'])
+                self.assertEqual(len(list((Path(self.root.name)/'pending-handoffs').glob('*.json'))), 1)
+            resolved.append(app)
+            return {'app': app}
+        with patch.dict(os.environ, {'ATTICUS_UI': '1', 'ATTICUS_CARET': '1', 'ATTICUS_SELECTION': ''}), patch.object(atticus, 'selection_context', return_value=''), \
+             patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'relay'), \
+             patch.object(atticus, 'running_app', side_effect=lambda app: app), patch.object(atticus, 'work_page', side_effect=work_page), \
+             patch.object(atticus.threading, 'Timer'), contextlib.redirect_stdout(io.StringIO()) as output:
+            atticus.run('Context', p, request='Research the best ebikes and, second, the best helmets')
+        sent = [json.loads(l[2:]) for l in output.getvalue().splitlines() if l.startswith('⤴ ')]
+        self.assertEqual([h['title'] for h in sent], ['Ebike research', 'Helmet research'])
+        self.assertEqual(len({h['handoffId'] for h in sent}), 2); self.assertIs(atticus.run.handoff, atticus.run.handoffs[0])
+        self.assertEqual(len(atticus.parse_handoffs('[agent {"title":"Desk research","brief":"Compare desks"}] Sure.')), 1)
+        both = atticus.parse_handoffs('```\n[steer {"id":"abc","text":"under $200"}]\n[agent {"title":"Helmets","brief":"Best helmets"}]\n```')
+        self.assertEqual([d.get('steer', d['title']) for d in both], ['abc', 'Helmets'])
+        pretty = '[agent ' + json.dumps({'title': 'Locks', 'brief': 'Bike locks'}, indent=2) + ']'
+        for shape in ('```json\n{a}\n```\n```json\n{b}\n```', '{a}\n```\n{b}\n```', '{a}{b} Started both.'):   # one fence per tag, or none on the first
+            text = shape.format(a=marker.split('\n')[0], b=pretty)
+            self.assertEqual([d['title'] for d in atticus.parse_handoffs(text)], ['Ebike research', 'Locks'], text)
+        self.assertEqual(len(atticus.parse_handoffs('[agent-profile {"action":"list"}]\n[agent {"title":"X","brief":"Y"}]')), 1)
+        pretty = '[agent\n' + json.dumps({'title': 'Helmets', 'brief': 'Best helmets'}, indent=2) + '\n]'
+        for text, titles in ((f'```json\n{marker.splitlines()[0]}\n```\n```json\n{pretty}\n```', ['Ebike research', 'Helmets']),   # a fence per tag
+                             (pretty + ' Sure, two agents.\n[agent {"title":"Late"', ['Helmets']), ('[agent {"title":"X"}]', []), ('[agent [1]]', [])):
+            self.assertEqual([d['title'] for d in atticus.parse_handoffs(text)], titles, text)
+
     def test_long_writing_only_ask_stays_main_before_its_result_mode_arrives(self):
         move = atticus.MainMove('Write a long draft', Mock(ask=self.root.name, waiting=threading.Event()))
         self.addCleanup(move.close)
@@ -159,7 +193,11 @@ class FlowTests(unittest.TestCase):
         self.assertFalse(move.local_delivery)
 
     def test_protected_handoff_retries_in_main_instead_of_losing_draft_delivery(self):
-        marker = '[agent {"title":"Long draft","brief":"Write the draft"}]'
+        for marker in ('[agent {"title":"Long draft","brief":"Write the draft"}]',   # a steer first must not carry an [agent] out of main
+                       '[steer {"id":"abc","text":"shorter"}]\n[agent {"title":"Long draft","brief":"Write the draft"}]'):
+            with self.subTest(marker=marker): self.protected_handoff_retries_in_main(marker)
+
+    def protected_handoff_retries_in_main(self, marker):
         first = Mock(ask=self.root.name, returncode=0, stdin=Mock(), stdout=[json.dumps({
             'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': marker}]}})])
         first.atticus_model = 'sonnet'
@@ -250,7 +288,8 @@ class FlowTests(unittest.TestCase):
         self.assertNotEqual(allowed.get('permissionDecision'), 'deny')
 
     def test_python_selftest_uses_current_settings_rows(self):
-        env = {**{k: v for k, v in os.environ.items() if not k.startswith('ATTICUS_')}, 'ATTICUS_DIR': self.root.name}   # earlier tests leave ATTICUS_* set
+        home = Path(self.root.name, 'home'); (home / 'Applications' / 'TradingView.app').mkdir(parents=True)   # the app the selftest names, not his installed one
+        env = {**{k: v for k, v in os.environ.items() if not k.startswith('ATTICUS_')}, 'ATTICUS_DIR': self.root.name, 'HOME': str(home)}   # earlier tests leave ATTICUS_* set
         result = subprocess.run([sys.executable, atticus.ME, '--selftest'], env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('selftest ok', result.stdout)
