@@ -27,6 +27,9 @@ later.scrollIntoView(); const r = later.getBoundingClientRect(), rest = getCompu
 out.hot = [ui.pointer([r.x + r.width / 2, r.y + r.height / 2], false), later.classList.contains('hot'), card.classList.contains('hot')]; settle(); out.hot.push(rest !== getComputedStyle(later).backgroundColor);
 out.off = [ui.pointer([]), document.querySelectorAll('.hot').length];
 out.x = [ui.pointer([1, 1], true), document.getElementById('x').classList.contains('hot'), later.classList.contains('hot')]; ui.pointer([]);
+ui.agentDone({id:'setup', title:'Set up focus time', summary:'Ready.', learned:'focus time'});
+out.agentLearned = [document.querySelector('.agent-card .tip.learned')?.dataset.k, document.querySelector('.agent-card .tip.learned')?.textContent];
+ui.agentDone({id:'other', title:'Other task', summary:'Done.'}); out.noStaleLearned = !document.querySelector('.agent-card .tip.learned');
 const ack = () => document.querySelector('#thread .turn:last-child .agent-ack span').textContent;
 ui.listen(); ui.agentSteered({id: 'b1', title: 'Ebikes', steer: {text: 'under $1500'}}); ui.agentStarted({id: 'c1', title: 'Bike locks', status: 'running'});
 out.steerAndNew = ack();
@@ -64,6 +67,8 @@ class BoxPageTests(unittest.TestCase):
         self.assertEqual(out['hot'], [True, True, True, True])   # the box never activates: the native pointer tints a card button and asks for the hand
         self.assertEqual(out['off'], [False, 0])   # off the box: arrow, no tint
         self.assertEqual(out['x'], [True, True, False])   # native's × corner lights the ×
+        self.assertEqual(out['agentLearned'], ['Learned', 'Say “focus time” any time.'])
+        self.assertTrue(out['noStaleLearned'])
         self.assertEqual(out['steerAndNew'], 'Told the Ebikes agent: under $1500. I started an agent on “Bike locks”. I’ll ping you when it’s done.')   # one ask, both parts
         self.assertEqual(out['math'][:3], ['the area is', 'the area is', 'the area is'])   # math still arriving waits, never a raw $
         self.assertNotIn('$', out['math'][3]); self.assertTrue(out['math'][3].startswith('the area is π'))

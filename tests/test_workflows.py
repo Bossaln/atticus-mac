@@ -81,7 +81,7 @@ class WorkflowTests(unittest.TestCase):
     def test_replay_runs_instantly_for_any_wording_and_rejects_unsafe_commands(self):
         cmd = atticus.HANDS + ' menu us.zoom.xos "Zoom Workplace > Start meeting"'
         reply, saved = atticus.remember_workflow('Um, can you make a new Zoom meeting?',
-            f'Your meeting started. [workflow start zoom meeting | Use the Zoom menu; check the meeting window.] [replay {cmd}]', True, ['open x'])
+            f'Your meeting started. [workflow start zoom meeting | Use the Zoom menu; check the meeting window.] [replay {cmd}]', True, [cmd])
         self.assertTrue(saved)
         self.assertEqual(reply, 'Your meeting started.')
         with patch.object(atticus, 'hands', return_value=('Clicked Start meeting', True)) as action:
@@ -101,6 +101,26 @@ class WorkflowTests(unittest.TestCase):
         for tag in ['[workflow invalid]', '[workflow | missing task]', '[workflow missing method | ]']:
             _, saved = atticus.remember_workflow('bad task', 'Done. ' + tag, True, ['open x'])
             self.assertFalse(saved)
+
+    def test_model_recipe_cannot_save_commands_that_were_not_run(self):
+        actual=f'{atticus.PLACE} Editor full monitor'
+        invented=f'{atticus.PLACE} Browser full laptop'
+        _,saved=atticus.remember_workflow('arrange desk',f'Done. [workflow arrange desk | Move and check the windows.] [replay {invented}]',True,[actual])
+        self.assertTrue(saved)   # historical guidance may be kept, but it is not an executable shortcut
+        self.assertNotIn('arrange desk',atticus.skills())
+
+    def test_ai_shortcut_helper_defers_saving_until_verification(self):
+        command=f'{atticus.SHOW} Editor'
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(Path(atticus.DIR)/'agent')}), \
+             patch.object(sys,'argv',['atticus.py','--shortcut','focus time',command]),patch('sys.stdout',new_callable=io.StringIO) as output:
+            atticus.main()
+        self.assertEqual(atticus.skills(),{})
+        self.assertIn('successful tool results',output.getvalue())
+        # A user's direct CLI definition remains available without running its actions.
+        with patch.dict(os.environ,{k:v for k,v in os.environ.items() if k!='ATTICUS_ASK'},clear=True), \
+             patch.object(sys,'argv',['atticus.py','--shortcut','focus time',command]),patch('sys.stdout',new_callable=io.StringIO):
+            atticus.main()
+        self.assertEqual(atticus.skills()['focus time']['cmds'],[command])
 
     def test_correction_removes_procedure_even_with_different_wording(self):
         atticus.workflows('create calendar event', 'Use calendar form; verify event exists.')

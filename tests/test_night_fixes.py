@@ -190,6 +190,61 @@ class NightTests(unittest.TestCase):
             place.assert_called_once_with('Fixture', 'left', 'Request display')
             shell.assert_not_called(); preview.assert_not_called()
 
+    def test_shortcuts_canonicalize_helpers_before_learning_and_replay(self):
+        for helper in ('./atticus.py', 'python3 ./atticus.py', f'python3 {atticus.ME}'):
+            with self.subTest(helper=helper):
+                command=helper+' --place Fixture fullscreen monitor'
+                self.assertIsNotNone(atticus.learn('quiet time',[command],'Placed.'))
+                # Old explicit shortcuts also need repair when loaded, independent of cwd.
+                atticus.save_skills({'quiet time':{'cmds':[command],'reply':'Placed.','mine':True}})
+                with patch.object(atticus,'place_many',return_value='Placed.') as place,patch.object(atticus.subprocess,'run') as shell:
+                    self.assertEqual(atticus.fast('Quiet time.'),'Placed.')
+                    place.assert_called_once_with(['Fixture','fullscreen','monitor']);shell.assert_not_called()
+        self.assertIsNone(atticus.learn('other setup',['python3 /tmp/atticus.py --place Fixture full laptop'],'Placed.'))
+
+    def test_named_shortcuts_allow_spoken_prefixes_but_not_other_instructions(self):
+        for request in ('Okay, when I say quiet time, open fixture on the left', 'Um, can you, when I say quiet time, open fixture on the left'):
+            with patch.object(atticus,'app_named',side_effect=lambda s:'Fixture' if s=='fixture' else None),patch.object(atticus,'proc_of',side_effect=lambda s:s), \
+                 patch.object(atticus,'place',return_value='Placed.'),patch.object(atticus.subprocess,'run',return_value=subprocess.CompletedProcess([],0)),patch.object(atticus,'cached_hands',return_value=None):
+                self.assertEqual(atticus.fast(request),'Fixture: left.')
+                self.assertIn('quiet time',atticus.skills())
+        self.assertIsNone(atticus.named_shortcut('Do not save when I say quiet time, open fixture'))
+
+    def test_helper_aliases_and_resource_directory_do_not_leak_into_replay(self):
+        command=f'{atticus.PLACE} Fixture fullscreen monitor'
+        for wrapped in (f'TASK_HELPER={atticus.ME}; "$TASK_HELPER" --place Fixture fullscreen monitor',
+                        f'P={atticus.ME}; python3 "${{P}}" --place Fixture fullscreen monitor',
+                        f'cd {os.path.dirname(atticus.ME)} && ./atticus.py --place Fixture fullscreen monitor'):
+            with self.subTest(wrapped=wrapped): self.assertEqual(atticus.shortcut_commands('quiet time',[wrapped]),[command])
+        self.assertIsNone(atticus.shortcut_commands('quiet time',[f'P=/tmp/atticus.py; "$P" --place Fixture full monitor']))
+        self.assertIsNone(atticus.shortcut_commands('quiet time',[f'cd {os.path.dirname(atticus.ME)} && {atticus.SHOW} relative.txt']))
+
+    def test_fullscreen_and_maximize_teach_their_distinct_native_actions(self):
+        with patch.object(atticus,'app_named',side_effect=lambda s:'Fixture' if s=='fixture' else None),patch.object(atticus,'proc_of',side_effect=lambda s:s), \
+             patch.object(atticus,'place',return_value='Placed.') as place,patch.object(atticus,'cached_hands',return_value=None):
+            self.assertEqual(atticus.fast('Okay, when I say quiet time, full screen fixture on my monitor'),'Fixture: full screen on monitor.')
+            place.assert_called_with('Fixture','fullscreen','monitor')
+            self.assertEqual(atticus.skills()['quiet time']['cmds'],[atticus.PLACE+' Fixture fullscreen monitor'])
+            self.assertEqual(atticus.fast('maximize fixture'),'Fixture: full.')
+            place.assert_called_with('Fixture','full','current')
+
+    def test_native_fullscreen_targets_standard_window_and_checks_success(self):
+        for entered in ('true','false'):
+            with self.subTest(entered=entered):
+                calls=[]
+                def osa(script,*args):
+                    calls.append(script)
+                    if 'return {value of attribute' in script: return 'false, false, 0, 25, 1000, 775'
+                    if 'return {position, size}' in script: return '0, 25, 1000, 775'
+                    if 'get value of attribute "AXFullScreen"' in script: return entered
+                    return ''
+                with patch.object(atticus,'osa',side_effect=osa),patch.object(atticus,'free_focus'),patch.object(atticus,'preview_app'), \
+                     patch.object(atticus,'screens',return_value=[('Request display',0,0,1000,800,True)]),patch.object(atticus.time,'sleep'),patch.object(atticus.subprocess,'run') as shell:
+                    reply=atticus.place('Fixture','fullscreen','laptop')
+                self.assertEqual(reply.startswith('NOT DONE'),entered=='false')
+                self.assertTrue(any('set value of attribute "AXFullScreen"' in s for s in calls))
+                self.assertTrue(all('window 1' not in s for s in calls));shell.assert_not_called()
+
     def test_place_batches_state_and_verification_without_fixed_delays(self):
         calls = []
         def osa(script, *args):

@@ -707,6 +707,7 @@
     d.querySelector('.eyebrow span').textContent=row.missingConnector?'Agent needs a connector':'Agent done';
     d.querySelector('b').textContent=row.title;
     const answer=d.querySelector('.a');answer.append(markdown(agentAnswer(row)));answer.tabIndex=0;   // a scroller: the keyboard must reach it
+    if(row.learned){const tip=document.createElement('div');tip.className='tip learned';tip.dataset.k='Learned';tip.textContent='Say “'+row.learned+'” any time.';answer.after(tip);}
     answer.onscroll=()=>answer.classList.toggle('more',answer.scrollHeight-answer.scrollTop-answer.clientHeight>4);
     const actions=d.querySelector('.agent-actions'),add=(text,data,go=false)=>{const b=keyButton(text,go?'↩':'esc',go);if(!go)b.dataset.esc='';b.onclick=()=>{post(data);d.remove();fit();};actions.append(b);return b;};
     const made=d.querySelector('.made'),things=agentMade(row);

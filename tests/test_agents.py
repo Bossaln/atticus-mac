@@ -79,6 +79,11 @@ class AgentTests(unittest.TestCase):
     def prepare(self, brief='WAIT fixture', **extra):
         return self.manager.prepare({'title':'Fixture task','brief':brief,'context':'Known text','connectors':[],**extra})
 
+    def receipt(self, row, tool, inp, output='Done.', error=False):
+        identifier=str(time.time_ns())
+        self.manager.event(row,{'event':'claude','data':{'type':'assistant','message':{'content':[{'type':'tool_use','id':identifier,'name':tool,'input':inp}]}}})
+        self.manager.event(row,{'event':'claude','data':{'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':identifier,'is_error':error,'content':output}]}}})
+
     def gate(self, name, inp=None, directory=None, answer='n', **env):
         stream=io.StringIO()
         with patch.dict(os.environ,{'ATTICUS_ASK':directory or self.root.name,**env}),patch('sys.stdin',io.StringIO(json.dumps({'tool_name':name,'tool_input':inp or {}}))), \
@@ -1139,6 +1144,78 @@ class AgentTests(unittest.TestCase):
                                      ('Found three.\n[agent-result {"summary": broken}]','Found three.',[]),('[agent-result {"summary"','Done',[])):
             self.manager.finish(row,'done',result)
             self.assertEqual((row['summary'],row['links']),(summary,links),result);self.assertNotIn('[agent-',row['preparedBrief'])
+
+    def test_agent_learns_named_setup_and_replays_without_ai(self):
+        row=self.prepare()
+        Path(atticus.request_file(row['directory'])).write_text('Okay, when I say focus time, put Editor on my monitor and Browser on my laptop.')
+        commands=[f'python3 {atticus.PLACE} Editor fullscreen monitor + Browser fullscreen laptop']
+        self.receipt(row,'Bash',{'command':commands[0]})
+        result='Both windows are in place. [agent-result '+json.dumps({'summary':'Both windows are in place.','replay':[f'{atticus.PLACE} WrongApp left laptop']})+']'
+        with patch.object(atticus,'SKILLS',str(Path(self.root.name)/'skills.json')),patch.object(atticus,'cached_hands',return_value=None):
+            self.manager.finish(row,'done',result)
+            self.assertEqual(row['learned'],'focus time')
+            self.assertTrue(atticus.skills()['focus time']['mine'])
+            self.assertEqual(atticus.skills()['focus time']['cmds'],[commands[0].removeprefix('python3 ')])
+            self.assertEqual(self.events[-1]['agent']['learned'],'focus time')
+            with patch.object(atticus,'place_many',return_value='Both windows in place.') as place,patch.object(atticus,'start_ai') as ai:
+                self.assertEqual(atticus.fast('Focus time.'),'Both windows are in place.')
+                place.assert_called_once();ai.assert_not_called()
+            # A follow-up must not inherit the previous completion's learned feedback.
+            self.manager.finish(row,'failed','Stopped.')
+            self.assertNotIn('learned',row)
+
+    def test_agent_learning_rejects_failed_unsafe_and_missing_requests(self):
+        with patch.object(atticus,'SKILLS',str(Path(self.root.name)/'skills.json')),patch.object(atticus,'cached_hands',return_value=None):
+            for status,answer,commands,request,extra,enabled in [
+                ('failed','Done.',[f'{atticus.SHOW} Editor'],'Focus time',{},True),
+                ('done','Could not finish.',[f'{atticus.SHOW} Editor'],'Focus time',{},True),
+                ('done','Done.',['rm -rf /tmp/example'],'Focus time',{},True),
+                ('done','Done.',[f'{atticus.HANDS} click 120,200'],'Focus time',{},True),
+                ('done','Done.',[f'{atticus.SHOW} Editor'],None,{},True),
+                ('done','Done.',[f'{atticus.SHOW} Editor'],'Focus time',{'missingConnector':'Mail'},True),
+                ('done','Done.',[f'{atticus.SHOW} Editor'],'Focus time',{},False),
+                ('done','Done.','invalid','Focus time',{},True),
+            ]:
+                with self.subTest(status=status,answer=answer,commands=commands,request=request,enabled=enabled):
+                    row=self.prepare();self.prefs['learn']=enabled
+                    if request: Path(atticus.request_file(row['directory'])).write_text(request)
+                    if isinstance(commands,list):
+                        for command in commands: self.receipt(row,'Bash',{'command':command})
+                    self.manager.finish(row,status,answer+' [agent-result '+json.dumps({'replay':commands,**extra})+']')
+                    self.assertNotIn('learned',row)
+                    self.assertEqual(atticus.skills(),{})
+
+    def test_agent_learning_uses_complete_handoff_receipts_without_model_recipe(self):
+        row=self.prepare()
+        Path(atticus.request_file(row['directory'])).write_text('When I say desk time, arrange Editor and Browser.')
+        row['_learningContext']=atticus.handoff_context('Known context',[
+            {'tool':'Bash','input':json.dumps({'command':f'{atticus.PLACE} Editor fullscreen monitor'}),'status':'completed','result':'Placed.'}])
+        self.receipt(row,'Read',{'file_path':'scratch.png'})
+        self.receipt(row,'Bash',{'command':f'python3 {atticus.ME} --window Browser'})
+        self.receipt(row,'Bash',{'command':f'./atticus.py --place Browser fullscreen laptop'})
+        with patch.object(atticus,'SKILLS',str(Path(self.root.name)/'skills.json')),patch.object(atticus,'cached_hands',return_value=None):
+            self.manager.finish(row,'done','Both arranged.')
+            self.assertEqual(row['learned'],'desk time')
+            self.assertEqual(atticus.skills()['desk time']['cmds'],[f'{atticus.PLACE} Editor fullscreen monitor + Browser fullscreen laptop'])
+
+    def test_agent_learning_refuses_unproven_recipes_and_partial_requests(self):
+        with patch.object(atticus,'SKILLS',str(Path(self.root.name)/'skills.json')),patch.object(atticus,'cached_hands',return_value=None):
+            for case in ('recipe-only','write','inflight','failed','previous-request'):
+                with self.subTest(case=case):
+                    row=self.prepare();Path(atticus.request_file(row['directory'])).write_text('When I say desk time, arrange Editor and Browser.')
+                    if case!='recipe-only': self.receipt(row,'Bash',{'command':f'{atticus.PLACE} Browser full laptop'})
+                    if case=='write': self.receipt(row,'Write',{'file_path':'scratch.txt','content':'new content'})
+                    if case=='failed': self.receipt(row,'Bash',{'command':f'{atticus.PLACE} Editor full monitor'},error=True)
+                    if case=='inflight': row['_learningContext']=atticus.handoff_context('',[{'tool':'Bash','input':{'command':f'{atticus.PLACE} Editor full monitor'},'status':'in-flight'}])
+                    if case=='previous-request': row['_learningSince']=time.time()+1
+                    self.manager.finish(row,'done','Done. [agent-result '+json.dumps({'replay':[f'{atticus.PLACE} Editor full monitor']})+']')
+                    self.assertNotIn('learned',row);self.assertEqual(atticus.skills(),{})
+
+    def test_failed_action_must_be_repeated_successfully_before_learning(self):
+        row=self.prepare();command=f'{atticus.PLACE} Editor full monitor'
+        self.receipt(row,'Bash',{'command':command},error=True)
+        self.receipt(row,'Bash',{'command':command})
+        self.assertEqual(atticus.agent_commands(row,'Arrange Editor'),[command])
 
     def test_missing_connector_asks_on_the_chip_and_resumes_once_connected(self):
         row=self.prepare('DONE fixture');self.manager.start(row['id']);self.until(lambda:row['status']=='done')

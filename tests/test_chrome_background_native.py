@@ -23,6 +23,37 @@ CHROME = Path('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
 @unittest.skipUnless(os.environ.get('ATTICUS_VM') == '1' and sys.platform == 'darwin' and CHROME.exists(),
                      'Isolated Chrome profile requires ATTICUS_VM=1 and macOS Chrome')
 class ChromeBackgroundTests(unittest.TestCase):
+    def test_native_fullscreen_placement_repeats_without_toggling(self):
+        with tempfile.TemporaryDirectory(prefix='atticus-place-') as tmp:
+            root=Path(tmp); marker='Atticus placement '+root.name
+            page=root/'page.html';page.write_text('<title>'+marker+'</title><p>Scratch placement</p>')
+            with (root/'chrome.log').open('w') as log:
+                process=subprocess.Popen([str(CHROME),f'--user-data-dir={root / "profile"}','--no-first-run','--no-default-browser-check','--disable-sync',page.as_uri()],stdout=log,stderr=log,start_new_session=True)
+                try:
+                    selector=f'tell application "System Events" to tell process "Google Chrome" to get value of attribute "AXFullScreen" of (first window whose name contains "{marker}")'
+                    deadline=time.monotonic()+15
+                    probe=None
+                    while time.monotonic()<deadline:
+                        try: probe=subprocess.run(['osascript','-e',selector],capture_output=True,text=True,timeout=3)
+                        except subprocess.TimeoutExpired: self.skipTest('VM does not allow Apple events to scratch Chrome through System Events')
+                        if probe.stdout.strip() in ('true','false'): break
+                        if 'not allowed' in probe.stderr or 'not authorized' in probe.stderr: self.skipTest(probe.stderr.strip())
+                        time.sleep(.2)
+                    else: self.fail('Scratch Chrome window not accessible: '+(probe.stderr if probe else '')+(root/'chrome.log').read_text()[-1000:])
+                    with patch.object(atticus,'preview_app'),patch.object(atticus,'free_focus'):
+                        screen=atticus.screens()[0][0]
+                        reply=atticus.place('Google Chrome','fullscreen',screen,marker)
+                        self.assertNotIn('NOT DONE',reply);self.assertNotIn('could not check',reply)
+                        self.assertEqual(atticus.osa(selector),'true',reply)
+                        # Use the actual screen name so the already-in-place path applies on the VM's virtual display.
+                        again=atticus.place('Google Chrome','fullscreen',screen,marker)
+                        self.assertIn('already full screen',again)
+                        self.assertEqual(atticus.osa(selector),'true',again)
+                finally:
+                    os.killpg(process.pid,signal.SIGTERM)
+                    try: process.wait(timeout=5)
+                    except subprocess.TimeoutExpired: os.killpg(process.pid,signal.SIGKILL);process.wait()
+
     def test_pinned_background_window_javascript_and_ax(self):
         with tempfile.TemporaryDirectory(prefix='atticus-chrome-') as tmp:
             root = Path(tmp); profile = root / 'profile'; (profile / 'Default').mkdir(parents=True)

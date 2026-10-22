@@ -5,7 +5,7 @@
 Hold Control+Option+Space (Atticus.app) -> talk -> let go. It answers questions (web, files, screen) and does
 tasks on the Mac. Output lines for the overlay: "· note", "▸ step", "✓ answer".
   atticus.py "what's on my screen?"      run one request (no args = a typed pop-up)
-  atticus.py --place <proc> <left|right|full|center> <laptop|monitor|current> [title]
+  atticus.py --place <proc> <left|right|full|fullscreen|center> <laptop|monitor|current> [title]
   atticus.py --window [app] [--offset N] [--ocr]   paged readable window text
   atticus.py --draw '<JSON>'             screen drawings and spoken steps; --draw --help for the schema
   atticus.py --look                       labeled screenshots of every display -> prints the image paths
@@ -501,7 +501,7 @@ Tools:
 - Native actions: {HANDS} see [app] | menu <app> "<path>" | click <target> [near <label>] [double] [right] | scroll down|up|left|right [pages|all] [target] | scroll-to "text" | press "cmd+t" [times] | drag <from> <to> | type <field> "text" [submit] [append] | type-after "<exact anchor>" "<text>" | wait [seconds]. Prefer labels. Returns changed state; use the window reader for document text.
 - System settings: shell, defaults or AppleScript first; else open the pane with --bg and use hands on its labelled control; verify. Don't renavigate an open pane.
 - Work behind: never activate/raise unless asked to open/show/switch/focus. {SHOW} --bg "<url|path|app>" opens behind, waits until ready. {SHOW} "<target>" respects Settings. {FRONT} "<app>" ["tab words"] pictures that window in place, even covered; raises only if asked. Helpers wait; never add sleep. Chain dependent commands with && and check each result.
-- Windows: {PLACE} "<process>" <left|right|full|center> <laptop|monitor|current|exact Context screen name> ["title words"]. Use for every move/resize; combine moves with +. Find names from running apps/accessibility; never guess.
+- Windows: {PLACE} "<process>" <left|right|full|fullscreen|center> <laptop|monitor|current|exact Context screen name> ["title words"]. full maximizes; fullscreen enters a Space. Combine moves with +. Get names from running apps/accessibility.
 - Type at the cursor: {TYPE} "<text>".
 - Web: {SEARCH} "<query>" finds URLs/snippets; {READ} "<url>" fetches text; WebSearch/WebFetch on failure. Never invent URLs/parameters; recover via the site's search/controls.
 - Files (if needed): mdfind -name "<words>" | head -20; content: mdfind -onlyin ~/Documents "<words>" | head.
@@ -513,7 +513,7 @@ Tools:
 - Routines: {ROUTINE} add time HH:MM daily|weekdays "<ask>" [mode] | add interval SECONDS "<ask>" [mode] | list | remove listed-ID.
 Earlier supplies follow-ups. "this"/"here" = front window; "it" after a task = Last task window. Answer/draw from open content (video, page, doc) unless told not to.
 Memory: follow rules. Recall/forget X: --me find, then drop a fact or {FORGET} the exact rule. Save personal facts: {ABOUT} <category> "<kind>" "<exact words from now/Earlier>"; how-tos: {REMEMBER} "<rule>".
-Shortcuts: "when I say X, do Y": run and verify Y, then {SHORTCUT} "<X>" '<command>' for instant replay. Replace command-like rules with shortcuts, then {FORGET} the rule.
+Shortcuts: "when I say X, do Y": run and verify Y. Atticus saves the verified actions as X; do not write shortcuts yourself.
 Own settings: {SET} "<setting name>" on|off|<option>, never click in Settings. Show Settings: open -a Atticus.
 Corrections: fix the task, then save one short user preference, not app/site-specific workarounds.
 If Context has a Previous learned shortcut and the current request reports it failed, redo its task and include [unlearn]; else ignore it.
@@ -1086,9 +1086,11 @@ def request_screen():
 
 
 def place(proc, where='full', screen='current', title=''):
-    """Move a window with the math done here: where = left|right|full|center, screen = laptop|monitor|current."""
+    """Place a window; full maximizes, fullscreen enters a native macOS Space."""
+    native = where == 'fullscreen'
+    if native: where = 'full'
     if where not in ('left', 'right', 'full', 'center'):
-        return 'where must be left, right, full or center'
+        return 'where must be left, right, full, fullscreen or center'
     if screen == 'current': screen = request_screen()
     title = re.sub(r'\.[a-z0-9]{2,4}$', '', title, flags=re.I)   # "notes.pdf" must find a window titled "notes" (macOS hides extensions)
     app_q, title_q = osa_quote(proc), osa_quote(title)
@@ -1145,7 +1147,7 @@ def place(proc, where='full', screen='current', title=''):
     # display, System Events often can't see it any more, so a later resize would miss.
     one = f'tell application "{app_q}" to set bounds of {aw} to {{{bx}, {by}, {bx + bw}, {by + bh}}}'
     free_focus()
-    if (title and not app_mode) or subprocess.run(['osascript', '-e', one], capture_output=True).returncode:
+    if native or (title and not app_mode) or subprocess.run(['osascript', '-e', one], capture_output=True).returncode:
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')   # size first, then move, then size again
         osa(tell + f'set position of {win} to {{{bx}, {by}}}')
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')
@@ -1158,8 +1160,14 @@ def place(proc, where='full', screen='current', title=''):
         return f'Moved {proc}, but could not check where its window is. Look at the screen before saying it worked.'
     if not (x <= (l + r) // 2 < x + w and y - 25 <= (t + b) // 2 < y + h):
         return f'NOT DONE: {proc} window did not move to {n} (it may be full screen in its own Space). Say so; do not report success.'
+    if native:
+        osa(tell + f'set value of attribute "AXFullScreen" of {win} to true')
+        for _ in range(20):
+            if osa(tell + f'get value of attribute "AXFullScreen" of {win}') == 'true': break
+            time.sleep(.1)
+        else: return f'NOT DONE: {proc} did not enter full screen on {n}.'
     preview_app(proc, 'move', title)
-    return f'{proc} window -> {where} of {n}'
+    return f'{proc} window -> {"fullscreen" if native else where} of {n}'
 
 
 def place_many(args):
@@ -1548,6 +1556,11 @@ MORE = re.compile(r'\b(and|then|after that|also)\b', re.I)   # a second step aft
 FAILED = re.compile(r"\b(can't|cannot|couldn't|could not|unable|not able|failed|not done|not completed|didn't work)\b", re.I)   # the reply admits it did not work
 
 
+def named_shortcut(text):
+    match = NAMED.search(text)
+    return match if match and plain(text[:match.start()] + 'shortcut') == 'shortcut' else None
+
+
 def skills():
     try:
         with open(SKILLS) as f: saved = json.load(f)
@@ -1579,13 +1592,38 @@ def shortcut_commands(task, commands, app=''):
         if all(p and os.path.basename(p[0]) in LOOKUPS and not any('>' in t and not t.endswith('/dev/null') for t in p) for p in parts): continue   # finding the file (mdfind | head, ls) is discovery too
         if flow - {';', '&&'}: return None   # pipes, fallbacks and background jobs need the AI
         if flow:   # "a; b && c" is a list of actions: each one is checked and replayed on its own, in order
+            aliases = {}
+            while parts and len(parts[0]) == 1:
+                name, sep, value = parts[0][0].partition('=')
+                if not sep or not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name): break
+                if value != ME: return None
+                aliases[name] = ME; parts.pop(0)
+            if aliases:
+                for part in parts:
+                    for i, token in enumerate(part):
+                        match = re.fullmatch(r'\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))', token)
+                        if match and (match[1] or match[2]) in aliases:
+                            if i not in (0, 1) or i == 1 and part[0] != sys.executable and os.path.basename(part[0]) not in ('python', 'python3'): return None
+                            part[i] = aliases[match[1] or match[2]]
+                if any('$' in t for p in parts for t in p): return None
+            if parts and parts[0] == ['cd', os.path.dirname(ME)]:
+                sub = shortcut_commands(task, [shlex.join(p) for p in parts[1:] if p], app)
+                if sub is None or not all((t := shlex.split(c))[:1] == [ME] and t[1:2] and t[1] in ('--place', '--hands', '--play', '--queue', '--type') for c in sub): return None
+                result += sub; continue   # these actions do not depend on the tool's working directory
             parts = [shlex.join(p) for p in parts if p]
             while len(parts) > 1 and shortcut_commands(task, parts[-1:], app) == []: parts.pop()   # a check after the act ("move && get its size") can go
             sub = shortcut_commands(task, parts, app)
             if sub is None or '&&' in flow and sum(c.count(' + ') + 1 if re.match(r'\S*atticus\.py --place ', c) else 1 for c in sub) != len(parts): return None   # "check && act" without its check would act blind
             result += sub; continue
+        original = tokens[:]
+        helpers = (ME, './atticus.py', 'atticus.py')
+        if len(tokens) > 1 and (tokens[0] == sys.executable or os.path.basename(tokens[0]) in ('python', 'python3')) and tokens[1] in helpers:
+            tokens = tokens[1:]
+        if tokens[0] in helpers:
+            tokens[0] = ME
+            if tokens != original: command = shlex.join(tokens)   # replay has neither the original cwd nor its Python launcher
         if recursive_ask(tokens): return None
-        if command.startswith((REMEMBER, ABOUT, LOOK, FRONT, SEARCH, READ, HISTORY, '<Read>', 'sleep ')): continue
+        if command.startswith((REMEMBER, ABOUT, LOOK, FRONT, WINDOW, SEARCH, READ, HISTORY, '<Read>', 'sleep ')): continue
         if tokens[:2] == [ME, '--hands'] and tokens[2:3] == ['see']:
             if len(tokens) == 4: app = tokens[3]
             continue
@@ -1819,7 +1857,8 @@ def remember_workflow(task, reply, ok, cmds):
         workflows(title.strip()[:120], method.strip())
         if again and replayable(again[1]):
             commands = shortcut_commands(task, [again[1].strip()], (cached_hands() or {}).get('app', ''))
-            if not commands: return reply, saved
+            performed = shortcut_commands(task, cmds, (cached_hands() or {}).get('app', ''))
+            if not commands or performed is None or any(c not in performed for c in commands): return reply, saved
             sk = skills()
             for k in {plain(task), plain(title)}:
                 sk[k] = {'cmds': commands, 'reply': reply, 'at': time.strftime('%Y-%m-%d')}
@@ -1840,11 +1879,12 @@ def fast(text):
     Returns a reply, or None to hand the request to Haiku."""
     fast.cmds = []
     fast.shortcut = fast.failed = None
-    named = NAMED.match(text.strip())
+    text = text.strip()
+    named = named_shortcut(text)
     if named and pref('learn', True):
         if os.environ.get('ATTICUS_LIVE') == '1': return None
         name, action = (named[1] or named[2]).strip(), text[named.end():].strip(' ,:;')
-        if hands_command(plain(action)) or NAMED.match(action): return None
+        if hands_command(plain(action)) or named_shortcut(action): return None
         reply = action and fast(action)
         if reply and learn(name, fast.cmds, reply) is not None:
             output = fast.shortcut['output'] if fast.shortcut else [reply]
@@ -1969,7 +2009,7 @@ def fast(text):
             if any(o.startswith(('no window', 'NOT DONE')) or 'could not check' in o for o in outs): return None
             fast.cmds = [PLACE + ' ' + ' + '.join(shlex.join([proc_of(a), w, sc]) for a, w, sc in moves)]
             Path(LAST).write_text(moves[-1][0])
-            return ' '.join(f'{a}: {w}' + (f' on {sc}' if sc != 'current' else '') + '.' for a, w, sc in moves)
+            return ' '.join(f'{a}: {w.replace("fullscreen", "full screen")}' + (f' on {sc}' if sc != 'current' else '') + '.' for a, w, sc in moves)
     m = move_target(t)
     if not m:
         return None
@@ -1979,11 +2019,11 @@ def fast(text):
         return None
     fast.cmds = [PLACE + ' ' + shlex.join([proc_of(app), where, screen])]
     Path(LAST).write_text(app)
-    return f'{app}: {where}' + (f' on {screen}' if screen != 'current' else '') + '.'
+    return f'{app}: {where.replace("fullscreen", "full screen")}' + (f' on {screen}' if screen != 'current' else '') + '.'
 
 
 # Ways to say a screen or a size, in any order: "full screen chrome on my big screen", "move chrome to the external display and maximize it"
-MOVE_WORDS = [(r'\b(?:full ?screen|maximi[sz]ed?)\b', 'full'),
+MOVE_WORDS = [(r'\bfull ?screen\b', 'fullscreen'), (r'\bmaximi[sz]ed?\b', 'full'),
               (r'\b(?:(?:big|bigger|large|larger|external|second) (?:screen|monitor|display)|external|monitor|display)\b', 'monitor'),
               (r'\b(?:laptop|macbook|built ?in|(?:small|smaller|little|mac) (?:screen|display))(?: (?:screen|display))?\b', 'laptop')]
 
@@ -1993,10 +2033,10 @@ def move_target(t):
     Everything but the app, one place and one screen must be filler, so "what's on my monitor" stays with the AI."""
     for pat, word in MOVE_WORDS:
         t = re.sub(pat, word, t)
-    where, screen = re.findall(r'\b(left|right|full|center|middle)\b', t), re.findall(r'\b(laptop|monitor)\b', t)
+    where, screen = re.findall(r'\b(left|right|full|fullscreen|center|middle)\b', t), re.findall(r'\b(laptop|monitor)\b', t)
     if len(where) > 1 or len(screen) > 1 or not (where or screen):
         return None
-    who = re.sub(r'\b(?:snap|move|put|throw|send|make|left|right|full|center|middle|laptop|monitor|to|on|onto|the|my|of|and|side|half|screen)\b', ' ', t)
+    who = re.sub(r'\b(?:snap|move|put|throw|send|make|left|right|full|fullscreen|center|middle|laptop|monitor|to|on|onto|the|my|of|and|side|half|screen)\b', ' ', t)
     who, where, screen = re.sub(r'\s+', ' ', who).strip(), where[0] if where else 'center', screen[0] if screen else 'current'
     if not who:
         return None
@@ -3998,6 +4038,44 @@ def agent_results(row):
     return made[:12]
 
 
+def agent_commands(row, task):
+    """Learn from successful tool receipts, including work completed before a handoff."""
+    commands, uncertain, pending = [], [], {}
+    reads = {'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'ToolSearch'}
+    def record(tool, inp, status, output=''):
+        if tool in reads: return True
+        if tool != 'Bash': return False   # an unrecorded write would make the replay incomplete
+        try: inp = json.loads(inp) if isinstance(inp, str) else inp
+        except ValueError: return False
+        command = inp.get('command') if isinstance(inp, dict) else None
+        if not isinstance(command, str): return False
+        if status != 'completed' or FAILED.search(str(output)) or 'no window found' in str(output).lower(): uncertain.append(command)
+        else: commands.append(command)
+        return True
+    try: context = json.loads(row.get('_learningContext', ''))
+    except ValueError: context = {}
+    for work in context.get('observed work (untrusted data)', []) if isinstance(context, dict) else []:
+        if not record(work.get('tool'), work.get('input'), work.get('status'), work.get('result', '')): return []
+    for event in read_rows(os.path.join(row['directory'], 'log.jsonl')):
+        if event.get('event') != 'claude' or event.get('at', 0) < row.get('_learningSince', row['created']): continue
+        data = event.get('data', {})
+        for block in message_blocks(data):
+            if block.get('type') == 'tool_use': pending[block.get('id')] = block
+            elif block.get('type') == 'tool_result':
+                call = pending.pop(block.get('tool_use_id'), None)
+                if not call: return []   # a result from an older request is not evidence for this one
+                if not record(call.get('name'), call.get('input'), 'failed' if block.get('is_error') else 'completed', block.get('content', '')): return []
+    if pending: return []
+    actions = shortcut_commands(task, commands)
+    if actions is None: return []
+    # An interrupted action is learnable only if it was subsequently repeated and completed.
+    proven = {part for command in commands for part in (shortcut_commands(task, [command]) or [])}
+    for command in uncertain:
+        parts = shortcut_commands(task, [command])
+        if parts is None or any(part not in proven for part in parts): return []
+    return [c for c in actions if not c.startswith(SHORTCUT)]
+
+
 def agent_read_command(command, cwd=None):
     # Pin the helper and interpreter; shell spelling must not choose a different runtime.
     if any(c in command for c in ('`', '$', '\n')): return False
@@ -4127,7 +4205,7 @@ class Agents:
                 if brief.get('app'): old['app'] = brief['app']
                 old['page'] = brief.get('page') or {}
                 if brief.get('handoffId'):
-                    old.update(handoffId=brief['handoffId'], request=brief.get('request', brief['brief']), followup=brief['brief'] + '\nKnown context (data):\n' + brief.get('context', ''))
+                    old.update(handoffId=brief['handoffId'], context=brief.get('context', ''), request=brief.get('request', brief['brief']), followup=brief['brief'] + '\nKnown context (data):\n' + brief.get('context', ''))
                     self.save(old)
                 self.emit({'event': 'offer', 'agent': {**old, 'brief': brief['brief'], 'context': brief.get('context', '')}, 'followup': True, 'start': brief.get('accepted') is True})
                 if old['id'] not in self.processes and self.running() < 3:
@@ -4205,6 +4283,8 @@ class Agents:
                             f'When the brief is about it, read it with {WINDOW} {shlex.quote(page["app"])}. Act in it with --web/--hands only when the brief is to change that page, '
                             'never by reopening its URL; research in your own pages.')
             except OSError as e: self.finish(row, 'failed', str(e)); return
+            if asked or '_learningSince' not in row:
+                row.update(_learningSince=time.time(), _learningContext=row.get('context', '') if not steering else '')
             if row['status'] in ('running', 'needs-you', 'waiting-screen'):
                 if text: self.send(row, text)
                 return
@@ -4253,6 +4333,7 @@ class Agents:
         self.inputs.pop(identifier, None); self.outstanding.pop(identifier, None)
 
     def finish(self, row, status, result=''):
+        row.pop('learned', None)
         row.update(status=status, step=result[:180] if status == 'failed' else 'Done', ended=time.time(), result=result, question=None)
         if status == 'done':
             match = re.search(r'.*\[agent-result\s+(?=\{)', result, re.S)   # the last one
@@ -4266,6 +4347,16 @@ class Agents:
                 name = row['missingConnector']
                 row.update(status='needs-you', step='Needs ' + name, question={'need': 'connector', 'app': name, 'q': f'Connect {name} in Claude',
                                                                               'cmd': row['summary'][:300], '_a': uuid.uuid4().hex})
+            if row['status'] == 'done' and pref('learn', True):
+                try: request = Path(request_file(row['directory'])).read_text()
+                except OSError: request = ''   # never learn a generated brief in place of the user's words
+                commands = agent_commands(row, request) if request else []
+                named = named_shortcut(request.strip())
+                key = plain(named[1] or named[2]) if named else plain(request)
+                if key and commands and all(replayable(c) for c in commands) and learn(key, commands, answer or row['summary']) is not None:
+                    if named:
+                        sk = skills(); sk[key]['mine'] = True; save_skills(sk)
+                    row['learned'] = key
             row['made'] = agent_results(row)
         self.stop_process(row['id']); self.save(row)
         threading.Thread(target=close_agent_window, args=(row['directory'],), daemon=True).start()
@@ -6787,6 +6878,8 @@ def main():
     if args[:1] == ['--shortcut']:   # the user asked for it, so it skips learn()'s checks, not the safety one
         if len(args) != 3:
             return print('usage: --shortcut "<words>" "<shell command>"')
+        if os.environ.get('ATTICUS_ASK'):
+            return print('Finish and verify the requested actions. Atticus saves shortcuts automatically from their successful tool results; do not write skills.json.')
         if UNSAFE.search(args[2]) or not hands_replayable(args[2]):   # replays run with no AI and no deny list: never anything that deletes or needs admin
             return print('not saved: shortcuts cannot delete files or use sudo')
         sk = skills()
@@ -7033,9 +7126,10 @@ def main():
         workflows(task, None)
     workflow = False
     if not replacement:
-        reply, workflow = remember_workflow(task, reply, run.ok and not failed_shortcut, run.ran)   # ran: a retried step that then worked still counts
-    named, shortcut, learned_key = NAMED.match(task.strip()), '', ''
-    if named and run.ok and run.cmds and (learn(named[1] or named[2], run.cmds, reply) is not None or plain(named[1] or named[2]) in skills() and any(plain(n) == plain(named[1] or named[2]) for c in run.cmds for n in re.findall(r'--shortcut\s+["\']([^"\']+)', c))):   # "When I say work mode, …": the words become the shortcut, even if the AI forgot --shortcut
+        reply, workflow = remember_workflow(task, reply, run.ok and not failed_shortcut, run.cmds)
+    named, shortcut, learned_key = named_shortcut(task.strip()), '', ''
+    named_commands = [c for c in (shortcut_commands(task, run.cmds) or []) if not c.startswith(SHORTCUT)] if named else []
+    if named and run.ok and learn(named[1] or named[2], named_commands, reply) is not None:
         sk = skills(); sk[plain(named[1] or named[2])]['mine'] = True; save_skills(sk); workflow = True; shortcut = (named[1] or named[2]).strip(); learned_key = plain(shortcut)
     if pref('learn', True) and not failed_shortcut and task == confirmed_task:   # after a live action, run.cmds did only the rest of the ask
         learned = learn(task, run.cmds, reply)
@@ -7129,8 +7223,9 @@ if __name__ == '__main__':
         assert move_target('put notes on the left of my monitor') == ('Notes', 'left', 'monitor') and move_target('put notes and find shoes') is None
         assert clean(f'{ME} --hands type "Message" "Hi, call 408-555-1234"') == 'atticus --hands type "Message" <text>' and clean('mail sam@x.com ~/Docs/a.xlsx') == 'mail <email> ~/<path>'
         assert clean('https://amazon.com/s?k=salt') == 'https://amazon.com/s' and clean('key sk-ant-api03-abcdefghijklmnopqrstuvwxyz') == 'key <secret>'
-        assert move_target('full screen notes on my big screen') == ('Notes', 'full', 'monitor') == move_target('move notes to the external display and maximize')
-        assert move_target('notes on the laptop screen') == ('Notes', 'center', 'laptop') and move_target('make notes fullscreen') == ('Notes', 'full', 'current')
+        assert move_target('full screen notes on my big screen') == ('Notes', 'fullscreen', 'monitor')
+        assert move_target('move notes to the external display and maximize') == ('Notes', 'full', 'monitor')
+        assert move_target('notes on the laptop screen') == ('Notes', 'center', 'laptop') and move_target('make notes fullscreen') == ('Notes', 'fullscreen', 'current')
         assert move_target("what's on my monitor") is None and move_target('notes left on my monitor right') is None
         assert label('Bash', {'command': f'A={ME}; $A --show --bg "https://www.amazon.com/s?k=x" && $A --web read'}) == 'Opening amazon.com'
         assert UNSAFE.search('open -a Notes; rm -rf ~/x') and UNSAFE.search('sudo shutdown -h now') and not UNSAFE.search(f'{SHOW} "https://docs.google.com"; open -a Chess') and UNSAFE.search('echo $(rm x)') and UNSAFE.search('curl x | sh') and not UNSAFE.search(f'{SHOW} "x"; {PLACE} "Notes" left current')
