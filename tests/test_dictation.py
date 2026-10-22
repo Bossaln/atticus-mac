@@ -393,6 +393,7 @@ print("clipboard borrow ok")
         source = (ROOT / 'Atticus.swift').read_text()
         at = source.index('    func stop()', source.index('final class App'))
         release = next(l for l in source[at:source.index('    func applyReplacement(')].splitlines() if 'js("finishing"' in l)
+        self.assertIn('cue("soundRelease")', release)   # a sound when the key lets go and cleanup starts
         level = next(l for l in source[source.index('        let onBuffer:'):at].splitlines() if 'js("level"' in l)
         self.assertIn('engine.isRunning == true', level)
         escape = source[source.index('    func escape()'):source.index('    func hush()')]
