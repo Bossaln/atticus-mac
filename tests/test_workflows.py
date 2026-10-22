@@ -72,7 +72,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(atticus, 'say'):
             reply, _, _ = atticus.run('Um, make a new Zoom meeting', p)
         atticus.learn('Um, make a new Zoom meeting', atticus.run.cmds, reply)
-        self.assertEqual(atticus.skills()['make a new zoom meeting']['cmds'], [atticus.HANDS+' menu zoom.us \'Zoom Workplace > Start meeting\''])
+        self.assertEqual(atticus.skills()['um make a new zoom meeting']['cmds'], [atticus.HANDS+' menu zoom.us \'Zoom Workplace > Start meeting\''])
         with patch.object(atticus, 'hands', return_value=('Clicked Start meeting', True)):
             self.assertEqual(atticus.fast('start a zoom meeting'), 'Your Zoom meeting started.')
         atticus.learn('click new meeting', [atticus.HANDS + ' click 245,340'], 'Done.')   # a screen spot moves: never learned

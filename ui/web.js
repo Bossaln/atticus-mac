@@ -24,7 +24,7 @@
     const offset = Number(n || 0);
     if (!Number.isSafeInteger(offset) || offset < 0) return 'Use a nonnegative read offset.';
     if (offset === 0) {
-      const seen = [], bodies = [], frames = [];
+      const seen = [], bodies = [];
       const scan = doc => {
         bodies.push(`${doc.location.href}\n${doc.title}\n${(doc.body?.innerText || '').replace(/\n\s*\n+/g, '\n')}`);
         for (const e of doc.querySelectorAll('a[href],button,input:not([type=hidden]),textarea,select,[contenteditable=true],[contenteditable=""],[role=button],[role=link],[role=textbox],[role=tab],[role=menuitem],[role=checkbox],[role=radio],[role=option],[role=combobox]')) {
@@ -36,11 +36,8 @@
           seen.push({ e, kind, label, box });
         }
         for (const frame of doc.querySelectorAll('iframe,frame')) {
-          try { if (frame.contentDocument?.body) { scan(frame.contentDocument); continue; } } catch (_) {}
-          const r = frame.getBoundingClientRect(), view = doc.defaultView;   // another site's frame: the page script cannot open it
-          if (r.width < 20 || r.height < 20 || view.getComputedStyle(frame).visibility === 'hidden') continue;   // tracking pixels hold no fields
-          let host = ''; try { host = new URL(frame.src).host; } catch (_) {}
-          frames.push(`Frame from ${host || 'another site'} (${r.top >= view.innerHeight ? 'below the view' : r.bottom <= 0 ? 'above the view' : 'on screen'}): its fields and text are NOT in this read. Scroll to it, then --hands see/type.`);
+          try { if (frame.contentDocument?.body) scan(frame.contentDocument); else bodies.push('Frame text unavailable; use window OCR or --look.'); }
+          catch (_) { bodies.push('Frame text unavailable; use window OCR or --look.'); }
         }
       };
       scan(document);
@@ -53,7 +50,7 @@
         return `${i + 1} ${kind}: ${label}${group ? ` (question: ${group})` : ''}${current}${e.disabled ? ' disabled=true' : ''}${e.readOnly ? ' readonly=true' : ''}`;
       });
       if (omitted) out.push(`${omitted} more controls omitted`);
-      window.__atticusRead = { url: location.href, text: 'Controls:\n' + [...frames, ...out].join('\n') + '\n\nPage text:\n' + bodies.join('\n\n') };
+      window.__atticusRead = { url: location.href, text: 'Controls:\n' + out.join('\n') + '\n\nPage text:\n' + bodies.join('\n\n') };
     }
     const snapshot = window.__atticusRead;
     if (!snapshot || snapshot.url !== location.href) return 'The page changed. Read again at offset 0.';

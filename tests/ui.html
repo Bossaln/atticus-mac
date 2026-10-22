@@ -215,7 +215,7 @@ try {
   ui.line('▸ Reduced-motion step');assert(!d.querySelector('.step:last-child').getAnimations().length,'Reduce Motion adds steps without sliding');
   w.fixtureReduced(false);
   const intervals=[];let lastFrame;
-  await new Promise(resolve=>{const sample=now=>{if(lastFrame)intervals.push(now-lastFrame);lastFrame=now;if(intervals.length<45){if(intervals.length%6===0)ui.line('▸ Cadence '+intervals.length);w.requestAnimationFrame(sample);}else resolve();};w.requestAnimationFrame(sample);setTimeout(resolve,3000);});   // no frames at all: fail the check below, not a 25 s hang
+  await new Promise(resolve=>{const sample=now=>{if(lastFrame)intervals.push(now-lastFrame);lastFrame=now;if(intervals.length<45){if(intervals.length%6===0)ui.line('▸ Cadence '+intervals.length);w.requestAnimationFrame(sample);}else resolve();};w.requestAnimationFrame(sample);});
   const cadence=[...intervals].sort((a,b)=>a-b)[22],slow=intervals.filter(ms=>ms>25).length;
   assert(Number.isFinite(cadence)&&Math.abs(d.querySelector('.mini-view').getBoundingClientRect().top-fixedTop)<1,'Mini stays pinned during animated arrivals; median frame '+cadence.toFixed(2)+' ms, '+slow+'/45 frames over 25 ms');
   ui.line('@ 550 340');
@@ -279,7 +279,6 @@ try {
   ui.agentCount(2);assert(!d.getElementById('agents-pill').hidden&&d.getElementById('agents-pill').textContent==='2 agents'&&d.getElementById('agents-pill').closest('#head'),'Running agents have a quiet header badge');
   ui.agentCount({count:1,attention:true});assert(d.getElementById('agents-pill').classList.contains('attention')&&d.getElementById('agents-pill').textContent==='1 agent','The badge turns amber when an agent needs you');ui.agentCount(2);
   ui.mode(false);d.querySelector('#status span').textContent='Thinking through a detailed background result';
-  ['status','agents-pill','mode','x'].forEach(id=>d.getElementById(id).getAnimations({subtree:true}).filter(a=>a.effect.getComputedTiming().endTime<Infinity).forEach(a=>a.finish()));   // #mode.on just started its 5px rise-in; the row is checked at rest
   {const items=['status','agents-pill','mode','x'].map(id=>d.getElementById(id).getBoundingClientRect()),centers=items.map(r=>r.y+r.height/2);
    assert(Math.max(...centers)-Math.min(...centers)<1&&items.slice(1).every(r=>r.height===22),'Status, agent badge, Full access and close share one centered header row');
    const statusText=d.querySelector('#status span');assert(statusText.scrollWidth>statusText.clientWidth&&w.getComputedStyle(statusText).textOverflow==='ellipsis','Long thinking status truncates cleanly instead of sitting under a badge');}

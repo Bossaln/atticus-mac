@@ -178,7 +178,7 @@ const document = {createElement: () => ({})};
 const post = message => { sent = message; };
 const ui = {''' + method + r'''};
 ui.learned('Saarth'); button.onclick();
-if (label !== "Learned “Saarth”" || !button.disabled || !sent.learnedUndo) throw Error('learned undo failed');
+if (label !== "Learned 'Saarth'" || !button.disabled || !sent.learnedUndo) throw Error('learned undo failed');
 '''
         result = subprocess.run(['node'], input=script, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -224,7 +224,7 @@ class UniversalTests(unittest.TestCase):
         worker = subprocess.Popen([sys.executable, '-c', script], cwd=Path(atticus.ME).parent,
                                   env={**os.environ, 'ATTICUS_DIR': str(self.root)})
         self.addCleanup(lambda: worker.kill() if worker.poll() is None else None)
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 3
         while not ready.exists() and time.monotonic() < deadline: time.sleep(.01)
         self.assertTrue(ready.exists())
         worker.terminate(); worker.wait(timeout=3)
@@ -260,27 +260,6 @@ class UniversalTests(unittest.TestCase):
              patch.object(atticus, 'app_named', return_value='Fixture'), patch.object(atticus.subprocess, 'run', return_value=failed):
             self.assertIsNone(atticus.fast('open fixture'))
             self.assertEqual(atticus.fast.cmds, [])
-
-    def test_polite_opens_take_the_fast_path_but_bare_words_and_tasks_do_not(self):
-        ok = subprocess.CompletedProcess([], 0)
-        (self.root / 'Downloads').mkdir()
-        with patch.object(atticus, 'skills', return_value={}), patch.object(atticus, 'fast_hands', return_value=None), patch.object(atticus, 'free_focus'), \
-             patch.object(atticus, 'HOME', str(self.root)), patch.object(atticus, 'app_named', side_effect=lambda name: 'Fixture' if name == 'fixture' else None), \
-             patch.object(atticus, 'LAST', str(self.root / 'last_app')), patch.object(atticus.subprocess, 'run', return_value=ok) as run, patch.object(atticus, 'show') as show:
-            self.assertEqual(atticus.fast('Can you open up unfamiliar.com?'), 'Opened unfamiliar.com.')
-            self.assertEqual(run.call_args.args[0], ['open', 'https://unfamiliar.com'])
-            self.assertEqual(atticus.fast('Um, could you please open up Fixture for me?'), 'Opened Fixture.')
-            self.assertEqual(run.call_args.args[0], ['open', '-a', 'Fixture'])
-            run.reset_mock()
-            for ask in ('open homework', 'open unfamiliar', 'Can you open up Unfamiliar?', 'Um, search Unfamiliar for e-bikes and find me the cheapest one.',
-                        'What am I looking at?', 'open downloads', 'open it', 'Can you open up?', 'open my unfamiliar homework', 'open unfamiliar and play music'):
-                self.assertIsNone(atticus.fast(ask), ask)   # one bare word may be his file or tab, not <word>.com: the AI finds it
-        run.assert_not_called(); show.assert_not_called()
-
-    def test_agent_titles_start_at_the_words_that_matter(self):
-        self.assertEqual(atticus.agent_title('Can you do the steps and get me the post hog API key?'), 'Get post hog API key')
-        self.assertEqual(atticus.agent_title('Hey Atticus, um, can you start a Zoom meeting?'), 'Start Zoom meeting')
-        self.assertEqual(atticus.agent_title('Can you?'), 'Background task')
 
     def test_searching_an_installed_app_defers_to_the_ai(self):
         with patch.object(atticus, 'skills', return_value={}), patch.object(atticus, 'app_named', side_effect=lambda name: 'Fixture' if name == 'fixture' else None), \

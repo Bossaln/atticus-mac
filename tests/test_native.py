@@ -136,15 +136,13 @@ class NativeTests(unittest.TestCase):
     def test_memory_receipts_fall_through_when_drawing_parser_rejects_them(self):
         source = (ROOT/'Atticus.swift').read_text()
         branch = source.split('                    if line.hasPrefix("✎ ") {', 1)[1].split('                    if line.hasPrefix("@ ")', 1)[0]
-        out = run_swift(self, '''import Cocoa
+        out = run_swift(self, '''import Foundation
 final class Prefs { static func bool(_ key: String) -> Bool { true } }
 final class Drawing {
-    var focus: CGRect?
     func receive(_ data: Data) -> Bool { String(decoding: data, as: UTF8.self).contains("steps") }
 }
-func lead(from: CGRect, to: CGRect) {}
 final class Harness {
-    let drawing = Drawing(), panel = NSPanel()
+    let drawing = Drawing()
     func shush() { print("guide") }
     func js(_ call: String, _ value: String) { print(value) }
     func feed(_ lines: [String]) {
@@ -326,7 +324,7 @@ final class DrawingStub { var active = false, advances = 0; func next() { advanc
 final class Harness {
     var drawingReply = false; let drawing = DrawingStub()
     func typed(_ text: String, heard: Bool = false) { request = text }
-    var busy = true, selectionPending = false, fastBusy = false, liveRevised = false, pinned = false, guardUntil = Date.distantPast
+    var busy = true, selectionPending = false, fastBusy = false, liveRevised = false, pinned = false
     var offerText: String?, text = "Fixture left, Other right", ahead = "", answer = ""
     var did = ["Fixture: left."], consumed = 2, stops = 0, web = 0
     var proc: Process?, aheadItem: DispatchWorkItem?, commit = "", lastDone = Date()
@@ -378,7 +376,6 @@ struct Harness {
  let element = 1, app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 3, length: 3)
  enum Delivery { case landed, unchanged, unknown }
  static func selectedRange(_ element: Int) -> CFRange? { currentRange }
- static func string(_ value: String?) -> String? { value }
 """ + method + """
 let h = Harness()
 currentText = "abcdraftgh"

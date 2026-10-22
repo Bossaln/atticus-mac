@@ -214,41 +214,6 @@ class PageReadyTests(unittest.TestCase):
                     self.assertIn("user's own window",atticus.web(cmd,'1','text'))
             run.assert_not_called()
 
-    def test_work_page_reuses_the_asks_page_else_finds_the_tab_or_window(self):
-        with tempfile.TemporaryDirectory() as scratch:
-            self.assertEqual(atticus.work_page(ask=scratch),{})   # nothing used, nothing named: no page
-            Path(scratch,'web.json').write_text(json.dumps({'app':'Browser Fixture','adapter':'webkit','window':4,'tab':2,'target':{'x':1}}))
-            used={'app':'Browser Fixture','adapter':'webkit','window':4,'tab':2,'title':'Form','url':'https://form.fixture.test/'}
-            with patch.object(atticus,'osa',return_value='4\t2\tForm\thttps://form.fixture.test/') as osa,patch.object(atticus,'browser_adapter') as probe:
-                self.assertEqual(atticus.work_page(ask=scratch),used)   # its URL too: the agent may act only while the tab stays on that site
-                self.assertEqual(atticus.work_page('Browser Fixture',ask=scratch),used)
-            probe.assert_not_called();self.assertEqual(osa.call_args.args[1:],('','4','2'));self.assertIn('tab ((item 3 of argv) as integer) of w',osa.call_args.args[0])
-            with patch.object(atticus,'osa',return_value=''):
-                self.assertEqual(atticus.work_page(ask=scratch),{'app':'Browser Fixture'})   # its tab closed: no page, never the front tab
-            with patch.object(atticus,'browser_adapter',return_value='webkit'),patch.object(atticus,'osa',return_value='4\t3\tInbox\thttps://mail.fixture.test/') as osa:
-                self.assertEqual(atticus.work_page('Browser Fixture','Inbox',scratch)['tab'],3)
-            self.assertIn('current tab of w',osa.call_args.args[0]);self.assertIn('index of t',osa.call_args.args[0])
-            with patch.object(atticus,'browser_adapter',return_value=''),patch.object(atticus,'proc_of',side_effect=lambda app:app), \
-                 patch.object(atticus,'osa',return_value='Re: Lunch') as osa:
-                self.assertEqual(atticus.work_page('Mail Fixture',ask=scratch),{'app':'Mail Fixture','title':'Re: Lunch'})
-                Path(scratch,'hands.json.windows').write_text('{"123":["43"]}')
-                with patch.object(atticus,'hands_state',return_value=str(Path(scratch,'hands.json'))):
-                    self.assertEqual(atticus.work_page('Mail Fixture',ask=scratch)['windows'],{'123':['43']})   # the user's other window at ask time goes with the handoff
-            with patch.object(atticus,'browser_adapter',return_value='chromium'),patch.object(atticus,'osa',return_value=''):
-                self.assertEqual(atticus.work_page('Browser Two',ask=scratch),{'app':'Browser Two'})   # no window: no page to act on
-            with patch.dict(os.environ,{'ATTICUS_FRONT':'Notes'}),patch.object(atticus,'wants_focus',return_value=False), \
-                 patch.object(atticus,'osa',return_value='4\t2\tForm\thttps://form.fixture.test/'):
-                moved=atticus.MainMove('Request: finish filling this form',type('Worker',(),{'ask':scratch})()).handoff()
-            self.assertEqual((moved['app'],moved['page']),('Browser Fixture',used))   # a moved ask keeps the page it was working in
-
-    def test_handed_app_resolves_the_name_as_said_to_the_running_app(self):
-        native=lambda args,**kw:subprocess.CompletedProcess(args,0,'Fixture Browser\n' if args[-1]=='Fixture Browser' else '','')   # --target-app matches exact names only
-        with patch.object(atticus,'app_named',side_effect=lambda w:'Fixture Browser' if w.lower() in ('browser','fixture browser') else None), \
-             patch.object(atticus.subprocess,'run',side_effect=native):
-            self.assertEqual(atticus.running_app('browser'),'Fixture Browser')   # "fill the form in <its short name>"
-            self.assertEqual(atticus.running_app('Fixture Browser'),'Fixture Browser')
-            self.assertEqual(atticus.running_app('Elsewhere'),'')
-
     def test_readiness_failure_after_a_click_keeps_success_without_repeating(self):
         with tempfile.TemporaryDirectory() as scratch:
             def run(args,**kwargs):

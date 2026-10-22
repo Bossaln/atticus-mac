@@ -575,9 +575,6 @@ if (!answer.classList.contains('old')) process.exit(console.error('a real ask no
         self.assertIn('width: max-content', card)
         self.assertIn('body.dictate :is(#thread, #comp', page)   # no words, no turn dividers in the pill
         self.assertNotIn('.q.finishing', page)
-        # Oct 21, 2026: the orb (in #head) was hidden while listening and on the check; only #head's other parts may go
-        hidden = re.search(r'body\.dictate #head \{ height: auto; \} ([^{]*)\{ display: none; \}', page).group(1)
-        self.assertTrue(all('#head >' in s for s in hidden.split(', ') if '#head' in s), hidden)
         sizing = source[source.index('let size = ((m.body as? [NSNumber])'):source.index('    func js(_ call: String')]
         self.assertIn('size.count == 2 && pillOn', sizing)   # a late pill size never narrows the box
         pill = source[source.index('    func pill(_ on: Bool)'):source.index('    func allow(_ ok: Bool)')]

@@ -48,22 +48,3 @@ if not os.environ.get('ATTICUS_VM') and not os.environ.get('ATTICUS_ALLOW_HOST_U
             raise unittest.SkipTest(f'host guard: {name} runs only in the VM (run.sh)')
         _popen_init(self, args, *a, **k)
     subprocess.Popen.__init__ = _guarded
-
-
-# The app runs one ask per process. A test's in-process atticus.main() left its ask folder, env and relay thread behind;
-# the relay polls time.sleep until the folder goes, so a later test's fake clock or sleep mock counted its naps.
-import shutil
-import atticus
-_main = atticus.main
-
-
-def _one_ask(*a, **k):
-    env = dict(os.environ)
-    try:
-        return _main(*a, **k)
-    finally:
-        state = os.path.dirname(os.environ.get('ATTICUS_HANDS_STATE', ''))
-        if os.environ.get('ATTICUS_HANDS_STATE') != env.get('ATTICUS_HANDS_STATE') and os.path.basename(state).startswith('atticus-hands-'):
-            shutil.rmtree(state, True)
-        os.environ.clear(); os.environ.update(env)
-atticus.main = _one_ask

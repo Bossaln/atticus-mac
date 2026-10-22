@@ -1397,16 +1397,6 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
     static func bounds(_ info: [String:Any]) -> CGRect? {
         (info[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation:$0) }
     }
-    // Visible = on displays and at most 10% under normal windows in front of it: input reaches it without raising it.
-    static func visible(_ r: CGRect, displays: [CGRect], above: [CGRect]) -> Bool {
-        let area = { (a: CGRect) in a.isNull ? 0 : a.width * a.height }
-        return area(r) > 0 && displays.reduce(0) { $0 + area($1.intersection(r)) } >= area(r) * 0.9 && above.reduce(0) { $0 + area($1.intersection(r)) } <= area(r) * 0.1
-    }
-    // Where a window (top-left points) lands in its display's 1280-wide --look picture, in CoreGraphics' bottom-up drawing space.
-    static func paintRect(_ w: CGRect, display d: CGRect, pictureHeight: Int) -> CGRect {
-        let s = 1280 / d.width
-        return CGRect(x: (w.minX - d.minX) * s, y: CGFloat(pictureHeight) - (w.maxY - d.minY) * s, width: w.width * s, height: w.height * s)
-    }
     static func windowTarget(_ app: NSRunningApplication, title: String = "", frame: [Double] = [], screen: CGRect? = nil, windows: [[String:Any]]) -> [String:Any]? {
         if !frame.isEmpty && (frame.count != 4 || !frame.allSatisfy(\.isFinite)) { return nil }
         let root = AXUIElementCreateApplication(app.processIdentifier)
@@ -1663,7 +1653,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var agentMoveFile = "" { didSet { moveKey() } }   // set while atticus.py watches it: the running ask can move to an agent
     var moveRef: EventHotKeyRef?
     var retryOffer = false, offerText: String?   // answering a failure card preserves its original request
-    var hovering = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
+    var hovering = false, xHot = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
     var screenFrames = NSScreen.screens.map(\.frame)   // last display layout; a change in it makes an on-screen drawing stale
     var selection: TextSelection?, replacement: String?, mode = "replace", warmSel = ""   // mode: replace · delete · draft
     var selectionID = 0, selectionPending = false, replacing = false
@@ -1776,7 +1766,7 @@ final class App: NSObject, WKScriptMessageHandler {
                                              completionHandler: { [weak self] in guard let self else { return }; if !dragging { frame(panel.frame) }; done?() })   // keeps it on a display and updates its height limit
     }
     func followPointerScreen() {   // the box, typing box, answer and dictation pill alike
-        guard panel.isVisible, !dragging, !hovering, let f = pointerFollow(panel.frame) else { return }
+        guard panel.isVisible, !dragging, !hovering, !agentsUI.cardBesideShelf, let f = pointerFollow(panel.frame) else { return }   // a done card beside the shelf moves with it
         boxHome = nil; frame(f)
     }
     func startFollowingPointerScreen() {
@@ -1878,11 +1868,12 @@ final class App: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             if !hovering { js("hover", true) }
             hovering = true
-            pointer("[\(p.x),\(web.frame.height - p.y)],\(overX(p) && edges(p) == nil)")   // the × is native's corner, wider than its dot
+            if (overX(p) && edges(p) == nil) != xHot { xHot.toggle(); js("xhot", xHot); (xHot ? NSCursor.pointingHand : NSCursor.arrow).set() }
         }
         tracker.onExit = { [weak self] in
             guard let self else { return }
-            hovering = false; js("hover", false); pointer("[]")
+            hovering = false; js("hover", false)
+            if xHot { xHot = false; js("xhot", false); NSCursor.arrow.set() }
             if !busy { hide(after: 3) }   // mouse gone for a few seconds = close
         }
         bg.addSubview(tracker)
@@ -2074,18 +2065,6 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func js(_ call: String, _ arg: Any? = nil) { callJS(web, "ui." + call, arg.map { [$0] } ?? []) }
-    var pointerNext: String?, pointerBusy = false, pointerHand = false
-    func pointer(_ args: String) {   // Atticus never activates, so WebKit runs no :hover or cursor in the box: the page marks .hot and says if the cursor is a hand
-        pointerNext = args
-        guard !pointerBusy else { return }   // one evaluation in flight; later moves coalesce into the newest
-        pointerNext = nil; pointerBusy = true
-        web.evaluateJavaScript("ui.pointer(\(args))") { [weak self] hand, _ in
-            guard let self else { return }
-            pointerBusy = false
-            if (hand as? Bool ?? false) != pointerHand { pointerHand.toggle(); (pointerHand ? NSCursor.pointingHand : NSCursor.arrow).set() }
-            if let next = pointerNext { pointer(next) }
-        }
-    }
 
     var serverModels: [String] = []
     func modelChoices() -> [String: Any] {
@@ -2164,7 +2143,7 @@ final class App: NSObject, WKScriptMessageHandler {
         mini.reset()
         followTimer?.invalidate(); followTimer = nil
         panel.orderOut(nil); agentCard = ""; pinned = false; stuck = false; boxHome = nil; composing = false; js("compose", false); js("visible", false)
-        if hovering { hovering = false; js("hover", false); pointer("[]") }   // a hidden panel gets no mouseExited
+        if hovering || xHot { hovering = false; xHot = false; js("hover", false); js("xhot", false); NSCursor.arrow.set() }   // a hidden panel gets no mouseExited
         pill(false)
         if let r = escRef { UnregisterEventHotKey(r); escRef = nil }
     }
@@ -2864,7 +2843,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         aheadItem?.cancel()
         if liveRevised {
-            hush(); js("msg", "Your words changed after Atticus acted. Check them, then press Return.")
+            hush(); js("msg", "Words changed after an instant command. Review before sending another request.")
             pinned = true; panel.makeKey(); panel.makeFirstResponder(web); js("draft", text); return
         }
         let rest = rest()
@@ -3034,8 +3013,7 @@ final class PointerView: NSView {
     required init?(coder: NSCoder) { nil }
     override func mouseMoved(with e: NSEvent) { send(e) }
     override func mouseEntered(with e: NSEvent) { send(e) }
-    override func mouseExited(with e: NSEvent) { here() }
-    func here() {
+    override func mouseExited(with e: NSEvent) {
         guard let window else { onPointer?([]); return }
         let p = convert(window.convertPoint(fromScreen:NSEvent.mouseLocation),from:nil)
         onPointer?(bounds.contains(p) ? [p.x,bounds.height-p.y] : [])
@@ -3049,23 +3027,21 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     var startingLabel: NSTextField?, startingStep: NSTextField?
     let mini = MiniScreen()
     var rows: [String:[String:Any]] = [:], offers: [String:[String:Any]] = [:], named: [[String:Any]] = [], ready = Set<String>()
-    var moveFrom: [String:[Double]] = [:], flying: [(String,[Double]?)] = []   // hand-offs (by handoffId) still waiting for their offer; accepted ones waiting for the rest of their ask
-    var ping: String?, expandOnReady = "", nearSince: Date?   // ping: a done card the user asked for in the box
+    var moveFrom: [Double]?
+    var pending: [String] = [], ping: String?, lastKey = Date.distantPast, nearSince: Date?
     var lastBox: NSDictionary?
     var hovered = "", miniSurface = "", selected = "", drag: (mouse:NSPoint, frame:NSRect)?
-    var dismissed = Set(Prefs.d["agentDismissed"] as? [String] ?? []) {   // chips the user ×'d off the screen; their agents keep working in the badge and Agent view
-        didSet { if dismissed != oldValue { Prefs.set("agentDismissed", dismissed.filter { rows[$0].map { Self.live.contains($0["status"] as? String ?? "") || Self.lingers($0) } ?? false }.sorted()) } }   // kept over a restart while it could still show
-    }
-    var monitor: Any?, keyMonitor: Any?, timer: Timer?, moves: [Any] = [], localKeys: Any?
+    var dismissed = Set<String>()   // chips the user ×'d off the screen; their agents keep working in the badge and Agent view
+    var monitor: Any?, keyMonitor: Any?, localKeys: Any?, timer: Timer?
     override init() {
         super.init()
         DispatchQueue.main.async { [weak self] in self?.start() }   // restore accepted work even if the user never opens Agents
         mini.forcePreview = true
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching:.keyDown) { [weak self] e in
+            self?.lastKey = Date()
             if ![kVK_Return,kVK_ANSI_KeypadEnter].contains(Int(e.keyCode)), !app.defaultKeys.isEmpty { app.defaultKey(false) }   // typing in another app: its Return is the user's again
-            if Int(e.keyCode) == kVK_Escape { self?.js("shelf","blur") }   // the shelf never becomes key, so its page never sees Esc
         }
-        localKeys = NSEvent.addLocalMonitorForEvents(matching:.keyDown) { [weak self] e in if Int(e.keyCode) == kVK_Escape { self?.js("shelf","blur") }; return e }
+        localKeys = NSEvent.addLocalMonitorForEvents(matching:.keyDown) { [weak self] e in self?.lastKey = Date(); return e }
         timer = Timer.scheduledTimer(withTimeInterval:0.1, repeats:true) { [weak self] _ in self?.tick() }
         NotificationCenter.default.addObserver(forName:NSApplication.willTerminateNotification, object:nil, queue:.main) { [weak self] _ in
             self?.process?.terminate(); self?.mini.reset()
@@ -3075,11 +3051,11 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             if let shelf, let screen = shelf.screen ?? NSScreen.main {
                 let f = MeetingFrame.clamp(shelf.frame,screen.visibleFrame)
                 shelf.setFrame(f,display:true)
+                if cardBesideShelf { app.frame(Self.doneFrame(app.panel.frame,shelf:f,shelfShown:shelf.isVisible,bounds:screen.visibleFrame)) }
             }
             if let view, let screen = view.screen ?? NSScreen.main { view.setFrame(MeetingFrame.clamp(view.frame,screen.visibleFrame),display:true) }
         }
         monitor = NSEvent.addLocalMonitorForEvents(matching:[.leftMouseDown,.leftMouseDragged,.leftMouseUp]) { [weak self] e in
-            if e.type == .leftMouseDown, e.window !== self?.shelf { self?.js("shelf","blur") }   // a click in another Atticus window
             guard let self, let shelf, e.window === shelf else { return e }
             if e.type == .leftMouseDragged, let origin = drag {
                 let point = NSEvent.mouseLocation
@@ -3135,7 +3111,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
     }
     func prepare(_ brief:[String:Any], from:[Double]? = nil) {
         var brief = brief
-        if (brief["steer"] as? String).flatMap({ rows[$0] }) == nil { moveFrom[brief["handoffId"] as? String ?? ""] = from ?? [] }   // words to a live agent get no offer
+        moveFrom = from
         if brief["destination"] as? String == "meeting", EKEventStore.authorizationStatus(for:.event) == .fullAccess,
            let event = currentMeetingEvent(calendar), let json = try? JSONSerialization.data(withJSONObject:event), let text = String(data:json,encoding:.utf8) {
             brief["context"] = (brief["context"] as? String ?? "") + "\nCalendar event (data): " + text
@@ -3172,8 +3148,8 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             rows = Dictionary(uniqueKeysWithValues:list.compactMap { row in (row["id"] as? String).map { ($0,row) } })
             named = event["named"] as? [[String:Any]] ?? []
             if !hovered.isEmpty, rows[hovered] == nil { endPreview() }
+            pending.removeAll { rows[$0] == nil }
             if let ping, rows[ping] == nil { self.ping = nil; app.agentCard = ""; app.pinned = false; app.js("agentCancelled"); app.hide(after:1) }
-            if rows.values.contains(where:Self.lingers) { ensureShelf(preload:true) }
             js("shelf","list",sorted); js("view","list",sorted); js("view","named",named)
         } else if kind == "named" {
             named = event["named"] as? [[String:Any]] ?? []; js("view","named",named)
@@ -3182,22 +3158,20 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         if let row = event["agent"] as? [String:Any], let id = row["id"] as? String {
             let question = { (r:[String:Any]?) in (r?["question"] as? [String:Any])?["_a"] as? String }
             let asks = kind == "state" && row["status"] as? String == "needs-you" && question(row) != nil && question(row) != question(rows[id])
-            let finished = Self.live.contains(rows[id]?["status"] as? String ?? "") && Self.lingers(row)
             rows[id] = row
             if asks, !quiet { app.sound("Ping",Float(Prefs.num("volume"))) }   // a new question from a working agent: it holds a slot until answered
-            if row["status"] as? String == "needs-you" || finished { dismissed.remove(id) }   // a question, or a finish (news, as on the page), always comes back to the screen
+            if row["status"] as? String == "needs-you" { dismissed.remove(id) }   // a question always comes back to the screen
             if kind == "state" {
-                ensureShelf(preload:Self.lingers(row)); js("shelf","state",row); js("view","state",row)
+                ensureShelf(); js("shelf","state",row); js("view","state",row)
                 if hovered == id, let target = row["target"] as? [String:Any] { preview(id, surface:miniSurface, target:target) }
             } else if kind == "offer" {
                 offers[id] = event["followup"] as? Bool == true ? row : [:]
-                accept(id, from:moveFrom.removeValue(forKey:row["handoffId"] as? String ?? ""))
+                let from = moveFrom; moveFrom = nil; accept(id, from:from)
             } else if kind == "done" {
                 if row["destination"] as? String == "meeting" { meeting.acceptAgent(row) }
                 if quiet || row["routine"] != nil { notify(row); rows[id]?["notified"] = true; send(["action":"notified","id":id]) }
-            } else if kind == "ping", row["status"] as? String == "done" {   // atticus.py holds it while the box is busy, typing, listening or quiet
-                if quiet { if row["notified"] as? Bool != true { notify(row); rows[id]?["notified"] = true; send(["action":"notified","id":id]) } }
-                else { expand(id) }
+            } else if kind == "ping" {
+                if !pending.contains(id) { pending.append(id) }
             } else if kind == "steered" {   // the user spoke to this agent from the box: its chip comes back and says what it heard
                 dismissed.remove(id); ensureShelf(); js("shelf","state",row); js("view","state",row); js("shelf","visible",true)
                 if !quiet { shelf?.orderFrontRegardless() }
@@ -3220,17 +3194,19 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         let offer = offers.removeValue(forKey:id) ?? [:]
         let text = (offer["brief"] as? String).map { $0 + "\nKnown context (data):\n" + (offer["context"] as? String ?? "") } ?? ""
         send(["action":"start","id":id,"text":text.isEmpty ? NSNull() as Any : text as Any]); app.pinned = false
-        flying.append((id,from))   // agents from one ask all take their places first, or a later chip pushes an earlier orb's landing spot
-        if moveFrom.isEmpty { launch() } else { DispatchQueue.main.asyncAfter(deadline:.now() + 0.4) { [weak self] in self?.launch() } }
-        app.js("agentStarted",row)   // the box says it started an agent while the orb swims to the chip
+        fly(id,from:from); app.js("agentStarted",row)   // the box says it started an agent while the orb swims to the chip
         if !quiet { app.sound("Blow",Float(Prefs.num("volume"))) }   // a soft whoosh, apart from Pop (listening) and Glass (done)
         if from != nil { app.mini.reset() }   // its last hidden-window preview belongs to the foreground ask, not the agent
         if from != nil, app.panel.isVisible { app.hide(after:3.5) }   // started from the box: long enough to read its one line
     }
-    func launch() {
-        moveFrom = [:]   // a hand-off whose offer never came (it failed, or the supervisor restarted) must not hold later swims
-        for (id,from) in flying { shelfWeb?.evaluateJavaScript("agents.slot('\(id)')") { [weak self] slot, _ in self?.fly(id,from:from,to:slot as? [Double]) } }   // after every state above: the page has placed each chip or pill orb
-        flying = []
+    // The done card opens where the agent's chip was: outside chips still working, or in the finished chip's place.
+    static func doneFrame(_ box:NSRect, shelf:NSRect, shelfShown:Bool, bounds:NSRect) -> NSRect {
+        var f = box
+        f.origin.x = shelf.midX > bounds.midX ? shelf.maxX - f.width : shelf.minX
+        let top = shelf.midY > bounds.midY
+        f.origin.y = shelfShown ? (top ? shelf.minY - 8 - f.height : shelf.maxY + 8)
+                                : (top ? shelf.maxY - f.height : shelf.minY)
+        return f
     }
     func placeShelf(_ screen:NSScreen?) {
         guard let shelf, let screen = screen ?? NSScreen.main, !(shelf.isVisible && shelf.screen == screen) else { return }   // already there: keep the side it followed with
@@ -3243,30 +3219,32 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         if let saved, saved.count == 2, saved.allSatisfy(\.isFinite) { f.origin = NSPoint(x:saved[0],y:saved[1]-f.height) }
         return MeetingFrame.clamp(f,bounds)
     }
-    // The shelf follows the pointer's display like the box, keeping its side and offsets.
-    // An open chip, a drag or the orb's swim holds it.
-    var following = false
+    // The shelf follows the pointer's display like the box, keeping its side and offsets. The pointer is then off the shelf,
+    // so a hovered chip shows as `expanded` until its grace period ends; an open chip, a drag or the orb's swim holds it.
+    var following = false, byShelf = false   // byShelf: the done card opened beside the shelf (doneFrame)
+    var cardBesideShelf: Bool { ping != nil && byShelf && !app.stuck && app.panel.isVisible && shelf?.isVisible == true }
     func follow() {
-        guard let shelf, drag == nil, flight == nil, !following, pointerFollow(shelf.frame) != nil else { return }
+        guard let shelf, drag == nil, flight == nil, !following, pointerFollow(shelf.frame) != nil, !(cardBesideShelf && (app.dragging || app.hovering)) else { return }
         following = true
         shelfWeb?.evaluateJavaScript("agents.expanded()") { [weak self] open, _ in
             guard let self, let shelf = self.shelf else { return }
             self.following = false
             guard (open as? String ?? "").isEmpty || !shelf.isVisible, self.drag == nil, let f = pointerFollow(shelf.frame) else { return }
+            let card = self.cardBesideShelf
             shelf.setFrame(f,display:true)
+            if card { app.frame(Self.doneFrame(app.panel.frame,shelf:f,shelfShown:shelf.isVisible,bounds:mouseScreen.visibleFrame)) }
         }
     }
     // The agent's orb lifts off the hand-off card and swims to the shelf's top slot: one transient panel, Core Animation only,
     // so nothing runs per frame in the app or WebKit. Reduce Motion (or no card) skips the swim; the chip cross-fades in.
     var flight: NSPanel?, flightPace = 1.0   // shortcut: pace > 1 is slow motion for VM frame captures only; nothing else sets it
-    func fly(_ id:String, from rect:[Double]?, to slot:[Double]? = nil) {
+    func fly(_ id:String, from rect:[Double]?) {
         let land = { [weak self] in self?.js("shelf","land",id) }
         guard !quiet, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let shelf, let rect, rect.count == 4, rect.allSatisfy(\.isFinite), rect[2] > 0, rect[3] > 0 else { land(); return }
         var r = NSRect(x:rect[0],y:rect[1],width:rect[2],height:rect[3])
         if !app.web.isFlipped { r.origin.y = app.web.bounds.height - r.maxY }
         let start = app.panel.convertToScreen(app.web.convert(r,to:nil)), from = NSPoint(x:start.midX,y:start.midY)
-        let at = slot?.count == 2 && slot!.allSatisfy(\.isFinite) ? slot! : [24,26]   // page point of its orb; else the top chip's
-        let to = NSPoint(x:shelf.frame.minX + at[0],y:shelf.frame.maxY - at[1])
+        let to = NSPoint(x:shelf.frame.minX + 24,y:shelf.frame.maxY - 26)   // the top chip's orb
         let lift = max(50,hypot(to.x - from.x,to.y - from.y) * 0.2)
         let frame = NSRect(x:min(from.x,to.x) - 60,y:min(from.y,to.y) - lift - 60,width:abs(to.x - from.x) + 120,height:abs(to.y - from.y) + lift + 120)
         let panel = ShelfPanel(contentRect:frame,styleMask:[.nonactivatingPanel,.borderless],backing:.buffered,defer:false)
@@ -3295,7 +3273,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         }
         for i in 1...5 { blob(CGFloat(20 - i * 2),Float(0.42 - Double(i) * 0.07),Double(i) * 0.035,squash:false) }   // the trailing glow
         blob(26,1,0,squash:true)
-        flight = panel; panel.orderFrontRegardless()   // agents from one ask swim side by side; each panel orders itself out
+        flight?.orderOut(nil); flight = panel; panel.orderFrontRegardless()
         DispatchQueue.main.asyncAfter(deadline:.now() + (duration - 0.08) * flightPace) { land() }
         DispatchQueue.main.asyncAfter(deadline:.now() + (duration + 0.25) * flightPace) { [weak self] in panel.orderOut(nil); if self?.flight === panel { self?.flight = nil } }
     }
@@ -3318,16 +3296,11 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         loadPage(web, "agents.html")
         return web
     }
-    var pointerBusy = false, pointerNext: [Double]?, pointerHand = false
+    var pointerBusy = false, pointerNext: [Double]?
     func flushPointer() {   // one evaluation in flight; later moves coalesce into the newest position
         guard !pointerBusy, let next = pointerNext, ready.contains("shelf") else { return }
         pointerNext = nil; pointerBusy = true
-        shelfWeb?.evaluateJavaScript("agents.pointer(\(next))") { [weak self] hand, _ in
-            guard let self else { return }
-            pointerBusy = false
-            if (hand as? Bool ?? false) != pointerHand { pointerHand.toggle(); (pointerHand ? NSCursor.pointingHand : NSCursor.arrow).set() }   // Atticus never activates: WebKit sets no cursor here, as for the box's ×
-            flushPointer()
-        }
+        shelfWeb?.evaluateJavaScript("agents.pointer(\(next))") { [weak self] _, _ in self?.pointerBusy = false; self?.flushPointer() }
     }
     func ensureShelf(preload:Bool = false) {
         guard shelf == nil, preload || hasLive else { return }
@@ -3393,12 +3366,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         hovered = ""; mini.reset()
         if app.busy, let target = app.mini.target { app.mini.receive(target) }
     }
-    var lingering = false   // the page shows finished agents (their chips or the "✓ N done" pill)
-    // Finished or last seen in the past 10 minutes, e.g. before a restart: the shelf page must exist to show it (ui/agents.html LINGER).
-    static func lingers(_ r:[String:Any]) -> Bool {
-        ["done","failed"].contains(r["status"] as? String ?? "") && Date().timeIntervalSince1970 - max(r["ended"] as? Double ?? 0, r["seenAt"] as? Double ?? 0) < 600
-    }
-    var hasChips: Bool { lingering || rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") && !dismissed.contains($0["id"] as? String ?? "") } }
+    var hasChips: Bool { rows.values.contains { ["running","needs-you","waiting-screen","queued"].contains($0["status"] as? String ?? "") && !dismissed.contains($0["id"] as? String ?? "") } }
     func closeView() {
         endPreview(); js("view","visible",false)
         guard hasChips, !quiet else { return }
@@ -3409,58 +3377,50 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice; try? p.run()
     }
     func dismissPing(_ id:String) {
-        send(["action":"seen","id":id]); ping = nil; app.pinned = false; app.hide(after:1)   // answered: it folds into the shelf's "done" pill
+        send(["action":"seen","id":id]); ping = nil; app.pinned = false; app.hide(after:1)
+        js("shelf","leave",id); DispatchQueue.main.asyncAfter(deadline:.now() + 0.6) { [weak self] in self?.dismissed.insert(id) }   // answered: its chip shrinks away now
     }
-    // A main ask that showed it (--agent-show): a done one's card in the box; one still working, or failed, opens in the Agent view.
+    // A main ask showed this task (--agent-show): a done one's card under the reply, the same card its finish pings; one still working opens in the Agent view.
     func show(_ id:String) {
         guard let row = rows[id] else { return }
         guard row["status"] as? String == "done" else { openView(id); return }
-        if let old = ping, old != id { send(["action":"seen","id":old]) }   // the card this one replaces was on screen; unseen, it would ping again after a restart
-        ping = id
-        app.show()
-        app.pinned = true; app.agentCard = id; app.js("agentDone",row)   // seen once the user acts on it (dismissPing, open, or an ask/close over it in tick)
-    }
-    // A finish shows on its own chip, opened with its result; the box stays as the user left it. Seen once the user opens or hides it.
-    func expand(_ id:String) {
-        dismissed.remove(id); ensureShelf(preload:true)
-        if ready.contains("shelf") { js("shelf","expand",id) } else { expandOnReady = id }
-        app.sound("Hero", min(1, Float(Prefs.num("volume")) * 2))   // its own, louder chime: the user is usually busy elsewhere when an agent finishes
-    }
-    // Near the shelf but not on it for 0.3 s: it fades and lets clicks through. Every mouse move checks it, so it is back as the pointer arrives.
-    func fade() {
-        guard let shelf, shelf.isVisible else { return }
-        let point = NSEvent.mouseLocation, inside = shelf.frame.contains(point), near = shelf.frame.insetBy(dx:-60,dy:-30).contains(point)
-        if inside || !near { nearSince = nil } else if nearSince == nil { nearSince = Date() }
-        let fade = nearSince.map { Date().timeIntervalSince($0) >= 0.3 } ?? false
-        guard shelf.ignoresMouseEvents != fade else { return }
-        shelf.ignoresMouseEvents = fade; NSAnimationContext.runAnimationGroup { $0.duration = fade ? 0.2 : 0.08; shelf.animator().alphaValue = fade ? 0.25 : 1 }   // eased, never a snap; back fast: the pointer slows near a chip it aims at, so arrival often finds it faded
-        if inside { (shelf.contentView as? PointerView)?.here() }   // AppKit sends no mouseEntered to a window that stops ignoring the mouse under it
+        pending.removeAll { $0 == id }; ping = id; byShelf = false; app.show()
+        app.pinned = true; app.agentCard = id; app.js("agentDone",row); send(["action":"seen","id":id])
     }
     func tick() {
         guard !rows.isEmpty else { shelf?.orderOut(nil); return }
-        let box: [String:Any] = ["action":"box","busy":app.busy,"typing":app.composing,"listening":app.engine.isRunning,"quiet":quiet]
+        let box: [String:Any] = ["action":"box","busy":app.busy,"typing":app.composing,"listening":app.engine.isRunning,"quiet":quiet,"ping":ping != nil,
+                                  "visible":app.panel.isVisible,"lastKey":lastKey.timeIntervalSince1970]
         if lastBox?.isEqual(to:box) != true { lastBox = NSDictionary(dictionary:box); send(box) }
         if let shelf {
             let hidden = quiet   // never hide in full screen: he works in full-screen apps on both displays
-            if hidden || !hasChips {
-                if shelf.isVisible { shelf.orderOut(nil); js("shelf","visible",false); pointerNext = []; flushPointer() }   // once, not every tick; a hidden panel gets no mouseExited, so its hover, .near and hand cursor end here
-                moves.forEach(NSEvent.removeMonitor); moves = []
-                if miniSurface == "shelf", mini.target != nil { endPreview() }
-            }
+            if hidden || !hasChips { shelf.orderOut(nil); js("shelf","visible",false); if miniSurface == "shelf", mini.target != nil { endPreview() } }
             else {
                 if !shelf.isVisible { shelf.orderFrontRegardless(); js("shelf","visible",true) }
-                if moves.isEmpty {   // only while the shelf is up: a global move monitor wakes the app on every mouse move anywhere
-                    moves = [NSEvent.addGlobalMonitorForEvents(matching:.mouseMoved) { [weak self] _ in self?.fade() },   // a faded shelf gets no mouse events: other apps' moves bring it back
-                             NSEvent.addLocalMonitorForEvents(matching:.mouseMoved) { [weak self] e in self?.fade(); return e },
-                             NSEvent.addGlobalMonitorForEvents(matching:.leftMouseDown) { [weak self] _ in self?.js("shelf","blur") }].compactMap { $0 }   // a click in another app
-                }
-                fade()
+                let point = NSEvent.mouseLocation, inside = shelf.frame.contains(point), near = shelf.frame.insetBy(dx:-60,dy:-30).contains(point)
+                if inside || !near { nearSince = nil } else if nearSince == nil { nearSince = Date() }
+                let fade = nearSince.map { Date().timeIntervalSince($0) >= 0.3 } ?? false
+                if shelf.ignoresMouseEvents != fade { shelf.ignoresMouseEvents = fade; NSAnimationContext.runAnimationGroup { $0.duration = 0.2; shelf.animator().alphaValue = fade ? 0.25 : 1 } }   // eased, never a snap
             }
             follow()
         }
-        if let id = ping, !app.panel.isVisible || app.busy || app.engine.isRunning {   // the user closed the box or asked over the card
-            send(["action":"seen","id":id]); ping = nil; app.agentCard = ""; app.pinned = false; app.defaultKey(false); app.js("agentCancelled")
+        if ping != nil, !app.panel.isVisible || app.busy || app.engine.isRunning {
+            ping = nil; app.agentCard = ""; app.pinned = false; app.defaultKey(false); app.js("agentCancelled")
         }
+        guard ping == nil, !app.busy, !app.composing, !app.engine.isRunning, !pending.isEmpty else { return }
+        if quiet {
+            for id in pending { if let row = rows[id], row["notified"] as? Bool != true { notify(row); rows[id]?["notified"] = true; send(["action":"notified","id":id]) } }
+            pending = []
+            return
+        }
+        guard Date().timeIntervalSince(lastKey) >= 1.5 else { return }   // the card holds Return: never pop it up mid-typing, box shown or not
+        let id = pending.removeFirst(); guard let row = rows[id] else { return }; ping = id
+        let fresh = !app.panel.isVisible
+        app.show(); byShelf = fresh && shelf != nil
+        if fresh, let shelf, let screen = shelf.screen ?? NSScreen.main {
+            app.frame(Self.doneFrame(app.panel.frame,shelf:shelf.frame,shelfShown:shelf.isVisible,bounds:screen.visibleFrame))
+        }
+        app.pinned = true; app.agentCard = id; app.js("agentDone",row); app.sound("Hero", min(1, Float(Prefs.num("volume")) * 2)); send(["action":"seen","id":id])   // its own, louder chime: the user is usually busy elsewhere when an agent finishes
     }
     func open(_ id:String, target:String? = nil, reveal:Bool = false) {
         guard let row = rows[id] else { return }
@@ -3487,8 +3447,6 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         case "ready":
             ready.insert(surface); js(surface,"mode",surface); js(surface,"prefs",["dismissed":Array(dismissed),"stack":Prefs.str("agentStack")]); js(surface,"list",sorted); if surface == "view" { js(surface,"named",named); if !selected.isEmpty { js(surface,"select",selected) } }
             if surface == "shelf" {
-                js(surface,"visible",shelf?.isVisible == true)   // a preloaded shelf starts hidden; tick only reports changes
-                if !expandOnReady.isEmpty { js(surface,"expand",expandOnReady); expandOnReady = "" }
                 shelfWeb?.evaluateJavaScript("document.querySelector('.chip') !== null") { [weak self] _, _ in
                     self?.startingLabel?.removeFromSuperview(); self?.startingStep?.removeFromSuperview(); self?.startingLabel = nil; self?.startingStep = nil
                     self?.shelf?.contentView?.layer?.backgroundColor = nil
@@ -3500,12 +3458,10 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             let next = MeetingFrame.clamp(f,screen.visibleFrame); if next != shelf.frame { shelf.setFrame(next,display:false) }   // once per state change; the page already laid out
         case "drag": if let shelf { drag = (NSEvent.mouseLocation,shelf.frame) }
         case "dismiss":
-            if rows[id]?["status"] as? String == "done" { send(["action":"seen","id":id]); rows[id]?["seenAt"] = Date().timeIntervalSince1970 }   // as atticus.py saves it, so the saved list keeps it
-            dismissed.insert(id)
+            dismissed.insert(id); if rows[id]?["status"] as? String == "done" { send(["action":"seen","id":id]) }
             if hovered == id, miniSurface == "shelf" { endPreview() }
         case "stack": Prefs.set("agentStack",body["value"] as? String ?? "")
-        case "view", "show": openView(id); if rows[id]?["status"] as? String == "done" { send(["action":"seen","id":id]) }   // a finished chip clicked open
-        case "lingering": lingering = body["value"] as? Bool ?? false; tick()
+        case "view": openView(id)
         case "close": if surface == "view" { view?.orderOut(nil); closeView() }
         case "hover":
             if id.isEmpty { endPreview() }
@@ -3839,32 +3795,22 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     }
 }
 
-// `Atticus --look <screen #> <out.jpg> [window id]` (atticus.py --look): the screen without Atticus's own box on it, 1280 px wide.
-// With a window id, that window's own capture is painted where it sits, so it shows (and its picture spots click) even when covered or not key.
-if [4, 5].contains(CommandLine.arguments.count), CommandLine.arguments[1] == "--look" {
-    let a = CommandLine.arguments, done = DispatchSemaphore(value: 0), windowID = a.count == 5 ? UInt32(a[4]) : nil
+// `Atticus --look <screen #> <out.jpg>` (atticus.py --look): the screen without Atticus's own box on it, 1280 px wide.
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--look" {
+    let a = CommandLine.arguments, done = DispatchSemaphore(value: 0)
     let scr = NSScreen.screens[max(0, min((Int(a[2]) ?? 1) - 1, NSScreen.screens.count - 1))]
     let id = scr.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()
     _ = NSApplication.shared   // ScreenCaptureKit needs a window-server connection; without it the fallback screencapture shows the box
     Task {
         defer { done.signal() }
-        guard let all = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: windowID == nil),
+        guard let all = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
               let d = all.displays.first(where: { $0.displayID == id }) ?? all.displays.first else { return }
         // Every Atticus window (box, step card, drawings): the model sees the real screen and so draws on it, not on the box
         let mine = all.windows.filter { $0.owningApplication?.bundleIdentifier == Bundle.main.bundleIdentifier }
         let cfg = SCStreamConfiguration()
         cfg.width = 1280; cfg.height = Int(1280 * Double(d.height) / Double(d.width))
-        guard var img = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: d, excludingWindows: mine), configuration: cfg) else { return }
-        if let w = all.windows.first(where: { $0.windowID == windowID }) {
-            let spot = MiniScreen.paintRect(w.frame, display: d.frame, pictureHeight: img.height)
-            let wcfg = SCStreamConfiguration(); wcfg.width = max(1, Int(spot.width)); wcfg.height = max(1, Int(spot.height))
-            if let shot = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: w), configuration: wcfg),
-               let c = CGContext(data: nil, width: img.width, height: img.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
-                c.draw(img, in: CGRect(x: 0, y: 0, width: img.width, height: img.height)); c.draw(shot, in: spot)
-                if let painted = c.makeImage() { img = painted; print("window") }
-            }
-        }
-        guard let jpg = NSBitmapImageRep(cgImage: img).representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else { return }
+        guard let img = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: d, excludingWindows: mine), configuration: cfg),
+              let jpg = NSBitmapImageRep(cgImage: img).representation(using: .jpeg, properties: [.compressionFactor: 0.7]) else { return }
         try? jpg.write(to: URL(fileURLWithPath: a[3]))
     }
     done.wait()
@@ -4008,7 +3954,7 @@ enum Updater {
                 cd "$0" 2>/dev/null || exit 3
                 [ -z "$(git status --porcelain)" ] || exit 5
                 git fetch -q 2>/dev/null || exit 4
-                git merge-base --is-ancestor '@{u}' HEAD 2>/dev/null && exit 0   # level or ahead (unpushed local commits): nothing to pull, no rebuild loop
+                [ "$(git rev-parse HEAD)" = "$(git rev-parse '@{u}')" ] && exit 0
                 git pull -q --ff-only 2>/dev/null || exit 5
                 ./build.sh >/dev/null 2>&1 || exit 6
                 exit 10
@@ -4067,7 +4013,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         m.addItem(.separator())
         add(m, "Ask Atticus", #selector(ask), "")
         add(m, agentsUI.count > 0 ? "Agents · \(agentsUI.count) running…" : "Agents…", #selector(openAgents), "")
-        if agentsUI.hasLive || agentsUI.lingering { add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "") }
+        if agentsUI.hasLive { add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "") }
         if Prefs.bool("meeting") { add(m, meeting.running ? "Stop Meeting Copilot" : "Meeting Copilot…", #selector(toggleMeeting), "") }
         add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "")
         m.addItem(.separator())
@@ -5488,10 +5434,6 @@ enum Hands {
     static func checkStopped() throws { if stopped != 0 { throw Failure("Hands cancelled.") } }
     static let env = ProcessInfo.processInfo.environment
     static var pinnedWindow = env["ATTICUS_HANDS_WINDOW"].flatMap(UInt32.init).flatMap { $0 > 0 ? String($0) : nil }
-    // Per task (one hands state): each app's windows already open beside the window the task first acted in there are the user's, never a stand-in.
-    static var userWindowsFile = env["ATTICUS_HANDS_STATE"].map { URL(fileURLWithPath: $0 + ".windows") }
-    static var claims = false   // this step acts (click, drag, type, press, menu): only then does the window root maps become the task's; reads and see never claim
-    static var aim: CGPoint?   // a click's screen point: root maps the app's window there, not its focused one
     static var state: URL { URL(fileURLWithPath: env["ATTICUS_HANDS_STATE"] ?? env["ATTICUS_DIR"].map { $0 + "/hands.json" } ?? "/tmp/atticus-hands-\(getuid()).json") }
     static let secretPattern = #"(?i)password|passcode|passphrase|passport|\bpin\b|card|cvv|cvc|security (answer|code)|\bssn\b|social security|api.?key|token|secret|one.?time|verification|auth.*code|2fa|\botp\b|bank|account.?number|routing|iban|tax.?id|recovery|seed|mnemonic"#
     static let riskyPattern = #"(?i)\b(buy|purchase|pay|payment|checkout|order|send|delete|remove|trash|submit|publish|post|sign.?out|log.?out|unsubscribe|subscribe|transfer|bid|erase|withdraw|donate|authorize|grant access|allow access|logout|book|reserve|merge|deploy|discard|wipe|format|apply(?! filters| changes| settings| coupon| code| promo| discount| theme| style| formatting)|confirm)\b"#
@@ -5617,17 +5559,6 @@ enum Hands {
         }
         return windows.count == 1 ? (windows[0][kCGWindowNumber as String] as? NSNumber)?.stringValue ?? "" : ""
     }
-    static func userWindowLists() -> [String: [String]] {
-        userWindowsFile.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: [String]] } ?? [:]
-    }
-    static func keepTaskWindow(_ a: NSRunningApplication, _ w: AXUIElement, _ lists: [String: [String]]) {
-        let own = windowNumber(a,w), key = String(a.processIdentifier)
-        guard claims, let file = userWindowsFile, lists[key] == nil, !own.isEmpty else { return }
-        let others = (CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? []).compactMap {
-            ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == a.processIdentifier && ($0[kCGWindowLayer as String] as? Int) == 0 ? ($0[kCGWindowNumber as String] as? NSNumber)?.stringValue : nil
-        }
-        try? JSONSerialization.data(withJSONObject: lists.merging([key: others.filter { $0 != own }]) { $1 }).write(to: file, options: .atomic)
-    }
     static func root(_ a: NSRunningApplication) throws -> (AXUIElement, AXUIElement) {
         try checkStopped()
         guard !a.isTerminated else { throw Failure("The mapped app closed. Run see again.") }
@@ -5643,21 +5574,15 @@ enum Hands {
         }
         let axWindows = (attribute(e,kAXWindowsAttribute) as? [AXUIElement]) ?? []
         // A pinned task window resolves exactly or fails: never a stand-in, such as the user's own window of the same app.
-        // It is found the same ways as an unpinned one (an app's AX window list can omit its focused window).
-        let all = [element(e,kAXFocusedWindowAttribute), element(e,kAXMainWindowAttribute)].compactMap { $0 } + axWindows
-        let lists = userWindowLists(), users = Set(lists[String(a.processIdentifier)] ?? [])
-        func allowed(_ w: AXUIElement) -> Bool { (pinnedWindow.map { windowNumber(a,w) == $0 } ?? true) && (users.isEmpty || !users.contains(windowNumber(a,w))) }
-        if let aim, let n = windowAt(aim, a.processIdentifier).map(String.init), let w = all.first(where: { windowNumber(a,$0) == n }), windowElement(w,app:e) {
-            guard allowed(w) else { throw Failure("That point is in the user's other \(a.localizedName ?? "app") window, not this task's. Nothing was done; say so; do not switch windows.") }
-            keepTaskWindow(a,w,lists); return (e,w)
-        }
-        for w in all.filter(allowed) {
+        let candidates = pinnedWindow.map { pin in axWindows.filter { windowNumber(a,$0) == pin } } ?? [element(e,kAXFocusedWindowAttribute), element(e,kAXMainWindowAttribute)].compactMap { $0 } + axWindows
+        for w in candidates {
             try checkStopped(); if Date().timeIntervalSince(start) >= 0.3 { break }
-            if windowElement(w,app:e) { keepTaskWindow(a,w,lists); return (e,w) }
+            if windowElement(w,app:e) { return (e,w) }
         }
         // Some apps omit AXWindows. Hit-test only this app's own CG window frames.
         let windows = (CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]]) ?? []
-        for info in windows where (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == a.processIdentifier && (info[kCGWindowLayer as String] as? Int).map({ (0..<20).contains($0) || $0 == 101 }) == true {   // 101: pop-up menu level, where menu bar panels (Bluetooth, Wi-Fi) open; a pin is checked on the window found
+        for info in windows where (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == a.processIdentifier && (info[kCGWindowLayer as String] as? Int).map({ (0..<20).contains($0) || $0 == 101 }) == true &&   // 101: pop-up menu level, where menu bar panels (Bluetooth, Wi-Fi) open
+                                  pinnedWindow.map({ (info[kCGWindowNumber as String] as? NSNumber)?.stringValue == $0 }) != false {
             if Date().timeIntervalSince(start) >= 0.3 { break }
             guard let bounds = info[kCGWindowBounds as String] as? NSDictionary, let rect = CGRect(dictionaryRepresentation:bounds) else { continue }
             var hit: AXUIElement?
@@ -5667,13 +5592,12 @@ enum Hands {
             if var current = hit {
                 for _ in 0..<40 {
                     try checkStopped(); if Date().timeIntervalSince(start) >= 0.3 { break }
-                    if windowElement(current,app:e) { var pid:pid_t = 0; AXUIElementGetPid(current,&pid); if pid == a.processIdentifier && allowed(current) { keepTaskWindow(a,current,lists); return (e,current) } }
+                    if windowElement(current,app:e) { var pid:pid_t = 0; AXUIElementGetPid(current,&pid); if pid == a.processIdentifier && pinnedWindow.map({ windowNumber(a,current) == $0 }) != false { return (e,current) } }
                     guard let parent = element(current,kAXParentAttribute), !CFEqual(parent,current) else { break }; current = parent
                 }
             }
         }
         if pinnedWindow != nil { throw Failure("This task's \(a.localizedName ?? "app") window closed or changed. Nothing was done; run see again.") }
-        if !users.isEmpty { throw Failure("This task's \(a.localizedName ?? "app") window closed. Nothing was done; the other \(a.localizedName ?? "app") windows are the user's, not this task's. Say so; do not switch windows.") }
         // Menu-bar-only apps (Control Center, Wi-Fi, third-party icons at the top right): map their status items instead.
         if let extras = element(e, "AXExtrasMenuBar") { return (e, extras) }
         throw Failure("No accessible window in \(a.localizedName ?? "app").")
@@ -5958,7 +5882,6 @@ enum Hands {
         guard parts.count > 1, parts.allSatisfy({ !$0.isEmpty }) else { throw Failure("Invalid menu path.") }
         var restore: (() -> Void)?, lease: Int32?
         if act {   // a press can bring the app forward: tell the focus guard it's on purpose, then put the user's app back
-            try keysReachTask(a.processIdentifier)
             lease = try screenLease()
             DistributedNotificationCenter.default().postNotificationName(.init("atticus.raise"), object: nil, deliverImmediately: true)
             usleep(50_000); restore = restoreFocus(a)
@@ -6025,34 +5948,6 @@ enum Hands {
         else { return e.postToPid(pid) }
         authenticate(e, message); skyPost(pid, e)
     }
-    // An app hands mouse input to a window's content only while it counts that window as key. This window-server focus record makes it so
-    // without raising the window, activating the app or taking key from the user's window (yabai's focus without raise, via cua-driver).
-    static let postRecord = dlsym(skyLight, "SLPSPostEventRecordTo").map { unsafeBitCast($0, to: (@convention(c) (UnsafeRawPointer, UnsafeRawPointer) -> Int32).self) }
-    static let processForPid = dlsym(dlopen("/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices", RTLD_LAZY), "GetProcessForPID").map { unsafeBitCast($0, to: (@convention(c) (pid_t, UnsafeMutableRawPointer) -> Int32).self) }
-    // Off (after the gesture) hands the app back its inactive state.
-    static func focusWithoutRaise(_ pid: Int32, _ window: UInt32, on: Bool = true) {
-        var psn: [UInt32] = [0, 0], record = [UInt8](repeating: 0, count: 0xF8)
-        guard let postRecord, let processForPid, processForPid(pid, &psn) == 0 else { return }
-        record[0x04] = 0xF8; record[0x08] = 0x0D; record[0x8A] = on ? 1 : 2
-        withUnsafeBytes(of: window.littleEndian) { record.replaceSubrange(0x3C..<0x40, with: $0) }
-        usleep(on ? 0 : 50_000)   // the gesture's queued events land while the window is still key
-        _ = psn.withUnsafeBytes { p in record.withUnsafeBytes { postRecord(p.baseAddress!, $0.baseAddress!) } }
-        usleep(on ? 50_000 : 0)   // AppKit settles its key window before the events arrive
-    }
-    // A click in a key window brings it in front of its app's other windows: the one that was in front goes back.
-    static func keepOrder(_ pid: Int32) -> () -> Void {
-        func top() -> UInt32? {
-            ((CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String:Any]]) ?? []).first { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
-                .flatMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value }
-        }
-        let before = top()
-        return {
-            usleep(50_000)
-            guard let before, top() != before, let a = NSRunningApplication(processIdentifier: pid),
-                  let w = (attribute(AXUIElementCreateApplication(pid), kAXWindowsAttribute) as? [AXUIElement])?.first(where: { windowNumber(a, $0) == String(before) }) else { return }
-            _ = perform(w, ["AXRaise"])
-        }
-    }
     static func deliver(_ e: CGEvent, at p: CGPoint, pid: Int32, window: UInt32, fields: [UInt32: Int64] = [:]) {
         e.flags = []; e.location = p; stampLocation?(e, p)
         let routing: [UInt32: Int64] = window == 0 ? [40: Int64(pid)] : [40: Int64(pid), 51: Int64(window), 91: Int64(window), 92: Int64(window)]
@@ -6060,24 +5955,6 @@ enum Hands {
         if let skyPost { skyPost(pid, e) } else { e.postToPid(pid) }
     }
     static func targetWindow(_ a: NSRunningApplication) -> UInt32 { (try? root(a)).flatMap { UInt32(windowNumber(a,$0.1)) } ?? 0 }
-    // The app's window a real click at p would reach: its topmost visible window there. A task's pinned window always wins.
-    static func windowAt(_ p: CGPoint, _ pid: Int32) -> UInt32? {
-        windowsAt(p).first { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid }.flatMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value }
-    }
-    // Visible app windows (layer 0: never Atticus's own panels) containing p, front to back; none when a task window is pinned.
-    static func windowsAt(_ p: CGPoint) -> [[String:Any]] {
-        guard pinnedWindow == nil else { return [] }
-        return ((CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String:Any]]) ?? []).filter {
-            ($0[kCGWindowLayer as String] as? Int) == 0 && ($0[kCGWindowAlpha as String] as? Double ?? 1) > 0 &&
-            ($0[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation:$0) }?.contains(p) == true
-        }
-    }
-    // A click or drag at a screen point acts in the window a picture shows there, in any app; other targets use the mapped app.
-    static func aimed(_ args: [String], _ old: Map) throws -> NSRunningApplication {
-        aim = ["click","drag"].contains(args.first ?? "") && args.count > 1 ? try point(args[1]) : nil
-        let owner = aim.flatMap { (windowsAt($0).first?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value }
-        return try app(String(owner ?? old.pid))
-    }
     static func restoreFocus(_ a: NSRunningApplication) -> () -> Void {
         if MiniScreen.workInFront { return {} }
         let previous = NSWorkspace.shared.frontmostApplication
@@ -6098,9 +5975,9 @@ enum Hands {
         }
         return false
     }
-    // An app sends keys and menu commands to its own focused window. With a task window pinned, or user windows beside it, they go only when the task's window has the focus.
+    // An app sends keys to its own focused window. With a task window pinned, keys go only when that window has the focus.
     static func keysReachTask(_ pid: Int32) throws {
-        guard pinnedWindow != nil || userWindowLists()[String(pid)]?.isEmpty == false, let a = NSRunningApplication(processIdentifier: pid) else { return }
+        guard pinnedWindow != nil, let a = NSRunningApplication(processIdentifier: pid) else { return }
         let (e, w) = try root(a)
         func reaches() -> Bool {
             var current = element(e,kAXFocusedUIElementAttribute)
@@ -6118,7 +5995,7 @@ enum Hands {
     }
     static func mouse(_ from: CGPoint, _ a: NSRunningApplication, double: Bool = false, right: Bool = false, to: CGPoint? = nil, front: Bool = false) throws {
         guard env["ATTICUS_AX_ONLY"] != "1" else { throw Failure("Quartz mouse actions disabled for this fixture.") }
-        let pid = a.processIdentifier, window = windowAt(from, a.processIdentifier) ?? targetWindow(a), gesture = Int64(DispatchTime.now().uptimeNanoseconds % 1_000_000_000)
+        let pid = a.processIdentifier, window = targetWindow(a), gesture = Int64(DispatchTime.now().uptimeNanoseconds % 1_000_000_000)
         if front || window == 0 || MiniScreen.workInFront { return try frontMouse(from, a, double: double, right: right, to: to) }   // no known window: never an unbound event
         guard let source = CGEventSource(stateID: .hidSystemState) else { throw Failure("Could not create mouse event.") }
         // Field 0 carries the gesture phase, 1 the click count, 3 the button, 7 the subtype, 58 one id for the whole gesture.
@@ -6128,11 +6005,9 @@ enum Hands {
             deliver(e, at: p, pid: pid, window: window, fields: [0: phase, 1: count, 3: button, 7: subtype, 58: gesture]); usleep(wait * 1000)
         }
         let (down, dragged, up): (CGEventType, CGEventType, CGEventType) = right ? (.rightMouseDown, .rightMouseDragged, .rightMouseUp) : (.leftMouseDown, .leftMouseDragged, .leftMouseUp)
-        try checkStopped()
-        let restoreOrder = keepOrder(pid); defer { restoreOrder() }
-        focusWithoutRaise(pid, window); defer { focusWithoutRaise(pid, window, on: false) }
         var held = false
         defer { if held { try? post(up, to ?? from, phase: 3, count: 1, wait: 0) } }
+        try checkStopped()
         // A move primes the window's hit-testing; an off-screen click opens Chromium's user-activation gate for background input.
         try post(.mouseMoved, from, phase: 2, count: 0, wait: 15)
         if !right { try post(.leftMouseDown, CGPoint(x: -1, y: -1), phase: 1, count: 1, wait: 1); try post(.leftMouseUp, CGPoint(x: -1, y: -1), phase: 2, count: 1, wait: 100) }
@@ -6169,22 +6044,20 @@ enum Hands {
         } catch { Darwin.close(fd); throw error }
     }
     static func unlock(_ fd: Int32) { flock(fd, LOCK_UN); Darwin.close(fd) }
-    static func fingerprint(_ map: Map, around spot: CGPoint? = nil) -> [UInt8] {
-        // Window-only capture avoids Atticus's ring and unrelated displays. No disk image is kept. With a spot: 64x40 points around it.
+    static func fingerprint(_ map: Map) -> [UInt8] {
+        // Window-only capture avoids Atticus's ring and unrelated displays. No disk image is kept.
         final class Capture { let lock = NSLock(); var image: CGImage? }
-        let result = Capture(), done = DispatchSemaphore(value: 0), id = spot.flatMap { windowAt($0, map.pid) } ?? UInt32(map.windowID)
+        let result = Capture(), done = DispatchSemaphore(value: 0)
         Task {
             defer { done.signal() }
             guard let all = try? await SCShareableContent.excludingDesktopWindows(true,onScreenWindowsOnly:false),
                   let window = all.windows.first(where: {
                       guard $0.owningApplication?.processID == map.pid && $0.windowLayer == 0 else { return false }
-                      if let id { return $0.windowID == id }
+                      if let id = UInt32(map.windowID) { return $0.windowID == id }
                       return array($0.frame) == map.windowFrame
                   }),
                   let image = try? await SCScreenshotManager.captureImage(contentFilter:SCContentFilter(desktopIndependentWindow:window), configuration: {
-                    let cfg = SCStreamConfiguration(); cfg.width = 64; cfg.height = 40
-                    if let spot { cfg.sourceRect = CGRect(x: spot.x - window.frame.minX - 32, y: spot.y - window.frame.minY - 20, width: 64, height: 40) }
-                    return cfg
+                    let cfg = SCStreamConfiguration(); cfg.width = 64; cfg.height = 40; return cfg
                   }()) else { return }
             result.lock.withLock { result.image = image }
         }
@@ -6547,7 +6420,7 @@ enum Hands {
         } catch { return false }
     }
     static func checked(_ args: [String], _ map: Map, _ a: NSRunningApplication) throws -> [String: Any] {
-        var labels: [String] = [], secure = false, at: [String] = []
+        var labels: [String] = [], secure = false
         let verb = args[0]
         if verb == "click", args[1].contains(">") {
             let (near,double,right,front) = try clickOptions(Array(args.dropFirst()))
@@ -6556,11 +6429,11 @@ enum Hands {
         }
         else if ["click","drag","type"].contains(verb) {
             let near = verb == "click" ? try clickOptions(Array(args.dropFirst())).0 : ""
-            for target in (verb == "drag" ? [args[1],args[2]] : [args[1]]) { let (n, _) = try resolve(target,map:map,a:a,near:near); labels.append(n.label); at.append("\(n.frame)"); secure = secure || n.secret }
+            for target in (verb == "drag" ? [args[1],args[2]] : [args[1]]) { let (n, _) = try resolve(target,map:map,a:a,near:near); labels.append(n.label); secure = secure || n.secret }
         } else if verb == "type-after" {
             let target = try insertionTarget(args[1],a); labels = [target.label]; secure = secret(name(target.field))
         } else if verb == "press" {
-            labels = [map.focused,args[1]] + (menuShortcut(args[1],a).map { [$0.1] } ?? []); at = [map.focusIdentity]
+            labels = [map.focused,args[1]] + (menuShortcut(args[1],a).map { [$0.1] } ?? [])
             let (code, _) = try keys(args[1])
             if [CGKeyCode(51),CGKeyCode(117)].contains(code),
                let focused = element(AXUIElementCreateApplication(a.processIdentifier),kAXFocusedUIElementAttribute),
@@ -6568,8 +6441,7 @@ enum Hands {
         }
         let keyRisk = verb == "press" ? try riskyKey(args[1]) : false
         let risk = labels.contains { $0.hasPrefix("Unidentified screen point ") || riskyLabel($0,map) || (verb == "drag" && matches($0,#"(?i)\b(bin|recycle)\b"#)) } || keyRisk || (verb == "type" && args.dropFirst(3).contains("submit"))
-        // The approval covers the target and its window, not the whole tree: a clock, or a neighbour an app builds lazily after first contact, must not void it.
-        return ["labels":labels,"secure":secure,"risky":risk,"at":at,"pid":map.pid,"args":args,"windowID":map.windowID,"windowFrame":map.windowFrame,"window":mask(map.window),"app":map.app]
+        return ["labels":labels,"secure":secure,"risky":risk,"signature":map.signature,"pid":map.pid,"args":args,"windowID":map.windowID,"windowFrame":map.windowFrame,"window":mask(map.window),"app":map.app]
     }
     static func cli(_ input: [String]) -> Int32 {
         defer { restoreAccessibility() }
@@ -6583,7 +6455,7 @@ enum Hands {
         stopped = 0
         signal(SIGTERM) { _ in Hands.stopped = 1 }; signal(SIGINT) { _ in Hands.stopped = 1 }
         do {
-            if input.first == "label" { let args = Array(input.dropFirst()); try validate(args); try trusted(); let old = try load(), a = try aimed(args, old), m = try capture(a); try freshIDs(args,old,m); let checked = try checked(args, m, a); print(String(data:try JSONSerialization.data(withJSONObject:checked),encoding:.utf8)!); return 0 }
+            if input.first == "label" { let args = Array(input.dropFirst()); try validate(args); try trusted(); let old = try load(), a = try app(String(old.pid)), m = try capture(a); try freshIDs(args,old,m); let checked = try checked(args, m, a); print(String(data:try JSONSerialization.data(withJSONObject:checked),encoding:.utf8)!); return 0 }
             if input.first == "identify" {
                 guard input.count <= 2 else { throw Failure("Use identify [app].") }
                 try trusted()
@@ -6600,15 +6472,13 @@ enum Hands {
             if input[0] == "menu" {
                 let a = try app(input[1]), label = try menu(input[2],a,act:false)
                 guard !Prefs.bool("safe") || !(riskyLabel(input[2]) || riskyLabel(label)) else { throw Failure("This menu action needs the user's Allow card. Use the normal hands click path.") }
-                claims = true; if userWindowsFile != nil { _ = try? root(a) }   // a menu command acts in the app's focused window: it claims that one
                 let target = MiniScreen.windowTarget(a,windows:CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? [])   // optional AX metadata must not turn a successful press into a timeout and duplicate action
                 print("Clicked \(quote(try menu(input[2],a,act:true)))")
                 if let target,
                    let data = try? JSONSerialization.data(withJSONObject:target.merging(["action":"click"]) { $1 }), let text = String(data:data,encoding:.utf8) { print("▣ " + text) }
                 return 0
             }
-            claims = ["click","drag","type","type-after","press"].contains(input[0])
-            let old = try load(), a = try aimed(input, old); var before = try capture(a)
+            let old = try load(), a = try app(String(old.pid)); var before = try capture(a)
             let check = try checked(input, before, a)
             try freshIDs(input,old,before)
             if env["ATTICUS_HANDS_SESSION"] == "1" {
@@ -6639,20 +6509,14 @@ enum Hands {
                 let front = asked || MiniScreen.workInFront || targetWindow(a) == 0
                 try act(front); background = !front
             }
-            var result = "", spot: CGPoint?, spotPixels: [UInt8] = []
-            let exact = input[0] == "click" ? try point(input[1]) : nil
+            var result = "", spot: CGPoint?
             switch input[0] {
             case "click":
                 if input[1].contains(">") { let label = try menu(input[1],a,act:true); result = "Clicked \(quote(label))" }
                 else {
-                    let (near,double,right,front) = try clickOptions(Array(input.dropFirst())), (n,e) = try resolve(input[1],map:before,a:a,near:near), at = exact ?? n.spot; spot = at
-                    // Pressing the element around an unmapped point clicks its center, not the point.
-                    if let e, exact == nil || n.id != 0, !double && !right && !front, perform(e,["AXPress","AXPick","AXConfirm","AXOpen"]) { }
-                    else {
-                        // A mouse click can change only pixels (a canvas, a map, a video); they show whether it took.
-                        if env["ATTICUS_AX_ONLY"] != "1" { spotPixels = fingerprint(before, around: at) }
-                        try gesture(front) { try mouse(at,a,double:double,right:right,front:$0) }
-                    }
+                    let (near,double,right,front) = try clickOptions(Array(input.dropFirst())), (n,e) = try resolve(input[1],map:before,a:a,near:near); spot = n.spot
+                    if let e, !double && !right && !front, perform(e,["AXPress","AXPick","AXConfirm","AXOpen"]) { }
+                    else { try gesture(front) { try mouse(n.spot,a,double:double,right:right,front:$0) } }
                     result = "Clicked \(quote(n.label))"
                 }
             case "scroll":
@@ -6684,7 +6548,7 @@ enum Hands {
                         usleep(50_000)
                         accepted = submitReceipt(typed, stringValue(e), sent, submitted, try capture(a))
                     } while !accepted && Date() < deadline
-                    if !accepted { throw Failure("Could not verify Return was accepted in the background. Read the window; if it was not sent, click its send button.") }
+                    if !accepted { throw Failure("Could not verify Return was accepted in the background. Read the window; if it was not sent, click its send button (add front if it ignores background clicks).") }
                 }
                 result = "Typed into \(quote(n.label))"
             case "type-after": result = try insertAfter(input[1],input[2],a)
@@ -6695,12 +6559,8 @@ enum Hands {
             let after = try capture(a)
             if input[0] == "click" {
                 let (_, w) = try root(a)
-                var known = before; if known.page.isEmpty { known.page = after.page }   // a page the reader had not reached yet (a browser builds it lazily) is not a change
-                let same = after.signature == known.signature
                 if let sheet = (attribute(w,"AXSheets") as? [AXUIElement])?.first ?? (attribute(w,kAXRoleAttribute) as? String == "AXSheet" ? w : nil) { result += " — a sheet opened: \(quote(mask(name(sheet))))" }
-                else if same, let spot, !spotPixels.isEmpty, pixelsChanged(spotPixels, fingerprint(after, around: spot), threshold: 1.5) { result += " — the screen changed at that spot" }
-                // front only on evidence: neither the accessibility tree nor the pixels at the spot changed after a background click
-                else if same { result = "Nothing changed after clicking \(quote((check["labels"] as? [String])?.first ?? input[1]))" + (background && !spotPixels.isEmpty ? ". It went in the background; if this app ignores background clicks, add front to the same click: the app comes forward for that click only, then the user's app returns" : "") }
+                else if after.signature == before.signature { result = "Nothing changed after clicking \(quote((check["labels"] as? [String])?.first ?? input[1]))" + (background ? ". It went in the background; if this app ignores background clicks, add front to the same click: the app comes forward for that click only, then the user's app returns" : "") }
             }
             print(result)
             if let spot { print("@ \(Int(spot.x)) \(Int(spot.y))") }
@@ -6779,19 +6639,11 @@ if CommandLine.arguments.count >= 3, ["--window-target","--target-app"].contains
     let title = CommandLine.arguments.count > 3 && !CommandLine.arguments[3].isEmpty ? CommandLine.arguments[3] : url?.isFileURL == true && FileManager.default.fileExists(atPath:name) ? url!.deletingPathExtension().lastPathComponent : ""
     let frame = CommandLine.arguments.count == 5 ? (try? JSONSerialization.jsonObject(with:Data(CommandLine.arguments[4].utf8))) as? [Double] ?? [] : []
     if !frame.isEmpty && (frame.count != 4 || !frame.allSatisfy(\.isFinite)) { exit(1) }
-    let apps = NSWorkspace.shared.runningApplications.filter { $0.localizedName?.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.bundleIdentifier == name || (bundle != nil && $0.bundleIdentifier == bundle) || $0.executableURL?.lastPathComponent.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.bundleURL?.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveCompare(name) == .orderedSame }
+    let apps = NSWorkspace.shared.runningApplications.filter { $0.localizedName?.localizedCaseInsensitiveCompare(name) == .orderedSame || $0.bundleIdentifier == name || (bundle != nil && $0.bundleIdentifier == bundle) || $0.executableURL?.lastPathComponent.localizedCaseInsensitiveCompare(name) == .orderedSame }
     if CommandLine.arguments[1] == "--target-app" { if apps.count == 1 { print(apps[0].localizedName ?? name) } else if let handler { print(handler.deletingPathExtension().lastPathComponent) }; exit(0) }
     if apps.count == 1 { MiniScreen.work(apps[0]) }
-    if apps.count == 1, var target = MiniScreen.windowTarget(apps[0],title:title,frame:frame,windows:CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? []),
-       let id = UInt32(target["windowID"] as? String ?? ""), let f = target["windowFrame"] as? [CGFloat] {
-        var count: UInt32 = 0; CGGetActiveDisplayList(0, nil, &count)
-        var displays = [CGDirectDisplayID](repeating:0, count:Int(count)); CGGetActiveDisplayList(count, &displays, &count)
-        let above = (CGWindowListCopyWindowInfo(.optionOnScreenAboveWindow, id) as? [[String:Any]] ?? []).filter { ($0[kCGWindowLayer as String] as? Int) == 0 }
-        let onScreen = ((CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[String:Any]])?.first?[kCGWindowIsOnscreen as String] as? Bool) == true
-        target["visible"] = onScreen && target["minimized"] as? Bool != true &&
-            MiniScreen.visible(CGRect(x:f[0],y:f[1],width:f[2],height:f[3]), displays:displays.map(CGDisplayBounds), above:above.compactMap(MiniScreen.bounds))
-        if let data = try? JSONSerialization.data(withJSONObject:target) { print(String(decoding:data,as:UTF8.self)) }
-    }
+    if apps.count == 1, let target = MiniScreen.windowTarget(apps[0],title:title,frame:frame,windows:CGWindowListCopyWindowInfo(.optionAll,kCGNullWindowID) as? [[String:Any]] ?? []),
+       let data = try? JSONSerialization.data(withJSONObject:target) { print(String(decoding:data,as:UTF8.self)) }
     exit(0)
 }
 

@@ -431,11 +431,6 @@ let steps: [[String:Any]] = [
   ["kind":"label","at":[x+450,y+210],"text":"You did it"],
   ["kind":"pointer","at":[x+450,y+240]]]]]
 func data(_ steps: [[String:Any]], teaching: Bool = false) -> Data { try! JSONSerialization.data(withJSONObject:["steps":steps,"teaching":teaching,"target":target,"state":"fixture"]) }
-func refused(_ d: Data) -> String {   // which check turned a guide away
- guard let r = try? JSONDecoder().decode(DrawingRequest.self,from:d) else { return "did not decode" }
- let w = (CGWindowListCopyWindowInfo(.optionIncludingWindow,CGWindowID(window.windowNumber)) as? [[String:Any]])?.first?[kCGWindowBounds as String]
- return "valid \(ScreenDrawing.valid(r)) on displays \(ScreenDrawing.onDisplays(r)) window current \(ScreenDrawing.current(r.target)) (now \(String(describing: w)), sent \(r.target.windowFrame)) screens \(NSScreen.screens.map(\.frame))"
-}
 let drawing = ScreenDrawing()
 var marked: [CGPoint] = []
 drawing.beginInput { marked = $0 }
@@ -460,7 +455,7 @@ var cleared = 0; drawing.inputCleared = { cleared += 1 }
 drawing.finishInput()
 precondition(!drawing.hasInput && drawing.inputPanels.isEmpty && cleared == 1,"Turning pointing off with no mark did not cancel")
 drawing.inputCleared = nil
-precondition(drawing.receive(data(steps)),refused(data(steps)))
+precondition(drawing.receive(data(steps)))
 precondition(drawing.panels.count == NSScreen.screens.count)
 drawing.beginInput { _ in }; precondition(drawing.active && drawing.panels.count == NSScreen.screens.count,"Pointing cleared the guide")
 drawing.clearInput(); precondition(drawing.active && drawing.inputPanels.isEmpty,"Clearing a mark took the guide")

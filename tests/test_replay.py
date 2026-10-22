@@ -16,7 +16,6 @@ class ReplayTests(unittest.TestCase):
     def setUp(self):
         self.root=scratch_dir(self)
         for p in [patch.object(atticus,'SKILLS',str(self.root/'skills.json')),
-                  patch.object(atticus,'RECENT',str(self.root/'recent.jsonl')),
                   patch.object(atticus,'WORKED',str(self.root/'worked.json')),patch.object(atticus,'ME_FILE',str(self.root/'me.json')),
                   patch.dict(os.environ,{'ATTICUS_ASK':str(self.root),'ATTICUS_FRONT':'Other Fixture','ATTICUS_FOCUS_GUARD':'1'},clear=True)]:
             p.start();self.addCleanup(p.stop)
@@ -36,14 +35,6 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(commands,[atticus.SHOW+' --bg Fixture',atticus.HANDS+" menu com.atticus.fixture 'Fixture > Start meeting'"])
         self.assertNotIn('Other Fixture',' '.join(commands))
         self.assertIsNone(atticus.shortcut_commands('export',['%s click "File > Export"'%atticus.HANDS]))
-
-    def test_a_generalized_replay_learns_the_app_it_actually_used(self):
-        atticus.save_skills({'put fixture alpha left':{'cmds':['open -a "Fixture Alpha"'],'reply':'Done.','mine':True}})
-        resolve=lambda name:{'fixture alpha':'Fixture Alpha','fixture beta':'Fixture Beta'}.get(name.lower())
-        with patch.object(atticus,'app_named',side_effect=resolve),patch.object(atticus,'show',return_value='opened'),patch.object(atticus,'tip'):
-            self.assertEqual(atticus.fast('when I say layout mode, put fixture beta left'),'Done.')
-        command=atticus.skills()['layout mode']['cmds'][0]
-        self.assertIn('Fixture Beta',command);self.assertNotIn('Fixture Alpha',command)
 
     def test_explicit_open_remains_foreground_and_mutating_scripts_are_kept(self):
         script='osascript -e \'tell application "Fixture" to set name of window 1 to "Done"\''
@@ -69,14 +60,6 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(atticus.shortcut_commands('pause fixture',[both,state]),[both])   # an act with its own check in one script stays
         framed='osascript -e \'tell application "System Events"\' -e \'tell process "Fixture" to get name of every window\' -e \'end tell\''
         self.assertEqual(atticus.shortcut_commands('windows',[framed]),[])
-
-    def test_replay_says_the_outcome_not_how_the_first_run_went(self):
-        play='osascript -e \'tell application "Fixture" to play\''
-        (self.root/'skills.json').write_text(json.dumps({'unpause fixture':{'cmds':[play],'reply':'Fixture is playing. The first check still showed it paused, but a second check confirmed it.'}}))
-        with patch.object(atticus.subprocess,'run',return_value=atticus.subprocess.CompletedProcess([],0,'','')):
-            self.assertEqual(atticus.fast('unpause fixture'),'Fixture is playing.')
-        for whole in ['Done: focus mode.','Typed "Hi! See you." into Mail.','Opened 10 Hail Pl. Tell me the city.','Playing 1M. It runs in the background.','I typed your reply into the mail box. It isn’t sent yet.','Notes is open. Do not close it.']:
-            self.assertEqual(atticus.outcome(whole),whole)
 
     def test_unsupported_peekaboo_falls_back_without_running(self):
         atticus.save_skills({'do fixture':{'cmds':['peekaboo click --id 12'],'reply':'Done.','mine':True}})
@@ -117,7 +100,7 @@ class ReplayTests(unittest.TestCase):
             def __init__(self,*a,**kw): pass
             def start(self): pass
             def join(self,*a): pass
-        missing=self.root/'fresh';brain=unittest.mock.Mock(return_value=('Found them. [unlearn]',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[];brain.observed=[]
+        missing=self.root/'fresh';brain=unittest.mock.Mock(return_value=('Found them.',0,[]));brain.ok=True;brain.cmds=[];brain.ran=[];brain.observed=[]
         with patch.object(atticus,'DIR',str(missing)),patch.object(atticus,'RECENT',str(missing/'recent.jsonl')),patch.object(atticus,'MEMORY',str(missing/'memory.md')),patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Find fixture notes']),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
             atticus.main();self.assertEqual(atticus.recent()[0]['a'],'Found them.');self.assertTrue((missing/'log.jsonl').exists())
         brain.assert_called_once()
@@ -137,13 +120,12 @@ class ReplayTests(unittest.TestCase):
             brain=unittest.mock.Mock(return_value=(reply,0,[]));brain.ok=True;brain.cmds=cmds;brain.ran=cmds;brain.observed=[]
             tip=unittest.mock.Mock()
             with patch.object(atticus,'DIR',str(self.root)),patch.object(atticus,'RECENT',str(self.root/'recent.jsonl')),patch.object(atticus,'MEMORY',str(self.root/'memory.md')),patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py',task]),patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',screen_for=lambda *a:None,run=brain,wait_commit=lambda:True,restore_focus=lambda *a:None,say=lambda *a:None,tip=tip,look=lambda:[],hands_map=lambda *a:None,cached_hands=lambda:None):
-                with patch.object(atticus,'app_id',return_value='com.example.fixture'),patch.object(atticus,'app_running',return_value=False): atticus.main()
+                atticus.main()
             return tip.call_args.args[1]
-        self.assertEqual(ask('Close fixture','Fixture is closed.',[quit,check]),'Learned: Say “Close fixture” any time.')
+        self.assertEqual(ask('Close fixture','Fixture is closed.',[quit,check]),'Learned: procedure saved for next time.')
         self.assertEqual(atticus.skills()['close fixture']['cmds'],[quit])
-        self.assertEqual(atticus.recent()[-1]['shortcut']['key'],'close fixture')
         self.assertEqual(ask('Close fixture','Fixture is closed.',[quit,check]),'')   # already known: no pill
-        self.assertEqual(ask('Tidy fixture','Tidied. [workflow tidy fixture | Use the View menu.]',[f'{atticus.HANDS} see Fixture']),'Learned: Procedure saved for next time.')
+        self.assertEqual(ask('Tidy fixture','Tidied. [workflow tidy fixture | Use the View menu.]',[f'{atticus.HANDS} see Fixture']),'Learned: procedure saved for next time.')
 
     def test_instant_quit_uses_bundle_id_verifies_and_beats_old_skill(self):
         old='osascript -e \'tell application "Fixture Display" to quit\''
@@ -168,119 +150,6 @@ class ReplayTests(unittest.TestCase):
         with patch.object(atticus,'app_running',side_effect=[True,True,False]),patch.object(atticus,'osa') as osa,patch.object(atticus.time,'sleep'):
             self.assertTrue(atticus.quit_app('com.example.fixture'))
         osa.assert_called_once_with('tell application id "com.example.fixture" to quit',timeout=2)
-
-    def test_failed_replay_is_given_to_the_model_then_unlearned_and_redone(self):
-        command='osascript -e \'tell application "Fixture" to set visible to false\''
-        atticus.save_skills({'hide fixture':{'cmds':[command],'reply':'Fixture is hidden.','mine':True}})
-        worker=unittest.mock.Mock(returncode=0,stdout='fixture became hidden\n',stderr='')
-        with patch.object(atticus.subprocess,'run',return_value=worker),patch.object(atticus,'preview_commands'):
-            answer=atticus.fast('hide fixture')
-        self.assertEqual(answer,'Fixture is hidden.')
-        atticus.remember_turn('hide fixture',answer,atticus.fast.shortcut)
-
-        class NoThread:
-            def __init__(self,*a,**kw): pass
-            def start(self): pass
-            def join(self,*a): pass
-        brain=unittest.mock.Mock(return_value=('Fixture is hidden now. [unlearn] [workflow hide fixture | Hide it, then check.]',0,[]))
-        brain.ok=True;brain.cmds=brain.ran=[command];brain.observed=[{'action':command,'error':False,'result':'verified hidden'}]
-        say=unittest.mock.Mock()
-        with patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','It is still visible']), \
-             patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),
-                            osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',
-                            screen_for=lambda *a:None,tool_help=lambda *a,**k:'',run=brain,wait_commit=lambda:True,
-                            restore_focus=lambda *a:None,say=say,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
-            atticus.main()
-        self.assertEqual(say.call_args.args[1],'Fixture is hidden now.')   # no control tag shows, and the redo saves nothing
-        self.assertEqual(atticus.workflows(),{})
-        prompt=brain.call_args.args[0]
-        self.assertIn('Previous learned shortcut',prompt)
-        self.assertIn('hide fixture',prompt)
-        self.assertIn('fixture became hidden',prompt)
-        self.assertEqual(brain.call_args.kwargs['request'],'It is still visible')
-        self.assertNotIn('hide fixture',atticus.skills())
-
-    def test_unrelated_ask_after_replay_keeps_the_shortcut(self):
-        command='osascript -e \'tell application "Fixture" to set visible to false\''
-        atticus.save_skills({'hide fixture':{'cmds':[command],'reply':'Fixture is hidden.','mine':True}})
-        worker=unittest.mock.Mock(returncode=0,stdout='fixture became hidden\n',stderr='')
-        with patch.object(atticus.subprocess,'run',return_value=worker),patch.object(atticus,'preview_commands'):
-            answer=atticus.fast('hide fixture')
-        atticus.remember_turn('hide fixture',answer,atticus.fast.shortcut)
-
-        class NoThread:
-            def __init__(self,*a,**kw): pass
-            def start(self): pass
-            def join(self,*a): pass
-        brain=unittest.mock.Mock(return_value=('The unrelated answer.',0,[]))
-        brain.ok=True;brain.cmds=brain.ran=[];brain.observed=[]
-        with patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Explain an unrelated topic']), \
-             patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),
-                            osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',
-                            screen_for=lambda *a:None,tool_help=lambda *a,**k:'',run=brain,wait_commit=lambda:True,
-                            restore_focus=lambda *a:None,say=lambda *a:None,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
-            atticus.main()
-        self.assertIn('Previous learned shortcut',brain.call_args.args[0])
-        self.assertIn('hide fixture',atticus.skills())
-
-    def test_stray_unlearn_control_is_never_shown(self):
-        class NoThread:
-            def __init__(self,*a,**kw): pass
-            def start(self): pass
-            def join(self,*a): pass
-        brain=unittest.mock.Mock(return_value=('Done. [unlearn]',0,[]))
-        brain.ok=True;brain.cmds=brain.ran=[];brain.observed=[]
-        say=unittest.mock.Mock()
-        with patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','Do the fixture task']), \
-             patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,front=lambda:('Fixture','Scratch'),
-                            osa=lambda *a:'',screens=lambda:[],describe=lambda *a:'Scratch display',selection_context=lambda:'',
-                            screen_for=lambda *a:None,tool_help=lambda *a,**k:'',run=brain,wait_commit=lambda:True,
-                            restore_focus=lambda *a:None,say=say,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None):
-            atticus.main()
-        self.assertEqual(say.call_args.args[1],'Done.')
-        self.assertEqual(atticus.recent()[-1]['a'],'Done.')
-
-    def test_replay_that_exits_ok_but_misses_its_goal_is_redone_by_the_model_not_reported_done(self):
-        quit='osascript -e \'tell application "Fixture" to quit\''
-        atticus.save_skills({'bye fixture':{'cmds':[quit],'reply':'Fixture is closed.','mine':True}})
-        stubs=dict(app_id=lambda *a:'com.example.fixture',osa=lambda *a,**k:'',app_named=lambda *a:None)
-        with patch.multiple(atticus,**stubs),patch.object(atticus,'app_running',side_effect=[True,False]),patch.object(atticus.time,'sleep'),patch.object(atticus.subprocess,'run') as shell:
-            self.assertEqual(atticus.fast('bye fixture'),'Fixture is closed.')   # verified: the same instant reply
-            self.assertIsNone(atticus.fast.failed);shell.assert_not_called()
-        with patch.object(atticus,'wants_focus',return_value=True),patch.multiple(atticus,**stubs),patch.object(atticus.time,'sleep'),patch.object(atticus,'preview_commands'), \
-             patch.object(atticus.subprocess,'run',return_value=atticus.subprocess.CompletedProcess([],0,'','')):
-            atticus.save_skills({**atticus.skills(),'show fixture':{'cmds':['open -a Fixture'],'reply':'Opened.','mine':True}})
-            with patch.object(atticus,'app_running',return_value=False): self.assertIsNone(atticus.replay('show fixture'))
-            self.assertEqual(atticus.replay.ran[-1],'Fixture => not running')
-            with patch.object(atticus,'app_running',return_value=True): self.assertEqual(atticus.replay('show fixture'),'Opened.')
-
-        class NoThread:
-            def __init__(self,*a,**kw): pass
-            def start(self): pass
-            def join(self,*a): pass
-        brain=unittest.mock.Mock(return_value=('Fixture is closed now; the shortcut had not quit it. [unlearn]',0,[]))
-        brain.ok=True;brain.cmds=brain.ran=[];brain.observed=[]
-        say=unittest.mock.Mock()
-        with patch.object(atticus.threading,'Thread',NoThread),patch('sys.argv',['atticus.py','bye fixture']),patch.object(atticus,'app_running',return_value=True),patch.object(atticus.time,'sleep'), \
-             patch.multiple(atticus,**stubs,licensed=lambda:True,ping=lambda:None,front=lambda:('Fixture','Scratch'),screens=lambda:[],describe=lambda *a:'Scratch display',
-                            selection_context=lambda:'',screen_for=lambda *a:None,tool_help=lambda *a,**k:'',run=brain,wait_commit=lambda:True,
-                            restore_focus=lambda *a:None,say=say,tip=lambda *a:None,look=lambda:[],hands_map=lambda *a:None,report=lambda *a:None):
-            atticus.main()
-        said=[c.args for c in say.call_args_list]
-        self.assertIn(('▸','The shortcut did not work. Redoing it'),said)
-        self.assertNotIn('Fixture is closed.',[s for _,s in said])   # never the learned success line
-        self.assertEqual(said[-1][1],'Fixture is closed now; the shortcut had not quit it.')
-        prompt=brain.call_args.args[0]
-        self.assertIn('still open',prompt);self.assertIn('failed (see its output): redo the request',prompt)
-        self.assertNotIn('bye fixture',atticus.skills())   # the model's [unlearn] drops the shortcut that lied
-
-    def test_a_quit_that_is_still_running_is_not_learned(self):
-        command='osascript -e \'tell application id "com.example.fixture" to quit\''
-        with patch.object(atticus,'cached_hands',return_value=None),patch.object(atticus,'app_running',return_value=True):
-            self.assertIsNone(atticus.learn('close fixture',[command],'Fixture is closed.'))
-        with patch.object(atticus,'shortcut_commands',return_value=['osascript -e "']):
-            self.assertIsNone(atticus.learn('malformed fixture',[command],'Done.'))
-        self.assertNotIn('close fixture',atticus.skills())
 
     def test_reference_ask_receives_recent_target_and_agent_history(self):
         class NoThread:

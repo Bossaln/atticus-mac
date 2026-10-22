@@ -26,7 +26,7 @@ class ArchiveTests(unittest.TestCase):
         p = subprocess.Popen([sys.executable, '-c', script], cwd=Path(atticus.ME).parent, env={**os.environ, 'ATTICUS_DIR': str(self.root)})
         self.addCleanup(lambda: p.poll() is None and p.kill())
         import time
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 3
         events = self.folder / 'events.jsonl'
         while not events.stat().st_size and time.monotonic() < deadline: time.sleep(.01)
         p.kill(); p.wait(timeout=3)

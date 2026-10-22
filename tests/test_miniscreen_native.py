@@ -246,7 +246,7 @@ final class PanelStub { var isVisible=false }
 final class DrawingStub { var active=false,hasInput=false,clears=0;func clear() {clears += 1;active=false;hasInput=false};func stopVoice() {} }
 final class Starter {
  let drawing=DrawingStub();var drawingReply=false
- let mini=MiniScreen(),engine=EngineStub(),panel=PanelStub();var busy=false,fresh=false,retryOffer=false,askFile="",agentCard="",replyAgent="",focusFile=NSTemporaryDirectory()+"atticus-focus-fixture"
+ let mini=MiniScreen(),engine=EngineStub(),panel=PanelStub();var busy=false,fresh=false,retryOffer=false,askFile="",focusFile=NSTemporaryDirectory()+"atticus-focus-fixture"
  func shush() {}
  func hush(keepReply:Bool) {if !keepReply {drawingReply=false}}
  func dismiss() {}

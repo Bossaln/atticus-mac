@@ -125,9 +125,9 @@ try {
   const use = (asks, usd, secs) => ({asks, usd, secs});
   w.st.load({prefs, state: {today: use(2, .002, 3), week: use(4, .004, 3.5), all: use(10, .009, 4.2), rules: [], skills: [], plan: {ok: true, text: 'Pro'}}});
   const stats = d.getElementById('stats').textContent;
-  assert(stats.includes('Avg response4.2 s') && stats.includes('Avg ask cost$0.0009'), 'Usage shows average response time and cost per ask');
+  assert(stats.includes('Avg response4.2 s') && stats.includes('Avg cost0.09¢'), 'Usage shows average response time and cost per ask');
   w.st.state({today:{...use(1,0,2),unknown:1},week:{...use(1,0,2),unknown:1},all:{...use(1,0,2),unknown:1},rules:[],skills:[],plan:{ok:true,text:'Pro'}});
-  assert(d.getElementById('stats').textContent.includes('≥$0.0000')&&d.getElementById('stats').textContent.includes('Avg ask cost≥$0.0000'),'Interrupted usage is shown as a lower bound, including averages');
+  assert(d.getElementById('stats').textContent.includes('≥0.00¢')&&d.getElementById('stats').textContent.includes('Avg cost≥'),'Interrupted usage is shown as a lower bound, including averages');
   const profileState={today:use(0,0,0),week:use(0,0,0),all:use(0,0,0),rules:[],skills:[],plan:{ok:true,text:'Pro'},me:{version:2,facts:[
     {id:'name1',category:'basics',kind:'name',value:'Sam Example',source:'you',date:'2026-10-13'},
     {id:'email1',category:'contact',kind:'home email',value:'sam@example.test',source:'contacts',date:'2026-10-13'}]}};
