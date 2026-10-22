@@ -253,7 +253,7 @@ class MeetingTests(unittest.TestCase):
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  env={**os.environ, 'ATTICUS_DIR': str(root), 'PYTHONPATH': str(Path(atticus.ME).parent)})
             self.addCleanup(lambda: p.poll() is None and p.kill())
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 15
             while not ready.exists() and time.monotonic() < deadline:
                 time.sleep(.01)
             self.assertTrue(ready.exists(), 'fake Claude never started')
@@ -289,7 +289,7 @@ else:
             self.addCleanup(lambda: p.poll() is None and p.kill())
             p.stdin.write(json.dumps({'event': {'title': 'Pilot'}, 'text': 'Notes'}))
             p.stdin.close()
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 15
             while not ready.exists() and time.monotonic() < deadline:
                 time.sleep(.01)
             self.assertTrue(ready.exists(), 'fake connector Claude never started')

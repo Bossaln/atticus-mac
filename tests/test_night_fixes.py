@@ -135,7 +135,7 @@ class NightTests(unittest.TestCase):
             saved = atticus.skills()['quiet time']
             self.assertTrue(saved['mine'])
             self.assertIn('--place Fixture left current', ' '.join(saved['cmds']))
-            self.assertIn('Learned: say “quiet time”', out.getvalue())
+            self.assertIn('Learned: Say “quiet time”', out.getvalue())
 
     def test_remaining_words_keep_fast_path_and_complete_context_for_fallback(self):
         request = {'front': 'Fixture', 'task': 'Fixture left, Other right', 'remaining': ', Other right', 'done': ['Fixture: left.']}
@@ -153,7 +153,8 @@ class NightTests(unittest.TestCase):
             brain.assert_not_called()
             self.assertIn('Fixture: left. Other: right.', out.getvalue())
             fast.return_value = None
-            with patch('sys.stdin', io.StringIO(json.dumps(request) + '\n')): atticus.main()
+            with patch('sys.stdin', io.StringIO(json.dumps(request) + '\n')), patch.object(atticus, 'learn') as learn: atticus.main()
+            learn.assert_not_called()   # its commands did only the rest: never a shortcut, and never under the "Already completed" words
             prompt = brain.call_args.args[0]
             self.assertIn('Fixture left, Other right', prompt)
             self.assertIn('Already completed: Fixture: left.', prompt)

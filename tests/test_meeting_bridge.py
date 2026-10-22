@@ -19,6 +19,8 @@ class MeetingBridgeTests(unittest.TestCase):
         begin = classes.index('        let g = generation', classes.index('    func start(_ context: String)'))
         end = classes.index('    func speech(', begin)
         classes = classes[:begin] + '        Prefs.set("meetingPrep", "")\n    }\n' + classes[end:]
+        # The guest's own Calendar permission must not decide the flow: denied posts allowCalendar (System Settings), unasked prompts.
+        classes = classes.replace('EKEventStore.authorizationStatus(for: .event)', 'fixtureCalendar').replace('EKEventStore.authorizationStatus(for:.event)', 'fixtureCalendar')
         prefs = source[source.index('enum Prefs'):source.index('// Read-aloud uses')] + source[source.index('func callJS('):source.index('func currentRequestScreen(')]
         swift = '''import Cocoa
 import Carbon
@@ -32,7 +34,7 @@ import UniformTypeIdentifiers
 import EventKit
 let dir = CommandLine.arguments[1]
 ''' + prefs + '''
-let calendar = EKEventStore()
+let calendar = EKEventStore(), fixtureCalendar = EKAuthorizationStatus.notDetermined   // Fill in for me offered; no real calendar read
 final class KeyPanel: NSPanel { override var canBecomeKey: Bool { true } }
 final class AppStub { var shortcutDown = false; func close(clear: Bool) {} }
 final class BarStub { func paint() {} }
@@ -52,7 +54,7 @@ let meeting = MeetingCopilot()
 meeting.calendarContext = { done in done(["title":"Pilot review","time":"Today at 4:00 PM","attendees":["Dana <dana@example.com>"],"notes":"Agenda"], nil) }
 let nsapp = NSApplication.shared
 nsapp.setActivationPolicy(.accessory)
-var stage = 0, tries = 0, savedFrame = NSRect.zero, latencyReady = Date.distantPast
+var stage = 0, tries = 0, timedStage = 0, stageStarts: [String] = [], savedFrame = NSRect.zero, latencyReady = Date.distantPast
 var cancelledFinishes: [Process] = []
 func fail(_ message: String) -> Never { print(message); meeting.discard(); exit(1) }
 func evaluate(_ script: String, _ done: @escaping (Any?) -> Void) {
@@ -61,9 +63,11 @@ func evaluate(_ script: String, _ done: @escaping (Any?) -> Void) {
  }
 }
 meeting.open(demo: true)
+let begun = Date()
 Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+ if stage != timedStage { timedStage = stage; tries = 0; stageStarts.append("\\(stage)@\\(String(format: "%.1f", Date().timeIntervalSince(begun)))s") }   // each stage gets its own 12 s: two cold page loads and eight helpers outrun one budget on a loaded guest
  tries += 1
- if tries > 120 { fail("Bridge test timed out at stage \\(stage)") }
+ if tries > 120 { fail("Bridge test timed out at stage \\(stage) after \\(stageStarts.joined(separator: " ")) (gathering \\(meeting.gathering), helper \\(meeting.process != nil), running \\(meeting.running))") }
  switch stage {
  case 0:
   evaluate("!!window.meeting && !document.getElementById('start').disabled") { value in
@@ -88,6 +92,7 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
    guard value as? Bool == true else { return }
    guard !meeting.running else { fail("Normal prep started capture") }
    stage = 21
+   FileManager.default.createFile(atPath: dir + "/hold-gather", contents: nil)   // the helper stays running until stage 22 cancels it; a 0.3 s one can finish between polls
    evaluate("document.getElementById('context').value='Pilot notes';document.getElementById('gather').click()") { _ in }
   }
  case 21:
@@ -100,6 +105,7 @@ Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
  case 22:
   guard !meeting.gathering, meeting.process == nil else { return }
   stage = 23
+  try? FileManager.default.removeItem(atPath: dir + "/hold-gather")
   evaluate("document.getElementById('gather').click()") { _ in }
  case 23:
   guard !meeting.gathering, meeting.process == nil else { return }
@@ -260,7 +266,7 @@ nsapp.run()
             html = (ROOT / 'ui/meeting.html').read_text().replace('<script type="module">', '<script type="module">\nawait new Promise(resolve => setTimeout(resolve, 350));')
             (root / 'ui/meeting.html').write_text(html)
             (root / 'ui/orbs.js').write_text((ROOT / 'ui/orbs.js').read_text())
-            (root / 'worker.py').write_text("import json,sys,time\nfrom pathlib import Path\nif sys.argv[1]=='--meeting-demo-brief':\n print(json.dumps({'brief':'Demo pilot budget: $18,000.'}))\nelif sys.argv[1]=='--meetings':\n time.sleep(30); print('{}')\nelse:\n data=json.load(sys.stdin)\n if sys.argv[1]=='--meeting-gather':\n  Path(sys.argv[0]).with_name('gather.json').write_text(json.dumps(data)); time.sleep(.3); print(json.dumps({'brief':'[Calendar] Pilot review\\n[Email] Decision'}))\n elif sys.argv[1]=='--meeting-prep':\n  Path(sys.argv[0]).with_name('prep.json').write_text(json.dumps(data)); time.sleep(.7); print(json.dumps({'brief':'Boiled down'}))\n else:\n  Path(sys.argv[0]).with_name('answer.json').write_text(json.dumps(data)); time.sleep(.12); print(json.dumps({'event':'text','text':'Answer','at':time.time()}),flush=True); time.sleep(.38); print(json.dumps({'event':'result','result':{'kind':'answer','lines':['Answer'],'secs':.5,'first_secs':.12}}),flush=True)\n")
+            (root / 'worker.py').write_text("import json,sys,time\nfrom pathlib import Path\nif sys.argv[1]=='--meeting-demo-brief':\n print(json.dumps({'brief':'Demo pilot budget: $18,000.'}))\nelif sys.argv[1]=='--meetings':\n time.sleep(30); print('{}')\nelse:\n data=json.load(sys.stdin)\n if sys.argv[1]=='--meeting-gather':\n  Path(sys.argv[0]).with_name('gather.json').write_text(json.dumps(data)); hold=Path(sys.argv[0]).with_name('hold-gather'); end=time.time()+10\n  while hold.exists() and time.time()<end: time.sleep(.05)\n  time.sleep(.3); print(json.dumps({'brief':'[Calendar] Pilot review\\n[Email] Decision'}))\n elif sys.argv[1]=='--meeting-prep':\n  Path(sys.argv[0]).with_name('prep.json').write_text(json.dumps(data)); time.sleep(.7); print(json.dumps({'brief':'Boiled down'}))\n else:\n  Path(sys.argv[0]).with_name('answer.json').write_text(json.dumps(data)); time.sleep(.12); print(json.dumps({'event':'text','text':'Answer','at':time.time()}),flush=True); time.sleep(.38); print(json.dumps({'event':'result','result':{'kind':'answer','lines':['Answer'],'secs':.5,'first_secs':.12}}),flush=True)\n")
             file = root / 'bridge.swift'; file.write_text(swift)
             binary = root / 'bridge'
             compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], text=True, capture_output=True)

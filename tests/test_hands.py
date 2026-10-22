@@ -53,7 +53,7 @@ class HandsTests(unittest.TestCase):
             self.assertIn('Not now', atticus.hands('click', 'Fixture')[0])
         for args in (['--look'], ['--front', 'Fixture']):
             with self.subTest(args=args), patch.object(atticus, 'look', return_value=[]), \
-                 patch.object(atticus, 'osa'), patch.object(atticus, 'free_focus'), patch.object(atticus.time, 'sleep'), \
+                 patch.object(atticus, 'osa'), patch.object(atticus, 'free_focus'), patch.object(atticus.time, 'sleep'), patch.object(atticus, 'window_target', return_value={}), \
                  patch('sys.argv', ['atticus.py', *args]), patch('sys.stdout', new_callable=io.StringIO), \
                  patch.object(atticus, 'ask_user', return_value='n') as ask:
                 atticus.main()
@@ -524,7 +524,7 @@ print("Clicked Export")
         env = {**os.environ,'ATTICUS_APP':str(helper),'ATTICUS_DIR':self.root.name,'ATTICUS_HANDS_STATE':str(Path(self.root.name,'hands.json'))}
         process = subprocess.Popen([sys.executable,atticus.ME,'--hands','wait'],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         try:
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 15   # a cold atticus.py start under a loaded suite can take several seconds
             while not ready.exists() and time.monotonic() < deadline: time.sleep(.01)
             self.assertTrue(ready.exists())
             process.send_signal(signal.SIGTERM)

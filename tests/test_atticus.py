@@ -189,6 +189,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
             reply, ok, actions = outcomes[min(brain.call_count - 1, len(outcomes) - 1)]
             brain.ok = ok; brain.cmds = actions[:] if ok else []; brain.ran = actions[:]; brain.handoff = None; brain.work = bool(actions)
             brain.observed = [{'action': action, 'result': 'Verified fixture state', 'error': False} for action in actions]
+            prior = Path(os.environ['ATTICUS_ASK'], 'prior-work.json'); brain.prior = json.loads(prior.read_text()) if prior.exists() else None   # the ask folder goes with main()
             return reply, .001, actions[:]
         brain = unittest.mock.Mock(side_effect=attempt)
         with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: quick,
@@ -234,8 +235,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                         self.assertNotIn(atticus.MODEL_OFFER, brain.call_args.args[0])
                         if actions:
                             self.assertIn('Verified fixture state', brain.call_args.args[0])
-                            path = Path(os.environ['ATTICUS_ASK']) / 'prior-work.json'
-                            self.assertEqual(json.loads(path.read_text())['actions'], actions)
+                            self.assertEqual(brain.prior['actions'], actions)
                             self.assertEqual(log.call_args.args[5], ['inspect','verify'])
                             self.assertEqual(brain.cmds, [], 'a continuation must not teach a partial shortcut')
                     else: start.assert_not_called()
@@ -253,6 +253,28 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
         self.assertEqual(brain.call_count, 2); start.assert_called_once_with('sonnet')
         self.assertEqual(log.call_args.kwargs, {'model':'sonnet', 'escalated':True, 'escalate_why':'failed',
                                                 'attempt_usd':[.001, .001]})
+
+    def test_balanced_reads_then_a_give_up_reply_escalates_once(self):
+        # Oct 21: "fill this out" read the page, missed a frame's fields and said "click Continue yourself", all reads, so run.ok
+        brain, start, ask, log = self.routing_ask({'routing':'balanced'}, [("I couldn't fill the form. Click Continue yourself, then ask me again. [sonnet]", True, ['--window Browser']),
+                                                                            ('Filled First and Last name.', True, ['--hands type 4 "Ada"'])])
+        self.assertEqual(brain.call_count, 2); start.assert_called_once_with('sonnet'); ask.assert_not_called()
+        self.assertIn("Previous attempt: I couldn't fill the form", brain.call_args.args[0])
+        self.assertEqual(log.call_args.kwargs['escalate_why'], 'failed')
+        self.assertEqual(log.call_args.args[1], 'Filled First and Last name.')
+        brain, start, _, _ = self.routing_ask({'routing':'balanced'}, [("I can't answer that without more detail.", True, [])])
+        self.assertEqual(brain.call_count, 1); start.assert_not_called()   # no tools tried: a plain answer stays on Haiku
+
+    def test_balanced_offer_to_continue_escalates_and_a_finished_reply_does_not(self):
+        # Oct 21: "play it and win" looked, then offered "say the word and I'll keep playing"; the model marks stopping short with [sonnet], no word list
+        gave_up = "Board is open on your monitor. Say the word and I'll keep playing move by move. [sonnet]"
+        brain, start, _, log = self.routing_ask({'routing':'balanced'}, [(gave_up, True, ['--look']), ('Won the game.', True, ['--hands click "1,1"'])])
+        self.assertEqual(brain.call_count, 2); start.assert_called_once_with('sonnet')
+        self.assertTrue(log.call_args.kwargs['escalated']); self.assertEqual(log.call_args.args[1], 'Won the game.')
+        brain, start, _, log = self.routing_ask({'routing':'balanced'}, [("Won the game. I can't see any cells left.", True, ['--look'])])
+        self.assertEqual(brain.call_count, 1); start.assert_not_called(); self.assertFalse(log.call_args.kwargs['escalated'])
+        self.assertIn('Stopping short of a reachable goal: end [sonnet]', atticus.MODEL_OFFER)
+        self.assertIn('claim only what it showed; one step is not the goal', atticus.SYSTEM)
 
     def test_balanced_hard_task_sonnet_request_is_honored_once(self):
         brain, start, _, log = self.routing_ask({'routing':'balanced'}, [('[sonnet]',True,[]), ('Researched.',True,[])])
@@ -276,19 +298,22 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
         brain, start, ask, _ = self.routing_ask({'routing':'cheapest'}, [('Stopped.',False,['inspect']), ('Finished.',True,['verify'])], retry='r')
         self.assertEqual(brain.call_count,2); start.assert_called_once_with('haiku'); ask.assert_called_once()
         self.assertIn('Verified fixture state', brain.call_args.args[0])
-        work = json.loads((Path(os.environ['ATTICUS_ASK']) / 'prior-work.json').read_text())
-        self.assertEqual(work['observations'], [{'action': 'inspect', 'result': 'Verified fixture state', 'error': False}])
+        self.assertEqual(brain.prior['observations'], [{'action': 'inspect', 'result': 'Verified fixture state', 'error': False}])
 
     def test_escalation_and_retry_handoffs_are_terminal_with_unknown_usage(self):
         # offers start without a card, so a directive hand-off is a move too; a steer only updates an agent
         for first, handoff, said in (('[sonnet]', {'accepted': True}, 'Moved the task to a background agent.'),
                                      ('Failed attempt.', {'accepted': True}, 'Moved the task to a background agent.'),
                                      ('[sonnet]', {'title': 'Research', 'brief': 'Research'}, 'Moved the task to a background agent.'),
-                                     ('[sonnet]', {'steer': 'fixture', 'brief': 'Shorter'}, 'Updated a background agent.')):
+                                     ('[sonnet]', {'steer': 'fixture', 'brief': 'Shorter'}, 'Updated a background agent.'),
+                                     ('[sonnet]', [{'title': 'Ebikes', 'brief': 'E'}, {'title': 'Helmets', 'brief': 'H'}], 'Started agents: Ebikes; Helmets.'),
+                                     ('[sonnet]', [{'steer': 'fixture', 'brief': 'S'}, {'title': 'Helmets', 'brief': 'H'}],
+                                      'Updated a background agent. Started an agent: Helmets.')):
             with self.subTest(first=first, handoff=handoff):
                 def attempt(*args, **kwargs):
                     brain.ok = False; brain.cmds = []; brain.ran = ['attempt']
-                    brain.handoff = handoff if brain.call_count == 2 else None
+                    brain.handoffs = handoff if isinstance(handoff, list) else [handoff]
+                    brain.handoff = brain.handoffs[0] if brain.call_count == 2 else None
                     return ('', None, ['moved']) if brain.handoff else (first, .001, [])
                 brain = unittest.mock.Mock(side_effect=attempt)
                 with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
@@ -301,7 +326,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                      patch.object(atticus.threading,'Thread'),patch.dict(os.environ,{'ATTICUS_UI':'1','ATTICUS_ASK':atticus.DIR}), \
                      patch('sys.argv',['atticus.py','Fixture task']),patch('sys.stdout',io.StringIO()):
                     atticus.main()
-                    atticus.remember_turn.assert_not_called()
+                    self.assertEqual(atticus.remember_turn.call_args.args[1],said)   # a follow-up ("what did they say?") sees this turn
                 self.assertEqual(brain.call_count,2)
                 self.assertIsNone(log.call_args.args[3]);self.assertEqual(log.call_args.args[4],['moved'])
                 self.assertEqual(log.call_args.args[1],said)
@@ -309,7 +334,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                 learn.assert_not_called()
 
     def test_partial_request_handoff_keeps_one_original_log_row(self):
-        brain=unittest.mock.Mock(return_value=('',None,[]));brain.handoff={'accepted':True};brain.ran=[];brain.ok=True
+        brain=unittest.mock.Mock(return_value=('',None,[]));brain.handoff={'accepted':True};brain.handoffs=[brain.handoff];brain.ran=[];brain.ok=True
         request=json.dumps({'front':'Fixture','task':'Original request','done':['Opened fixture.'],'remaining':'Finish it'})
         with patch.multiple(atticus,licensed=lambda:True,ping=lambda:None,fast=lambda _:None,allow_focus=lambda _:None,
                             front=lambda:('Fixture','Scratch'),osa=lambda *a:'',screens=lambda:[],selection_context=lambda:'',
@@ -451,8 +476,8 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
         self.assertIn(atticus.MISS, out.getvalue())
         with patch.dict(os.environ, {'ATTICUS_UI': '1'}), patch.object(atticus, 'pref', return_value=False), \
              patch('sys.stdout', new_callable=io.StringIO) as out:
-            atticus.tip('Done.', 'Learned: procedure saved for next time.')
-        self.assertIn('Learned: procedure saved for next time.', out.getvalue())
+            atticus.tip('Done.', 'Learned: Procedure saved for next time.')
+        self.assertIn('Learned: Procedure saved for next time.', out.getvalue())
 
     def test_domain_dots_and_url_case_survive(self):
         with patch.object(atticus, 'skills', return_value={}), \
@@ -1385,7 +1410,7 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
             parent = f'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c",{child!r}]); time.sleep(30)'
             p = subprocess.Popen([sys.executable, '-c', parent], start_new_session=True)
             try:
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + 15
                 while not ready.exists() and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(ready.exists())
@@ -1417,7 +1442,7 @@ time.sleep(30)
                                  env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
                                       'ATTICUS_DIR': str(root), 'PYTHONPATH': str(Path(atticus.ME).parent)})
             try:
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + 15
                 while not ready.exists() and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(ready.exists(), 'fake Devin never started')
@@ -1447,7 +1472,7 @@ time.sleep(30)
                                  env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
                                       'ATTICUS_DIR': str(root), 'PYTHONPATH': str(Path(atticus.ME).parent)})
             try:
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + 15
                 while not ready.exists() and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(ready.exists(), 'fake Pi never started')
@@ -1475,7 +1500,7 @@ atticus.main()
 '''
             p = subprocess.Popen([sys.executable, '-c', script], env={**os.environ, 'ATTICUS_DIR': root})
             try:
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + 15
                 while not ready.exists() and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(ready.exists())

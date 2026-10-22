@@ -244,10 +244,12 @@ class BackgroundTests(unittest.TestCase):
             web.assert_called_with('read',app='Fixture Browser',fresh=False)
 
     def test_agent_front_stays_background_and_show_respects_user_intent(self):
-        with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}), patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus, 'hands_map', return_value={'description': 'Notes map'}), patch.object(atticus, 'osa') as osa, patch('sys.argv', ['atticus.py', '--front', 'Notes']), patch('sys.stdout', new_callable=io.StringIO) as out:
-            atticus.main()
-            osa.assert_not_called(); self.assertEqual(out.getvalue().strip(), 'Notes map')
-            preview.assert_called_once()
+        with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}), patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus, 'hands_map', return_value={'description': 'Notes map'}) as mapped, \
+             patch.object(atticus, 'window_target', return_value=self.target), patch.object(atticus, 'look', return_value=[('/fake.jpg', 'Screen 1')]) as looked, \
+             patch.object(atticus, 'osa') as osa, patch('sys.argv', ['atticus.py', '--front', 'Notes', '--asked']), patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.main()   # the model's --asked never brings an agent forward: only the user's words do
+            osa.assert_not_called(); self.assertEqual(out.getvalue().strip(), 'Notes map\nScreen 1: /fake.jpg')
+            preview.assert_called_once(); mapped.assert_called_once_with('Notes', target=self.target); looked.assert_called_once_with(cleanup=False, window=self.target)
         with patch.object(atticus, 'show') as show, patch('sys.stdout', new_callable=io.StringIO), patch('sys.argv', ['atticus.py', '--show', 'Notes']):
             atticus.main(); show.assert_called_with('Notes', True)
             atticus.save_request(os.environ['ATTICUS_ASK'], 'Open Notes')
@@ -293,11 +295,13 @@ class BackgroundTests(unittest.TestCase):
                 marker.unlink(missing_ok=True)
                 atticus.save_request(os.environ['ATTICUS_ASK'], request)
                 self.assertFalse(atticus.wants_focus())
-                with patch.object(atticus, 'osa') as osa, patch.object(atticus, 'free_focus') as free, \
+                with patch.object(atticus, 'osa') as osa, patch.object(atticus, 'free_focus') as free, patch.object(atticus, 'window_target', return_value=self.target), \
                      patch.object(atticus, 'look', return_value=[('/fake.jpg', 'Screen')]), \
-                     patch.object(atticus.time, 'sleep'), patch('sys.stdout', new_callable=io.StringIO), \
+                     patch.object(atticus.time, 'sleep'), patch('sys.stdout', new_callable=io.StringIO) as out, \
                      patch('sys.argv', ['atticus.py', '--front', 'Fixture']):
-                    atticus.main()
+                    atticus.main()   # no focus words found (they are English-only): a picture in place, and how to say the user asked
+                    osa.assert_not_called(); self.assertIn(f'{atticus.ME} --front Fixture --asked', out.getvalue())
+                    with patch('sys.argv', ['atticus.py', '--front', 'Fixture', '--asked']): atticus.main()
                     osa.assert_called_once_with('tell application "Fixture" to activate')
                     free.assert_called_once_with(user=True)
                 self.assertTrue(atticus.wants_focus(request))
@@ -314,6 +318,57 @@ class BackgroundTests(unittest.TestCase):
                 with patch.dict(os.environ, {'ATTICUS_AGENT': 'fixture'}):
                     self.assertFalse(atticus.wants_focus())
                     self.assertTrue(atticus.wants_focus(sites=True))
+
+    def test_front_works_on_a_window_in_any_state_without_raising_it(self):
+        # Oct 21: a page on his second display, not key, was raised by --front although he kept working on the laptop. Any app, any state.
+        marker = Path(os.environ['ATTICUS_ASK'], 'focus-requested')
+        unfocused, covered, minimized = {**self.target, 'visible': True}, {**self.target, 'visible': False}, {**self.target, 'minimized': True}
+        for request, target, extra, raised in (('play it', unfocused, [], False), ('play it', covered, [], False), ('keep going', minimized, [], True),
+                                               ('play it', {}, [], True), ('show me it', unfocused, [], True), ('play it', unfocused, ['--asked'], True)):
+            with self.subTest(request=request, target=target, extra=extra):
+                atticus.save_request(os.environ['ATTICUS_ASK'], request); marker.unlink(missing_ok=True)
+                with patch.object(atticus, 'window_target', return_value=target), patch.object(atticus, 'osa') as osa, \
+                     patch.object(atticus, 'free_focus') as free, patch.object(atticus, 'look', return_value=[('/fake.jpg', 'Screen 2')]) as looked, \
+                     patch.object(atticus.time, 'sleep'), patch('sys.stdout', new_callable=io.StringIO) as out, \
+                     patch('sys.argv', ['atticus.py', '--front', 'Fixture App', 'Board', *extra]):
+                    atticus.main()
+                self.assertEqual(osa.called, raised); self.assertEqual(free.called, raised); self.assertEqual(marker.exists(), raised)
+                self.assertIn('Screen 2: /fake.jpg', out.getvalue())
+                if not raised:
+                    looked.assert_called_once_with(cleanup=False, window=target)   # the window itself, painted where it sits
+                    self.assertIn("--front 'Fixture App' Board --asked", out.getvalue())
+        with patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(covered), '')) as run:
+            self.assertEqual(atticus.window_target('Fixture App', 'Board'), covered)
+            self.assertEqual(run.call_args.args[0], [atticus.APP, '--window-target', 'Fixture App', 'Board'])
+            self.assertEqual(run.call_args.kwargs['env']['ATTICUS_FOCUS_REQUESTED'], '0')   # the lookup itself never activates
+        for failure in (OSError(), subprocess.TimeoutExpired('x', 2)):
+            with patch.object(atticus.subprocess, 'run', side_effect=failure): self.assertEqual(atticus.window_target('Fixture App'), {})
+        with patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '[]', '')): self.assertEqual(atticus.window_target('Fixture App'), {})
+        self.assertIn('pictures that window in place, even covered; raises only if asked.', atticus.system_prompt(atticus.ASK_FIRST))
+        with patch.object(atticus, 'pref', side_effect=lambda k, d: 'front' if k == 'workIn' else d):
+            self.assertNotIn('pictures that window in place', atticus.system_prompt(atticus.ASK_FIRST))
+
+    def test_look_paints_the_target_window_on_its_own_display(self):
+        calls = []
+        def run(cmd, **_):
+            calls.append(cmd)
+            if cmd[:2] == [atticus.APP, '--look']: Path(cmd[3]).write_bytes(b'jpg')
+            return subprocess.CompletedProcess(cmd, 0, 'window\n' if len(cmd) == 5 and painted[0] else '', '')
+        painted = [True]
+        displays = [('Built-in', 0, 0, 1512, 982, True), ('Monitor', 1512, 0, 2560, 1440, False)]
+        window = {**self.target, 'app': 'Fixture App', 'window': 'Board', 'windowFrame': [1900, 200, 1100, 800], 'visible': False}
+        with patch.object(atticus, 'screens', return_value=displays), patch.object(atticus.subprocess, 'run', side_effect=run), \
+             patch.object(atticus, 'pref', side_effect=lambda k, d: False if k == 'draw' else d):
+            shots = atticus.look(cleanup=False, window=window)
+            self.assertEqual([c[:3] + c[4:] for c in calls], [[atticus.APP, '--look', '2', '42']])   # only its display, with its window id
+            self.assertEqual(len(shots), 1)
+            self.assertIn('Fixture App "Board" painted where it sits (hidden from the user); click spots as 2:x,y', shots[0][1])
+            painted[0] = False; calls.clear()   # the window could not be captured: the label never claims it
+            self.assertNotIn('painted', atticus.look(cleanup=False, window=window)[0][1])
+            calls.clear()
+            labels = [label for _, label in atticus.look(cleanup=False)]
+            self.assertEqual(len(calls), 2); self.assertTrue(labels[0].endswith('click spots as 1:x,y in picture pixels)'))
+        for path in Path(os.environ['ATTICUS_ASK']).glob('atticus-screen-*'): path.unlink()
 
     def test_old_foreground_shortcuts_upgrade_to_background_open(self):
         saved={'cmds':['open -a Notes'],'reply':'Done.'}

@@ -54,7 +54,7 @@ ROWS = [
                   {'tool': 'WebFetch', 'text': 'Reading ebikeoracle.com', 'sources': [SRC['oracle']]}, {'text': 'Five bikes publish a weight; writing the Doc.'},
                   {'tool': 'mcp__claude_ai_Google_Drive__create_file', 'text': 'Using Google Drive'}, {'made': [{'title': 'Cheapest E-Bikes on Amazon – Comparison', 'url': DOC, 'type': 'application/vnd.google-apps.document'}]}]},
     {'id': 'd' * 32, 'title': 'Book a table at Nopa', 'brief': 'Book a table for two at Nopa on Friday around 8pm.', 'status': 'failed',
-     'step': 'OpenTable didn’t load, so nothing was booked. Try again in a minute.', 'result': 'OpenTable didn’t load, so nothing was booked.', 'created': NOW - 900, 'started': NOW - 899, 'ended': NOW - 880,
+     'step': 'OpenTable didn’t load, so nothing was booked. Try again in a minute.', 'result': 'OpenTable didn’t load, so nothing was booked.', 'created': NOW - 300, 'started': NOW - 299, 'ended': NOW - 280,
      'directory': '/tmp/fixture', 'timeline': [{'tool': 'WebSearch', 'text': 'Searching the web: Nopa reservations Friday'}, {'tool': 'WebFetch', 'text': 'Reading opentable.com'}]},
 ]
 
@@ -71,20 +71,20 @@ let agentsUI=AgentPanels()
 func after(_ s:Double,_ f:@escaping()->Void){DispatchQueue.main.asyncAfter(deadline:.now()+s,execute:f)}
 func shot(_ name:String,_ w:NSWindow?){guard let w else{print("missing window \(name)");exit(1)};w.sharingType = .readOnly;   // real panels hide from capture; only this VM fixture lifts it
 let p=Process();p.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture");let f=w.frame.insetBy(dx:-36,dy:-36).intersection(screen.frame),r="\(Int(f.minX)),\(Int(screen.frame.maxY-f.maxY)),\(Int(f.width)),\(Int(f.height))";p.arguments=["-x","-R"+r,out+"/"+name+".png"];try! p.run();p.waitUntilExit();print("shot \(name)")}
-func hover(_ id:String){agentsUI.shelfWeb?.evaluateJavaScript("document.querySelector('.chip[data-id=\"\(id)\"]').dispatchEvent(new MouseEvent('mouseenter'))")}
+func hover(_ id:String){agentsUI.shelfWeb?.evaluateJavaScript("(r=>agents.pointer([r.x+r.width/2,r.y+r.height/2]))(document.querySelector('.chip[data-id=\"\(id)\"]').getBoundingClientRect())")}
 func select(_ id:String){agentsUI.js("view","select",id)}
 let ids=rows.map{$0["id"] as! String}
 agentsUI.receive(["event":"list","agents":rows]);agentsUI.ensureShelf()
 after(2.0){agentsUI.receive(["event":"state","agent":rows[1]])}
 after(3.5){shot("shelf-needs-you",agentsUI.shelf);hover(ids[0])
- after(1.0){shot("shelf-running",agentsUI.shelf);hover(ids[2])
+ after(1.0){shot("shelf-running",agentsUI.shelf);agentsUI.shelfWeb?.evaluateJavaScript("document.querySelector('.pill').click()"){_,_ in hover(ids[2])}   // the "✓ 2 done" pill opens the finished chips
   after(1.0){shot("shelf-done",agentsUI.shelf);Prefs.set("agentsHidden",true);agentsUI.openView(ids[0])
    after(3.0){shot("view-running",agentsUI.view);select(ids[1])
     after(1.2){shot("view-needs-you",agentsUI.view);select(ids[2])
      after(1.2){shot("view-done",agentsUI.view);select(ids[3])
       after(1.2){shot("view-failed",agentsUI.view);agentsUI.view?.setContentSize(NSSize(width:560,height:520));select(ids[2])
         after(1.2){shot("view-done-narrow",agentsUI.view);paint.colors=[NSColor.white.cgColor,NSColor.white.cgColor]
-         agentsUI.view?.orderOut(nil);Prefs.set("agentsHidden",false);agentsUI.js("shelf","prefs",["dismissed":[],"stack":"open"]);agentsUI.shelf?.orderFrontRegardless();hover(ids[1])
+         agentsUI.view?.orderOut(nil);Prefs.set("agentsHidden",false);agentsUI.shelf?.orderFrontRegardless();agentsUI.shelfWeb?.evaluateJavaScript("document.querySelector('.pill')?.click()"){_,_ in hover(ids[1])}
          after(1.0){shot("shelf-white-backdrop",agentsUI.shelf);agentsUI.openView(ids[1])
           after(1.2){shot("view-white-backdrop",agentsUI.view);agentsUI.process?.terminate();print("design shots ok");exit(0)}}}}}}}}}}
 nsapp.run()'''

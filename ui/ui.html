@@ -18,7 +18,7 @@
     text-overflow: ellipsis; }
   .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 16px; color: var(--fg2); font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
   .elapsed .redo { margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
-  .elapsed .redo:hover { color: #f5f5f7; }
+  .elapsed .redo:is(:hover,.hot) { color: #f5f5f7; }
   .elapsed b { color: var(--fg2); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, var(--fg2) 0%, #fff 45%, var(--fg2) 90%); background-size: 200% 100%;
@@ -45,14 +45,14 @@
   .shot.big { max-width: 86%; cursor: zoom-out; } .shot.big img { max-width: 100%; max-height: 220px; }
   .q.empty:not(.hear) { display: none; }
   .q.empty.hear { color: var(--fg2); } .q.empty.hear::before { content: "Listening…"; }   /* voice: the bubble waits for words */
-  /* dictation: a pill just wide enough for the wave (and the lock once locked). Released, it folds into a circle with the
-     working orb, then a green check; a message (nothing to insert into, an error) is one short line. No transcript, no
+  /* dictation: a pill just wide enough for the orb and its wave (and the lock once locked). Released, it folds into a circle with
+     the working orb, then the orb and a green check; a message (nothing to insert into, an error) is one short line. No transcript, no
      dividers. The panel takes #card's size (fit) and animates to it, so each state morphs into the next */
-  body.dictate #card { flex-direction: row; align-items: center; justify-content: center; gap: 8px; width: max-content; min-width: 36px; min-height: 36px; margin: 0 auto; padding: 0 12px; }
+  body.dictate #card { flex-direction: row; align-items: center; justify-content: center; gap: 8px; width: max-content; min-width: 36px; min-height: 36px; margin: 0 auto; padding: 0 12px 0 4px; }
   body.dictate:is(.finishing, .done) #card { padding: 0 4px; }
-  body.dictate.said #card { padding: 8px 16px; }
-  body.dictate #head { height: auto; } body.dictate:not(.finishing) #head, body.dictate #head > :not(#orb), body.dictate :is(#thread, #comp, #pointbar, .e, #grip) { display: none; }
-  body.dictate #orb { width: 28px; height: 28px; margin: 0; animation: morph .3s var(--ease) .12s both; }   /* a beat late: a fast insert goes straight to the check */
+  body.dictate.said #card { padding: 4px 16px 4px 4px; }
+  body.dictate #head { height: auto; } body.dictate #head > :not(#orb), body.dictate :is(#thread, #comp, #pointbar, .e, #grip) { display: none; }
+  body.dictate #orb { width: 28px; height: 28px; margin: 0; animation: morph .3s var(--ease) both; }
   #dictwave { display: none; }
   body.dictate.hearing #dictwave { display: flex; align-items: center; gap: 2px; width: 43px; height: 28px; flex: none; }
   #dictwave i { display: block; width: 3px; height: 3px; border-radius: 3px; background: var(--accent); transition: height .1s var(--ease); }
@@ -72,8 +72,8 @@
     font-size: 12px; line-height: 16px; color: #f5f5f7; animation: fade .25s var(--ease) both; }
   .dn button { border:0; border-radius:6px; padding:3px 8px; font:inherit; color:var(--fg2); background:none; text-decoration:underline; cursor:pointer; flex:none; }
   .dn button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  .dn.ok { color: #f5f5f7; padding: 0; border-radius: 0; background: none; box-shadow: none; cursor: default; animation: in .25s var(--ease) both; }   /* not the approval card that shares .ok */
-  .dn.ok::before { content: ""; flex: none; width: 8px; height: 4px; border-left: 1.5px solid #30d158; border-bottom: 1.5px solid #30d158; transform: translateY(-1px) rotate(-45deg); }
+  .dn.tick { animation: in .25s var(--ease) both; }
+  .dn.tick::before { content: ""; flex: none; width: 8px; height: 4px; border-left: 1.5px solid #30d158; border-bottom: 1.5px solid #30d158; transform: translateY(-1px) rotate(-45deg); }
 
   .steps { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
   .steps:empty { display: none; }
@@ -99,7 +99,7 @@
   .mini-view { position: relative; display: block; padding: 0; width: 100%; aspect-ratio: 16/10; border: 0;
     border-radius: 12px; background: transparent; overflow: hidden; cursor: pointer; color: #f5f5f7;
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14), 0 8px 24px rgba(0,0,0,.28); transition: box-shadow .24s; }
-  .mini-view:hover { box-shadow: inset 0 0 0 1px rgba(255,255,255,.3), 0 10px 28px rgba(0,0,0,.36); }   /* no scale: the native picture under it can't follow */
+  .mini-view:is(:hover,.hot) { box-shadow: inset 0 0 0 1px rgba(255,255,255,.3), 0 10px 28px rgba(0,0,0,.36); }   /* no scale: the native picture under it can't follow */
   .mini-fallback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
     background: radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.07), transparent 70%), rgba(18,18,20,.96); transition: opacity .3s; }
   .mini-fallback::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.05) 50%, transparent 70%);
@@ -117,7 +117,7 @@
   .mini.done .mini-tag i { width: 8px; height: 4px; border-radius: 0; background: none; box-shadow: none; animation: none;
     border-left: 1.5px solid #30d158; border-bottom: 1.5px solid #30d158; transform: rotate(-45deg) translate(1px,-1px); }
   .mini-hint { right: 8px; opacity: 0; transform: translateY(-3px); transition: opacity .2s, transform .24s var(--ease); }
-  .mini-view:hover .mini-hint, .mini-view:focus-visible .mini-hint { opacity: 1; transform: none; }
+  .mini-view:is(:hover,.hot) .mini-hint, .mini-view:focus-visible .mini-hint { opacity: 1; transform: none; }
   .mini-point { position: absolute; width: 24px; height: 24px; margin: -12px; border: 1px solid rgba(10,132,255,.8);
     border-radius: 50%; background: rgba(10,132,255,.18); box-shadow: 0 0 14px rgba(10,132,255,.3); pointer-events: none; animation: mini-ripple .8s var(--ease) both; }
   .mini-point.scroll { width: 44px; height: 16px; margin: -8px -22px; border: 0; border-radius: 8px;
@@ -139,7 +139,7 @@
   .a :is(th, td) { padding: 6px 12px 6px 0; text-align: left; vertical-align: top; overflow-wrap: break-word; border-bottom: .5px solid rgba(255,255,255,.1); }
   .a th { font-size: 11.5px; font-weight: 600; color: var(--fg2); } .a tr:last-child td { border-bottom: 0; }
   .a code { padding: 1px 5px; border-radius: 5px; font: 13px ui-monospace, Menlo, monospace; background: rgba(255,255,255,.1); }
-  .a a, .agent-card a { color: #64d2ff; text-decoration: none; cursor: pointer; } .a a:hover, .agent-card a:hover { text-decoration: underline; }
+  .a a, .agent-card a { color: #64d2ff; text-decoration: none; cursor: pointer; } .a a:is(:hover,.hot), .agent-card a:is(:hover,.hot) { text-decoration: underline; }
   .a math { font-family: "STIX Two Math", math; font-size: 1.12em; } .a :is(math, .tex), .turn > .a :is(li, pre, code, th, td) { animation: word .5s var(--ease) both; }
   .a math[display=block] { margin: 12px 0; padding: 2px 0; overflow-x: auto; overflow-y: hidden; }
   .a math::-webkit-scrollbar { height: 0; }
@@ -171,7 +171,7 @@
   .ok { margin-top: 14px; padding: 13px 14px 14px; border-radius: 14px; background: rgba(255,255,255,.07); cursor: pointer;
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14); animation: grow .32s var(--spring) both; overflow: hidden; max-height: 320px;
     transition: max-height .34s var(--ease), opacity .25s, margin .34s var(--ease), padding .34s var(--ease), background .2s; }
-  .ok:hover { background: rgba(255,255,255,.09); }
+  .ok:is(:hover,.hot) { background: rgba(255,255,255,.09); }
   .ok.gone { max-height: 0; opacity: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; }
   .ok b { display: block; font-size: 13.5px; font-weight: 600; }
   .ok code { display: block; margin-top: 4px; font: 11px/15px ui-monospace, Menlo, monospace; color: var(--fg2); max-height: 15px;
@@ -183,7 +183,7 @@
   .ok button, .pk .bar button, .rewrite button { flex: 1; height: 28px; border: 0; border-radius: 14px; font: 500 12.5px -apple-system, system-ui, sans-serif; color: #fff;
     cursor: pointer; background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); transition: transform .3s var(--spring), background .2s; }
   .ok button.go, .pk .bar button.go, .rewrite button.go { background: var(--accent); box-shadow: none; }
-  .ok button:hover, .pk .bar button:hover, .rewrite button:not(:disabled):hover { transform: scale(1.03); } .ok button:active, .pk .bar button:active, .rewrite button:not(:disabled):active { transform: scale(.96); }
+  .ok button:is(:hover,.hot), .pk .bar button:is(:hover,.hot), .rewrite button:not(:disabled):is(:hover,.hot) { transform: scale(1.03); } .ok button:active, .pk .bar button:active, .rewrite button:not(:disabled):active { transform: scale(.96); }
 
   /* "which one?": the AI isn't sure, so it shows its choices. Click one to see it big; click outside it for all of them again */
   .pk { margin-top: 14px; padding: 13px 14px 14px; border-radius: 14px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
@@ -201,7 +201,7 @@
     font: inherit; color: inherit; cursor: pointer; background: rgba(255,255,255,.04); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.08);
     animation: in .35s var(--ease) both; transition: transform .3s var(--spring), background .2s; }
   .pk .g.list .c { padding: 8px 11px; }
-  .pk .c:hover { background: rgba(255,255,255,.1); transform: scale(1.03); } .pk .c:active { transform: scale(.97); }
+  .pk .c:is(:hover,.hot) { background: rgba(255,255,255,.1); transform: scale(1.03); } .pk .c:active { transform: scale(.97); }
   .pk .th { display: grid; place-items: center; aspect-ratio: 4 / 3; margin-bottom: 3px; border-radius: 6px; overflow: hidden; background: rgba(0,0,0,.28);
     font-size: 11px; font-weight: 600; letter-spacing: .4px; color: var(--fg2); transition: height .34s var(--ease); }
   .pk .th img { width: 100%; height: 100%; object-fit: contain; }
@@ -231,7 +231,7 @@
     box-sizing: border-box; border-radius: 11px; font-size: 11px; font-weight: 500; line-height: 1; color: #ffb340; cursor: pointer;
     background: rgba(255,159,10,.13); box-shadow: inset 0 0 0 .5px rgba(255,159,10,.32); transition: transform .3s var(--spring), background .2s; }
   #mode::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #ff9f0a; }
-  #mode.on { display: flex; animation: in .35s var(--ease) both; } #mode:hover { transform: scale(1.05); background: rgba(255,159,10,.16); }
+  #mode.on { display: flex; animation: in .35s var(--ease) both; } #mode:is(:hover,.hot) { transform: scale(1.05); background: rgba(255,159,10,.16); }
   #mode:focus-visible { outline: 2px solid #64d2ff; outline-offset: 3px; }
 
   /* tip: once in a while, one quiet line under the answer */
@@ -241,8 +241,8 @@
   .tip::before { content: attr(data-k); flex: none; font-weight: 600; color: #64d2ff; }
   .tip.learned { background: rgba(48,209,88,.14); box-shadow: inset 0 0 0 .5px rgba(48,209,88,.45); } .tip.learned::before { color: #30db5b; }
   .tip .off, .ok .details { flex: none; margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
-  .tip .off:hover, .ok .details:hover { color: #f5f5f7; }
-  .ok.offer { cursor: default; } .ok.offer:hover { background: rgba(255,255,255,.07); }   /* a question, not a command: nothing to unfold */
+  .tip .off:is(:hover,.hot), .ok .details:is(:hover,.hot) { color: #f5f5f7; }
+  .ok.offer { cursor: default; } .ok.offer:is(:hover,.hot) { background: rgba(255,255,255,.07); }   /* a question, not a command: nothing to unfold */
   .ok.offer p { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg2); }
   .ok.offer .details { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
   .tip.kofi { cursor: pointer; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); } .tip.kofi::before { color: #f5f5f7; }   /* quiet: no accent, it's an ask not a hint */
@@ -252,7 +252,7 @@
   .mem { margin-top: 12px; animation: in .35s var(--ease) .15s both; }
   .mem-h { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0; border: 0; cursor: pointer;
     font: 500 12px -apple-system, system-ui, sans-serif; color: var(--fg2); background: none; transition: color .2s; }
-  .mem-h:hover, .mem.open .mem-h { color: #f5f5f7; }
+  .mem-h:is(:hover,.hot), .mem.open .mem-h { color: #f5f5f7; }
   .mem-h .ic { width: 14px; height: 14px; flex: none; border-radius: 50%; display: grid; place-items: center; background: rgba(48,209,88,.2); }
   .mem.off .mem-h .ic { background: rgba(142,142,147,.22); }
   .mem svg { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -270,12 +270,12 @@
     font: 12.5px/1.4 -apple-system, system-ui, sans-serif; color: #e5e5ea; background: none; opacity: 0; transform: translateY(-4px);
     transition: background .15s, opacity .25s var(--ease), transform .36s var(--ease); }
   .mem.open .mem-i { opacity: 1; transform: none; transition-delay: 0s, calc(60ms + var(--i) * 35ms), calc(60ms + var(--i) * 35ms); }
-  .mem-i:hover { background: rgba(255,255,255,.07); }
+  .mem-i:is(:hover,.hot) { background: rgba(255,255,255,.07); }
   .mem-i svg { width: 9px; height: 9px; flex: none; stroke: #30d158; transform: translateY(1px); }
   .mem-i.del svg { stroke: #8e8e93; } .mem-i.del span { color: var(--fg2); text-decoration: line-through; }
   .mem-i span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .mem-i em { flex: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); opacity: 0; transition: opacity .2s; }
-  .mem-i:hover em, .mem-i:focus-visible em { opacity: 1; }
+  .mem-i:is(:hover,.hot) em, .mem-i:focus-visible em { opacity: 1; }
 
   /* typing box: grows in on hover (or the shortcut, in typing mode); the mic goes back to voice */
   #comp { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 0; height: 0; opacity: 0; overflow: hidden; flex: none; transition: height .24s var(--ease), margin .24s var(--ease), padding .24s var(--ease), opacity .18s; }
@@ -283,7 +283,7 @@
   #model, #models button { flex: none; height: 34px; max-width: 132px; padding: 0 12px; border: 0; border-radius: 17px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font: 500 12px -apple-system, system-ui, sans-serif; color: var(--fg2); background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14);
     transition: color .2s, background .25s, opacity .22s var(--ease), transform .38s var(--ease); }
-  #model:hover, #models button:hover { color: #fff; }
+  #model:is(:hover,.hot), #models button:is(:hover,.hot) { color: #fff; }
   /* the model row: the choices fan out of the chip while the field and mic fade back; a click mid-way just reverses */
   #models { position: absolute; inset: 1px 0; display: flex; justify-content: flex-end; gap: 6px; overflow-x: auto; scrollbar-width: none; pointer-events: none; }
   #models button { opacity: 0; transform: translateX(var(--dx, 0px)) scale(.9); transition-duration: .2s, .25s, .12s, .3s; }   /* folding back: labels fade before they overlap */
@@ -300,7 +300,7 @@
   #point, #mic { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; padding: 0; display: grid; place-items: center; cursor: pointer;
     background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.26), rgba(255,255,255,.07) 60%);
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 2px 6px rgba(0,0,0,.22); transition: transform .35s var(--spring), background .25s, opacity .22s var(--ease); }
-  #point:hover, #mic:hover { transform: scale(1.1); background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.4), rgba(255,255,255,.12) 60%); }
+  #point:is(:hover,.hot), #mic:is(:hover,.hot) { transform: scale(1.1); background: radial-gradient(120% 120% at 30% 15%, rgba(255,255,255,.4), rgba(255,255,255,.12) 60%); }
   #point:active, #mic:active { transform: scale(.94); }
   #point svg, #mic svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   #point.active, #point.marked { background: rgba(10,132,255,.55); }
@@ -315,7 +315,7 @@
   #pointbar .chip img, #pointbar .chip i { flex: none; width: 34px; height: 22px; border-radius: 6px; object-fit: cover; display: grid; place-items: center; background: rgba(255,255,255,.1); }
   #pointbar .chip img[hidden], #pointbar .chip img:not([hidden]) + i { display: none; }
   #pointbar .rm { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; background: none; color: var(--fg2); cursor: pointer; }
-  #pointbar .rm:hover { color: #fff; background: rgba(255,255,255,.1); } #pointbar .rm svg { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+  #pointbar .rm:is(:hover,.hot) { color: #fff; background: rgba(255,255,255,.1); } #pointbar .rm svg { width: 9px; height: 9px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
   #pointbar.has .chip { display: inline-flex; } #pointbar.has .hint { display: none; }
   #pointbar:not([data-s=coach]) .gotit { display: none; }
   #pointbar[data-s=coach] + #comp #point { box-shadow: inset 0 0 0 .5px rgba(255,255,255,.3), 0 0 0 2px rgba(10,132,255,.8); }
@@ -328,7 +328,7 @@
   #cTL, #cTR, #cBL, #cBR { width: 14px; height: 14px; z-index: 4; }
   #cTL { top: 0; left: 0; cursor: nwse-resize; } #cBR { bottom: 0; right: 0; cursor: nwse-resize; }
   #cTR { top: 0; right: 0; cursor: nesw-resize; } #cBL { bottom: 0; left: 0; cursor: nesw-resize; }
-  body:hover #grip { opacity: .45; }
+  body:is(:hover,.hot) #grip { opacity: .45; }
   #grip svg { width: 12px; height: 12px; stroke: #fff; stroke-width: 1.2; stroke-linecap: round; }
 
   @keyframes grow { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
@@ -346,15 +346,15 @@
     background:rgba(255,255,255,.07); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.12); color:#d1d1d6; font:500 11px -apple-system, system-ui, sans-serif;
     font-variant-numeric:tabular-nums; cursor:pointer; overflow:hidden; animation:in .35s var(--spring) both; transition:background .2s, transform .3s var(--spring); }
   #agents-pill span { white-space:nowrap; }   /* "1 agent" stays on one line; #status beside it gives up the room */
-  #agents-pill[hidden] { display:none; } #agents-pill:hover { background:rgba(255,255,255,.12); color:#fff; } #agents-pill:active { transform:scale(.95); }
+  #agents-pill[hidden] { display:none; } #agents-pill:is(:hover,.hot) { background:rgba(255,255,255,.12); color:#fff; } #agents-pill:active { transform:scale(.95); }
   #agents-pill i { flex:none; width:6px; height:6px; border-radius:50%; background:#0a84ff; box-shadow:0 0 6px rgba(10,132,255,.8); animation:pulse 1.8s ease-in-out infinite; }
   #agents-pill.attention i { background:#ff9f0a; box-shadow:0 0 6px rgba(255,159,10,.8); }
   /* keycap actions (Raycast-style): label + the key that does it; one blue main action */
   .keys, .ok .keys { display:flex; justify-content:flex-end; align-items:center; gap:6px; margin-top:14px; }
   .ok .keys button, .keys button { flex:none; height:28px; padding:0 6px 0 11px; border-radius:9px; display:inline-flex; align-items:center; gap:7px;
     background:transparent; box-shadow:none; color:#d1d1d6; font:500 12.5px -apple-system, system-ui, sans-serif; }
-  .ok .keys button:hover, .keys button:hover { background:rgba(255,255,255,.08); color:#fff; transform:none; }
-  .ok .keys button.go, .keys button.go { background:var(--accent); color:#fff; padding-right:5px; } .ok .keys button.go:hover { background:#0070df; }
+  .ok .keys button:is(:hover,.hot), .keys button:is(:hover,.hot) { background:rgba(255,255,255,.08); color:#fff; transform:none; }
+  .ok .keys button.go, .keys button.go { background:var(--accent); color:#fff; padding-right:5px; } .ok .keys button.go:is(:hover,.hot) { background:#0070df; }
   .ok .keys button:active { transform:scale(.97); } .keys button:disabled { opacity:.6; cursor:default; }
   kbd { min-width:20px; height:18px; padding:0 5px; box-sizing:border-box; border-radius:5px; display:inline-grid; place-items:center; font:500 10.5px system-ui;
     color:#f5f5f7; background:rgba(255,255,255,.1); box-shadow:inset 0 0 0 .5px rgba(255,255,255,.16), 0 1px 0 rgba(0,0,0,.3); }
@@ -365,14 +365,14 @@
   .agent-card.done .eyebrow i { background:#30d158; box-shadow:0 0 8px rgba(48,209,88,.5); animation:none; }
   .agent-card .made { display:grid; grid-template-columns:minmax(0,1fr); gap:6px; margin-top:10px; }
   .agent-card .made button { flex:none; display:flex; align-items:center; gap:10px; box-sizing:border-box; min-width:0; width:100%; height:auto; padding:7px 9px 7px 7px; border-radius:10px; text-align:left;
-    background:rgba(255,255,255,.06); font-weight:400; } .agent-card .made button:hover { transform:none; background:rgba(255,255,255,.1); } .agent-card .made button:hover small { color:#e5e5ea; }
+    background:rgba(255,255,255,.06); font-weight:400; } .agent-card .made button:is(:hover,.hot) { transform:none; background:rgba(255,255,255,.1); } .agent-card .made button:is(:hover,.hot) small { color:#e5e5ea; }
   .agent-card .made i { width:28px; height:28px; border-radius:8px; flex:none; display:grid; place-items:center; background:rgba(255,255,255,.1); }
   .agent-card .made button:first-child i { background:#0a84ff; box-shadow:0 3px 10px rgba(10,132,255,.35); }
   .agent-card .made svg { width:14px; height:14px; fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
   .agent-card .made span { min-width:0; flex:1; } .agent-card .made b, .agent-card .made small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .agent-card .made b { font-size:12.5px; font-weight:600; } .agent-card .made small { margin-top:1px; font-size:10.5px; color:var(--fg2); }
   .agent-card .keys button:not(:has(kbd)) { padding:0 11px; }
-  .agent-card .made .out { width:12px; height:12px; flex:none; stroke:var(--fg2); } .agent-card .made button:hover .out { stroke:#fff; }
+  .agent-card .made .out { width:12px; height:12px; flex:none; stroke:var(--fg2); } .agent-card .made button:is(:hover,.hot) .out { stroke:#fff; }
   /* the agent's answer leads the done card, read like any answer; long ones scroll inside so its actions stay in view */
   .agent-card { max-height:900px; }   /* not none: a card folding away (.gone) can only animate from a length */
   .agent-card .a { display:block; margin-top:8px; max-height:min(260px, calc(var(--screen-height, 10000px) - 300px)); overflow-y:auto; font-size:13.5px; line-height:1.55; cursor:default; }
@@ -382,7 +382,7 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
     #status.live span { background: none; color: #f5f5f7; }
-    body.dictate #orb { animation: fade .2s .12s both !important; } body.dictate :is(#check, .dn) { animation: fade .2s both !important; }   /* the pill's states cross-fade */
+    body.dictate #orb { animation: fade .2s both !important; } body.dictate :is(#check, .dn) { animation: fade .2s both !important; }   /* the pill's states cross-fade */
     .mini { transform: none !important; transition: opacity .2s !important; }
     .mini-point { animation: none !important; transition: opacity .2s !important; }
   }
@@ -430,7 +430,7 @@
   const part = c => turn()?.querySelector('.' + c);
   const pill = (state, s = '', ok = false) => {   // the dictation pill: listening (''), finishing, done or said; its line shows only when said
     document.body.classList.remove('finishing', 'done', 'said'); if (state) document.body.classList.add(state);
-    const n = $('dn'); n.className = ok ? 'dn ok' : 'dn'; n.textContent = s; fit(false); return n;
+    const n = $('dn'); n.className = ok ? 'dn tick' : 'dn'; n.textContent = s; fit(false); return n;
   };
   for (let i = 0; i < 9; i++) $('dictwave').append(document.createElement('i'));
   const post = m => webkit.messageHandlers.c.postMessage(m);
@@ -448,7 +448,7 @@
   };
   // Typing box. listening: the mic is on (clicking in drops it). Enter always sends; the app ignores it while an answer runs,
   // and the text stays in the box until the app takes it (ui.listen), so nothing typed is lost.
-  let listening = false, hover = false, working = false;
+  let listening = false, hover = false, working = false, hot = [];
   let compFrame = 0;
   const comp = (on, focus) => {
     $('comp').inert = !on;
@@ -719,6 +719,12 @@
     fresh.forEach(u => u.style.animationDelay = `${u.at - now}ms`);
     boxes.forEach(b => { if (a.contains(b)) b.style.animationDelay = `${(units[b.first]?.at ?? a.next) - now}ms`; });
   };
+  const shut = s => {   // a streamed line waits at a **bold, `code, [link or $math that has not closed yet, so its marks never flash as symbols
+    const k = s.lastIndexOf('\n') + 1, l = s.slice(k);   // its last word was cut, so a link still arriving is a [ with no ] yet; [1] or [ ] shows at once
+    const open = [l.split('**').length % 2 ? -1 : l.lastIndexOf('**'), l.split('`').length % 2 ? -1 : l.lastIndexOf('`'), l.search(/\[[^\]]*$/),
+      l.replace(INLINE, m => ' '.repeat(m.length)).search(/(?<!\\)\$(?![\d\s])/)].filter(i => i >= 0);   // a $ before a digit is a price and shows at once
+    return !open.length || (s.match(/^\s*```/gm) || []).length % 2 ? s : s.slice(0, k + Math.min(...open));   // inside a code block every mark is text
+  };
 
   let mini = null, miniTarget = null, miniEnd = 0, miniRemove = 0;
   const miniRect = () => {
@@ -810,6 +816,8 @@
   const agentAck=(a,row,text)=>{a.className='a agent-ack';a.replaceChildren();a.dataset.answer=text;
     if(row?.id){const c=document.createElement('canvas'),p=E.r('breathing',32);c.width=c.height=64;c.dataset.agent=row.id;c.style.filter='hue-rotate('+(parseInt(row.id.slice(0,4),16)%90-45)+'deg)';const ctx=c.getContext('2d');ctx.scale(2,2);E.p(ctx,E.M[p.mode](32,0,p.opts),true,null);a.append(c);}
     a.append(el('span','',text));};
+  // One ask can steer one agent and start others: each says its part on the same line.
+  const agentSay=(a,row,key,text)=>{const said={...JSON.parse(a.dataset.said||'{}'),[key]:text};a.dataset.said=JSON.stringify(said);agentAck(a,row,Object.values(said).map((t,_,all)=>all.length>1&&!/[.!?…]$/.test(t)?t+'.':t).join(' '));};
   const agentAnswer=row=>(row.result||'').replace(/\[agent-result\b[\s\S]*$/,'').trim()||row.summary||'Done';   // as agents.html reads it
   // What an agent made, as it says: Google types by mimeType, files by extension, the rest by host.
   const AGENT_KINDS=[[/spreadsheet|\.(csv|xlsx?|numbers)$/i,'Spreadsheet','<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M2 6h12M2 10h12M6 2v12"/>'],[/presentation|\.(pptx?|key)$/i,'Presentation','<rect x="1.5" y="3" width="13" height="8.5" rx="1.5"/><path d="M8 11.5v2.5M5.5 14h5"/>'],
@@ -869,12 +877,13 @@
     agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());status('Ready');clockStop();fit();},
     // The box says plainly that an agent took the ask (its orb swims to the chip meanwhile), then fades; the chip shows its steps.
     agentStarted(row){$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');clockStop();
-      const queued=row?.status==='queued',a=part('a');status(queued?'Agent queued':'Agent started');
-      if(row?.title&&visible&&a&&!a.textContent.trim())agentAck(a,row,queued?'Queued an agent for “'+row.title+'”. It starts when another one finishes.':'I started an agent on “'+row.title+'”. I’ll ping you when it’s done.');
+      const queued=row?.status==='queued',key=queued?'queued':'started',a=part('a'),named=JSON.parse(a?.dataset[key]||'[]');status(queued?'Agent queued':'Agent started');
+      if(row?.title&&visible&&a&&(!a.textContent.trim()||a.dataset.said)){named.push('“'+row.title+'”');a.dataset[key]=JSON.stringify(named);const list=new Intl.ListFormat('en').format(named),many=named.length>1;   // one ask can start several and queue others
+        agentSay(a,row,key,queued?(many?'Queued agents for '+list+'. They start when others finish.':'Queued an agent for '+list+'. It starts when another one finishes.'):many?'I started agents on '+list+'. I’ll ping you when they’re done.':'I started an agent on '+list+'. I’ll ping you when it’s done.');}
       if(!$('ask').value)comp(false);   // a sent typed ask leaves the empty composer focused, which would block the hand-off fade
       fit();},
     agentSteered(row){working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');status('');clockStop();
-      const a=part('a');if(a)agentAck(a,row,typeof row==='string'?row:'Told the '+row.title+' agent: '+(row.steer?.text||row.steer?.ack||'Got it'));fit();},
+      const a=part('a');if(a)agentSay(a,row,'told '+(row?.id||''),typeof row==='string'?row:'Told the '+row.title+' agent: '+(row.steer?.text||row.steer?.ack||'Got it'));fit();},
     agentCount(value){const count=typeof value==='number'?value:value.count,pill=$('agents-pill'),label=count+' agent'+(count===1?'':'s');pill.hidden=!count;pill.classList.toggle('attention',!!value.attention);
       pill.lastChild.textContent=label;pill.title=value.attention?'An agent needs you':'Open Agents';pill.setAttribute('aria-label',label+(value.attention?', one needs you':' running')+'. Open Agents');fit();},
     agentEscape(){const b=$('thread').querySelector('.agent-card [data-esc]');if(b)b.click();else post({agentGone:true});},   // Esc is a native hotkey: it picks the card's quiet choice
@@ -982,7 +991,7 @@
       boost = 1; $('orb').style.transform = ''; setState('solving');
       part('q')?.classList.remove('live', 'hear'); status('Thinking…', true); fit();
     },
-    finishing(label) {   // dictation released: the pill folds into the working orb (the orb fades in a beat late, so a fast insert never flashes it)
+    finishing(label) {   // dictation released: the wave goes and the pill folds into the working orb
       listening = false; boost = 1; $('orb').style.transform = ''; document.body.classList.remove('locked', 'hearing');
       setState('solving'); pill('finishing', label);
     },
@@ -999,14 +1008,14 @@
     learned(word) {
       const button = document.createElement('button'); button.className = 'btn'; button.textContent = 'Undo';
       button.onclick = () => { button.disabled = true; post({ learnedUndo: true }); };
-      pill('said', `Learned '${word}'`, true).append(' ', button); fit(false);
+      pill('said', `Learned “${word}”`, true).append(' ', button); fit(false);
     },
     line(l) {
       const tag = l[0], s = l.slice(2);
       let top = null;   // a streamed answer: the box keeps its start in view and never chases the bottom
       if (tag !== '…' && tag !== '✓') unstream();
       if (tag === '…') {   // the answer as it arrives; ✓ replaces it
-        const a = part('a'); if (a && !a.dataset.answer) { if (!s) unstream(); else { reveal(a, s.replace(/\u2028/g, '\n').replace(/\S+$/, ''), a.classList.contains('streaming')); a.classList.add('streaming'); top = a; } }   // its last word may still be arriving
+        const a = part('a'); if (a && !a.dataset.answer) { if (!s) unstream(); else { reveal(a, shut(s.replace(/\u2028/g, '\n').replace(/\S+$/, '')), a.classList.contains('streaming')); a.classList.add('streaming'); top = a; } }   // its last word may still be arriving
       }
       else if (tag === '▣') { try { miniUpdate(JSON.parse(s)); } catch {} }
       else if (tag === '@') miniPoint(s);
@@ -1086,6 +1095,7 @@
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();
+      if (document.body.classList.contains('dictate')) return;   // the pill has no typing box: only its buttons act
       if (el?.closest('#mode')) return enableSafeMode();
       if ($('comp').classList.contains('pick')) pickRow(false);   // a click anywhere else closes the model row
       if (el?.closest('.tip .off')) { post({ off: 'tips' }); el.closest('.tip').remove(); status('Tips off · The menu bar turns them back on'); return fit(); }   // its own "Turn off": no more tips
@@ -1219,7 +1229,12 @@
       $('models').replaceChildren(...list.map(v => { const b = document.createElement('button'); b.dataset.v = v; b.textContent = name(v); b.classList.toggle('on', v === pick); b.setAttribute('role', 'menuitemradio'); b.setAttribute('aria-checked', v === pick); return b; }));
       spread();
     },
-    xhot(on) { $('x').classList.toggle('hot', on); },
+    pointer(p, x) {   // native's mouse tracking: .hot is the :hover chain under the point (x: on the ×'s corner); returns whether the cursor is a hand
+      const m = x ? $('x') : p.length ? document.elementFromPoint(p[0], p[1]) : null, now = [];
+      for (let e = m; e; e = e.parentElement) now.push(e);
+      hot.forEach(e => now.includes(e) || e.classList.remove('hot')); now.forEach(e => e.classList.add('hot')); hot = now;
+      return !!x || !!m && getComputedStyle(m).cursor === 'pointer';
+    },
     copied() { status('Copied to clipboard'); setTimeout(() => $('status').textContent === 'Copied to clipboard' && status(''), 1400); },
   };
   fit(); post({ ready: 1 });
