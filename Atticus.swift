@@ -3582,7 +3582,7 @@ final class RoutineWake {
 // Shows until finished once; to see it again: defaults delete com.atticus.app onboarded, then restart the app.
 final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     var win: NSWindow?, web: WKWebView?, timer: Timer?
-    var screenInitiallyGranted = false, screenGrantedDuringSetup = false
+    var screenInitiallyGranted = false, screenGrantedDuringSetup = false, tourPending = false
     let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 
     func open() {
@@ -3613,6 +3613,8 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         }
     }
 
+    func tour() { tourPending = true; open(); push() }   // the feature pages setup skips, from the menu bar
+
     // Which permissions are on, sent to the page every second (System Settings changes them behind our back).
     func push() {
         DispatchQueue.global().async { [weak self] in
@@ -3624,6 +3626,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                 self?.call("ob.prefs", ["meeting": Prefs.bool("meeting"), "draw": Prefs.bool("draw"), "routing": Prefs.str("routing"), "hotkeyLabel": Prefs.str("hotkeyLabel"), "safe": Prefs.bool("safe"),
                                         "dictateMode": Prefs.str("dictateMode"), "dictateHotkeyLabel": Prefs.str("dictateHotkeyLabel"), "globeTaken": globeKeyTaken()])
                 self?.call("ob.server", ["apiBase": Prefs.str("apiBase"), "apiModel": Prefs.str("apiModel")])
+                if self?.tourPending == true { self?.web?.evaluateJavaScript("ob.tour()") { _, error in if error == nil { self?.tourPending = false } } }   // fails until the page loads
             }
         }
     }
@@ -4097,6 +4100,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         m.addItem(.separator())
         add(m, "Settings…", #selector(openSettings), ",")
         add(m, "Setup & Permissions…", #selector(openSetup), "")
+        add(m, "What Atticus Can Do…", #selector(openTour), "")
         add(m, "Report Feedback…", #selector(reportFeedback), "")
         add(m, "Leave a Tip…", #selector(tipJar), "")
         if !Prefs.bool("tips") { add(m, "Show Tips Again", #selector(tipsOn), "") }   // a tip's "Turn off" has no Settings row to undo it
@@ -4131,6 +4135,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
     @objc func openAgents() { agentsUI.openView() }
     @objc func hideAgents() { Prefs.set("agentsHidden",!Prefs.bool("agentsHidden")) }
     @objc func openSetup() { onboarding.open() }
+    @objc func openTour() { onboarding.tour() }
     @objc func reportFeedback() { settings.open(tab:"feedback") }
     @objc func tipJar() { NSWorkspace.shared.open(kofi) }
     @objc func tipsOn() { settings.apply("tips", true); settings.push() }

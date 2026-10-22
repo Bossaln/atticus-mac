@@ -17,7 +17,7 @@ function page(id){
  const active=d.querySelector('.page.on');assert(active.id===id,'Page '+id+' is active');
  for(const p of d.querySelectorAll('.page'))assert(p.inert===(p!==active)&&p.getAttribute('aria-hidden')===String(p!==active),'Accessible state '+id+' / '+p.id);
 }
-async function go(id){d.querySelector(`.page.on [data-go="${id}"]`).click();await until(()=>d.querySelector('.page.on')?.id===id,'page '+id);page(id);
+async function go(id){(d.querySelector(`.page.on [data-go="${id}"]`)||d.querySelector('.page.on .btn[data-go="next"]:not(.quiet)')||d.querySelector('.page.on [data-go="next"]')).click();await until(()=>d.querySelector('.page.on')?.id===id,'page '+id);page(id);
  for(const e of $(''+id).children){const r=e.getBoundingClientRect();if(!e.hidden)assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window '+id+' / '+(e.id||e.tagName))}
 }
 page('welcome');await go('perms');
@@ -37,16 +37,7 @@ $('client-alt').click();await until(()=>!$('prov').hidden,'provider sheet for De
 $('prov').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await until(()=>$('prov').hidden,'provider sheet to close');assert(!messages.some(m=>m.do==='provider'&&m.client==='devin'),'Escape cancels without saving');
 $('client-alt').click();await until(()=>!$('prov').hidden,'provider sheet for Pi');d.querySelector('.opt[data-p="pi"]').click();assert($('prov-use').textContent==='Use Pi','Pi choice');$('prov-use').click();await until(()=>messages.some(m=>m.do==='provider'&&m.client==='pi'),'Pi choice to save');assert(true,'Pi choice is saved');
 w.ob.plan({ok:true,need:'',client:'pi',text:'Pi is installed.'});assert($('p-claude').querySelector('.txt b').textContent==='Pi','Pi plan status is shown');
-w.ob.plan({ok:true,need:'',client:'server',text:'Using a custom server.'});await go('agents');
-await until(()=>messages.some(m=>m.do==='connectors'),'connector status request');assert(true,'Agents step asks for connector status');
-w.ob.set({mic:true,speech:true,ax:true,screen:false,auto:true,chrome:false,calendar:true,tools:true});w.ob.connectors({connected:['Gmail'],signin:['Notion']});
-assert($('a-ax').classList.contains('ok')&&!$('a-screen').classList.contains('ok')&&$('a-connectors').classList.contains('ok')&&$('a-connectors').textContent.includes('1 need sign-in'),'Agents rows show live status, nothing asked twice');
-assert(!$('enable').hidden&&$('agents-next').textContent==='Skip for Now','Enable All shows while something is missing');
-$('enable').click();await until(()=>messages.some(m=>m.do==='enableAll'&&m.connected==='true'),'Enable All request');assert(true,'Enable All starts the walk');
-w.ob.walk('screen');assert($('a-screen').classList.contains('now')&&!$('a-ax').classList.contains('now')&&$('a-screen').textContent.includes('Turn on Atticus in System Settings')&&$('enable').disabled,'Enable All marks the step it is on and says what to do');
-w.ob.set({mic:true,speech:true,ax:true,screen:true,auto:true,chrome:true,calendar:true,tools:true});w.ob.walk('');
-assert($('enable').hidden&&$('agents-next').textContent==='Continue','All on: Continue is the main action');
-await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
+w.ob.plan({ok:true,need:'',client:'server',text:'Using a custom server.'});await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
 w.ob.tried();await until(()=>!$('try-next').hidden&&$('try-skip').hidden,'Try Next button');assert(true,'Shortcut enables Next');
 await go('dictate');
 const P0={draw:true,meeting:false,routing:'balanced',dictateMode:'verbatim',dictateHotkeyLabel:''},keysIn=()=>[...$('dc-field').querySelectorAll('i')].map(i=>i.textContent).join('');
@@ -60,8 +51,18 @@ $('dc-clear').click();await until(()=>messages.some(m=>m.do==='clearDictate'),'d
 const ex=d.querySelectorAll('#dc-ex button');assert(ex.length===5&&['Self-corrections','Misheard words','Lists','Numbers'].every(t=>$('dictate').textContent.includes(t)),'Dictate teaches Clean up by example');
 assert($('dc-sub').textContent.includes('misheard words fixed')&&$('dc-sub').textContent.includes('learns it'),'Dictate says what Clean up fixes and that it learns');
 ex[1].click();await until(()=>ex[1].getAttribute('aria-pressed')==='true'&&$('dc-said').textContent.includes('Monday')&&$('dc-said').querySelector('.x'),'chosen dictation example');assert(ex[0].getAttribute('aria-pressed')==='false','Picking an example plays it, with the dropped words marked');
-$('dc-field').click();await until(()=>$('dc-field').classList.contains('rec'),'dictation recording');await go('mac');await until(()=>messages.some(m=>m.do==='cancelRecord'),'recording cancellation');assert(true,'Leaving mid-recording cancels it');
-assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');
+$('dc-field').click();await until(()=>$('dc-field').classList.contains('rec'),'dictation recording');await go('done');await until(()=>messages.some(m=>m.do==='cancelRecord'),'recording cancellation');assert(true,'Leaving mid-recording cancels it');
+assert(d.querySelectorAll('#dots i').length===5&&!$('tour').hidden,'Setup is five steps and offers the tour at the end');
+$('tour').click();await until(()=>d.querySelector('.page.on')?.id==='agents','tour starts');page('agents');assert(d.querySelectorAll('#dots i').length===11&&$('tour').hidden&&$('back').hidden,'The tour has its own steps');
+await until(()=>messages.some(m=>m.do==='connectors'),'connector status request');assert(true,'Agents step asks for connector status');
+w.ob.set({mic:true,speech:true,ax:true,screen:false,auto:true,chrome:false,calendar:true,tools:true});w.ob.connectors({connected:['Gmail'],signin:['Notion']});
+assert($('a-ax').classList.contains('ok')&&!$('a-screen').classList.contains('ok')&&$('a-connectors').classList.contains('ok')&&$('a-connectors').textContent.includes('1 need sign-in'),'Agents rows show live status, nothing asked twice');
+assert(!$('enable').hidden&&$('agents-next').textContent==='Skip for Now','Enable All shows while something is missing');
+$('enable').click();await until(()=>messages.some(m=>m.do==='enableAll'&&m.connected==='true'),'Enable All request');assert(true,'Enable All starts the walk');
+w.ob.walk('screen');assert($('a-screen').classList.contains('now')&&!$('a-ax').classList.contains('now')&&$('a-screen').textContent.includes('Turn on Atticus in System Settings')&&$('enable').disabled,'Enable All marks the step it is on and says what to do');
+w.ob.set({mic:true,speech:true,ax:true,screen:true,auto:true,chrome:true,calendar:true,tools:true});w.ob.walk('');
+assert($('enable').hidden&&$('agents-next').textContent==='Continue','All on: Continue is the main action');
+await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');
 assert($('point').textContent.includes('whiteboard')&&d.querySelectorAll('#wb-card [data-s]').length===3,'Draw on screen shows the whiteboard explanation');
 assert(d.querySelector('[data-k="draw"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');
 d.querySelector('[data-k="draw"]').click();await until(()=>messages.some(m=>m.do==='set'&&m.k==='draw'&&m.v==='false'),'draw preference');assert(true,'Switch sends native preference');
