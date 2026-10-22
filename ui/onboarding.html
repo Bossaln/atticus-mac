@@ -372,7 +372,7 @@
   <p class="sub r" id="try-talk">Hold the keys anywhere, say what you need, then let go. Try one now.</p>
   <div class="keys big r" id="trykeys"><div class="key">⌃</div><div class="key">⌥</div><div class="key wide">Space</div></div>
   <div id="hint" class="r">Hold the keys and say “open Calculator”.</div>
-  <div class="bar2 r"><button class="btn quiet" data-go="mac" id="try-skip">Skip</button><button class="btn" data-go="mac" id="try-next" hidden>Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="dictate" id="try-skip">Skip</button><button class="btn" data-go="dictate" id="try-next" hidden>Next</button></div>
 </section>
 
 <section class="page" id="mac">
@@ -409,7 +409,7 @@
   </div>
   <textarea id="pad" class="r" aria-label="Practice text">hey can u send me the notes from today, thx</textarea>
   <div class="done-note r">Your turn: select this line, hold the keys, say “make this polite”.</div>
-  <div class="bar2 r"><button class="btn quiet" data-go="dictate">Skip</button><button class="btn" data-go="dictate">Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="point">Skip</button><button class="btn" data-go="point">Next</button></div>
 </section>
 
 <section class="page" id="dictate">
@@ -428,7 +428,7 @@
     <div class="keyfield"><button class="kf" id="dc-field" aria-labelledby="dc-label" aria-describedby="dc-hint"></button><button class="x" id="dc-clear" aria-label="Clear dictation shortcut" hidden>×</button></div></div>
   <div class="subrow r" id="dc-globe" hidden><span>Set Press 🌐 key to Do Nothing</span><button id="dc-globe-open">Open Keyboard Settings</button></div>
   <div class="subrow r" id="dc-mode"><span id="dc-mode-hint">Clean up tidies it as shown. Verbatim types every word.</span><div class="seg" data-k="dictateMode" role="group" aria-label="Dictated text"><button data-v="verbatim">Verbatim</button><button data-v="cleanup">Clean up</button></div></div>
-  <div class="bar2 r"><button class="btn quiet" data-go="point">Skip</button><button class="btn" data-go="point">Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="mac">Skip</button><button class="btn" data-go="mac">Next</button></div>
 </section>
 
 <section class="page" id="point">
@@ -562,7 +562,7 @@
 <script type="module">
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
-  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'dictate', 'point', 'pointer', 'work', 'meeting', 'improve', 'tip', 'done'];
+  const pages = ['welcome', 'perms', 'agents', 'try', 'dictate', 'mac', 'learn', 'text', 'point', 'pointer', 'work', 'meeting', 'improve', 'tip', 'done'];
   let cur = '', orbWake = null;
   const skip = id => ['devin', 'pi'].includes(provider) && ['agents', 'work'].includes(id);   // their CLIs run no Atticus agents
   const go = id => {
@@ -598,7 +598,8 @@
       $('welkeys').replaceChildren(...caps()); $('trykeys').replaceChildren(...caps());
     }
     const key = prefs.dictateHotkeyLabel;
-    $('dc-sub').textContent = key ? `Hold ${key} to talk. Double-tap to lock.` : 'Give dictation a shortcut. Hold it to talk, double-tap to lock.';
+    $('dc-sub').textContent = (key ? `Hold ${key} and talk; double-tap to lock. ` : 'Give dictation a shortcut, hold it and talk. ') +
+      (other ? 'Your words land at the cursor.' : 'It types what you meant: no ums or false starts, misheard words fixed, lists formatted. Fix a word by hand once and it learns it.');
     $('dc-key').textContent = key || 'fn'; $('dc-globe').hidden = !prefs.globeTaken;
     $('dc-mode').classList.toggle('dim', !prefs.dictateHotkeyLabel);
     document.querySelector('[data-k=dictateMode] [data-v=cleanup]').disabled = other;
@@ -845,10 +846,10 @@
   };
   // Dictate's examples: what you say, then what Clean up types. [Brackets] mark the words that go.
   const DC = [['Fillers', '[Um,] I was, [like, you know,] thinking we could leave.', 'I was thinking we could leave.'],
-    ['Scratch that', '[Table for six, scratch that,] table for eight.', 'Table for eight.'],
-    ['Actually…', 'Meet me at [four, actually] five.', 'Meet me at five.'],
-    ['Lists', 'Shopping list: eggs, milk, and bread.', 'Shopping list:\n- Eggs\n- Milk\n- Bread'],
-    ['New line', 'Hi Sam [new line] can you review this [question mark]', 'Hi Sam\nCan you review this?']];
+    ['Self-corrections', 'Can we [meet Monday? Can we, uh, can we] meet [on the, actually,] Tuesday?', 'Can we meet Tuesday?'],
+    ['Misheard words', 'Can you clear the cash and push to Maine?', 'Can you clear the cache and push to main?'],
+    ['Lists', 'For the trip I need socks, a charger and snacks.', 'For the trip, I need:\n- Socks\n- A charger\n- Snacks'],
+    ['Numbers', 'It costs five dollars and starts at three thirty.', 'It costs $5 and starts at 3:30.']];
   const said = s => s.match(/\[[^\]]+\]|\S+/g).flatMap(t => t[0] === '[' ? t.slice(1, -1).split(' ').map(w => [w, true]) : [[t, false]]);
   const word = ([w, x]) => Object.assign(document.createElement('span'), { textContent: w, className: x ? 'x' : '' });
   let dcAt = 0, dcGen = 0, dcWake = null;

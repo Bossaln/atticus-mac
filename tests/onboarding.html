@@ -48,7 +48,7 @@ w.ob.set({mic:true,speech:true,ax:true,screen:true,auto:true,chrome:true,calenda
 assert($('enable').hidden&&$('agents-next').textContent==='Continue','All on: Continue is the main action');
 await go('try');assert($('try-next').hidden,'Try Next waits for shortcut');
 w.ob.tried();await until(()=>!$('try-next').hidden&&$('try-skip').hidden,'Try Next button');assert(true,'Shortcut enables Next');
-await go('mac');assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('dictate');
+await go('dictate');
 const P0={draw:true,meeting:false,routing:'balanced',dictateMode:'verbatim',dictateHotkeyLabel:''},keysIn=()=>[...$('dc-field').querySelectorAll('i')].map(i=>i.textContent).join('');
 w.ob.prefs(P0);assert($('dc-field').textContent==='Record Shortcut'&&$('dc-clear').hidden&&$('dc-mode').classList.contains('dim'),'Dictation starts with no shortcut and its mode greyed');
 $('dc-field').click();await until(()=>messages.some(m=>m.do==='recordDictate')&&$('dc-field').classList.contains('rec'),'dictation recorder');assert($('dc-field').textContent==='Type Shortcut','Clicking the field records the next keys');
@@ -57,9 +57,11 @@ w.ob.taken('dictate',false);w.ob.recorded('');assert($('dc-hint').className==='w
 $('dc-field').click();await until(()=>$('dc-field').classList.contains('rec'),'dictation re-recording');w.ob.recorded('⌃⌥D');assert(!$('dc-field').classList.contains('rec')&&keysIn()==='⌃⌥D'&&!$('dc-clear').hidden&&!$('dc-mode').classList.contains('dim'),'A recorded shortcut shows its keys, a clear button and its mode');
 d.querySelector('#dc-mode [data-v=cleanup]').click();await until(()=>messages.some(m=>m.do==='set'&&m.k==='dictateMode'&&m.v==='cleanup'),'dictation mode save');assert(true,'Dictation mode is saved');
 $('dc-clear').click();await until(()=>messages.some(m=>m.do==='clearDictate'),'dictation shortcut clear');assert($('dc-field').textContent==='Record Shortcut','Clear removes the shortcut');
-const ex=d.querySelectorAll('#dc-ex button');assert(ex.length===5&&$('dictate').textContent.includes('Scratch that')&&$('dictate').textContent.includes('New line'),'Dictate teaches Clean up by example');
-ex[1].click();await until(()=>ex[1].getAttribute('aria-pressed')==='true'&&$('dc-said').textContent.includes('scratch')&&$('dc-said').querySelector('.x'),'chosen dictation example');assert(ex[0].getAttribute('aria-pressed')==='false','Picking an example plays it, with the dropped words marked');
-$('dc-field').click();await until(()=>$('dc-field').classList.contains('rec'),'dictation recording');await go('point');await until(()=>messages.some(m=>m.do==='cancelRecord'),'recording cancellation');assert(true,'Leaving mid-recording cancels it');
+const ex=d.querySelectorAll('#dc-ex button');assert(ex.length===5&&['Self-corrections','Misheard words','Lists','Numbers'].every(t=>$('dictate').textContent.includes(t)),'Dictate teaches Clean up by example');
+assert($('dc-sub').textContent.includes('misheard words fixed')&&$('dc-sub').textContent.includes('learns it'),'Dictate says what Clean up fixes and that it learns');
+ex[1].click();await until(()=>ex[1].getAttribute('aria-pressed')==='true'&&$('dc-said').textContent.includes('Monday')&&$('dc-said').querySelector('.x'),'chosen dictation example');assert(ex[0].getAttribute('aria-pressed')==='false','Picking an example plays it, with the dropped words marked');
+$('dc-field').click();await until(()=>$('dc-field').classList.contains('rec'),'dictation recording');await go('mac');await until(()=>messages.some(m=>m.do==='cancelRecord'),'recording cancellation');assert(true,'Leaving mid-recording cancels it');
+assert(!!$('mac-mini')&&$('mac').textContent.includes('background'),'Mac preview explains background work and live mini screen');await go('learn');assert($('learn').textContent.includes('remember'),'Setup teaches that Atticus remembers');await go('text');await go('point');
 assert($('point').textContent.includes('whiteboard')&&d.querySelectorAll('#wb-card [data-s]').length===3,'Draw on screen shows the whiteboard explanation');
 assert(d.querySelector('[data-k="draw"]').checked&&!d.querySelector('[data-k="meeting"]').checked,'Switches reflect prefs');
 d.querySelector('[data-k="draw"]').click();await until(()=>messages.some(m=>m.do==='set'&&m.k==='draw'&&m.v==='false'),'draw preference');assert(true,'Switch sends native preference');
