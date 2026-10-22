@@ -3339,7 +3339,8 @@ def main_delivery_required():
 
 def agent_title(request):
     case = {w.lower(): w for w in re.findall(r"[\w'$-]+", request)}
-    words = max(([w for w in re.findall(r"[a-z0-9'.-]+", plain(c)) if w not in STOP | FILLER] for c in MORE.split(request)[::2]), key=len, default=[])   # the step with the most words that matter: "Can you do the steps and get me the API key" -> "Get API key"
+    skip = STOP | FILLER | set('by too have has had am are was were will should does did'.split())   # closed-class words never name a task
+    words = max((list(dict.fromkeys(w for w in re.findall(r"[a-z0-9'.-]+", plain(c)) if w not in skip)) for c in MORE.split(request)[::2]), key=len, default=[])   # the step with the most words that matter: "Can you do the steps and get me the API key" -> "Get API key"
     title = ' '.join(case.get(w, w) for w in words[:5])[:80]
     return title[:1].upper() + title[1:] or 'Background task'
 
@@ -4741,7 +4742,7 @@ def handoff_context(known, work):
 
 
 class MainMove:
-    """The running main ask moves to a background agent: by itself once it runs long, or by the user (⌃⌥↩) at any time."""
+    """The running main ask moves to a background agent: by itself once its tools run long or take 3 steps, or by the user (⌃⌥↩) at any time."""
     carried = {}   # ask folder → state: a continuation or retry keeps its clock, trace and move file
 
     def __init__(self, task, p, request=None):
@@ -4783,13 +4784,15 @@ class MainMove:
                 if commit and not os.path.exists(commit): self.last = now; return
                 self.ready = True
                 print('⇢ ' + json.dumps({'a': self.answer}), flush=True)
-            if not waiting: self.elapsed += max(0, now - self.last)
+            # the clock runs only while a tool runs: the model reading and writing its answer is not long work
+            if not waiting and any(s.get('status') == 'in-flight' for s in self.trace.values()): self.elapsed += max(0, now - self.last)
             self.last = now
             try:
                 with open(self.answer) as f: answer = f.read()
             except OSError: answer = ''
+            steps = sum(' --offset ' not in s['input'] for s in self.trace.values())   # the next page of a window continues the same read
             # Writing-only replies reveal their draft mode only when the answer arrives.
-            if answer != 'go' and (waiting or not self.trace or len(self.trace) < 3 and self.elapsed < 15): return
+            if answer != 'go' and (waiting or not self.trace or steps < 3 and self.elapsed < 15): return
             try:
                 self.pending = self.handoff()
                 persist_handoff(self.pending, self.p.pid)

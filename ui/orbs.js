@@ -834,3 +834,140 @@ function resolvePreset(state, size) {
   return resolved;
 }
 export { MODE_FRAMES as M, paintFrame as p, resolvePreset as r };
+
+// ── Atticus, not part of the thinking-orbs engine: Markdown and TeX math for every answer (the box, its agent card, the Agent view and shelf) ──
+// TeX → MathML, drawn by WebKit's own math layout: the subset short answers use. Anything else throws and shows the source.
+const MML = 'http://www.w3.org/1998/Math/MathML';
+const MI = {alpha:'α',beta:'β',gamma:'γ',delta:'δ',epsilon:'ϵ',varepsilon:'ε',zeta:'ζ',eta:'η',theta:'θ',vartheta:'ϑ',iota:'ι',kappa:'κ',lambda:'λ',mu:'μ',nu:'ν',xi:'ξ',pi:'π',rho:'ρ',sigma:'σ',tau:'τ',upsilon:'υ',phi:'ϕ',varphi:'φ',chi:'χ',psi:'ψ',omega:'ω',
+  Gamma:'Γ',Delta:'Δ',Theta:'Θ',Lambda:'Λ',Xi:'Ξ',Pi:'Π',Sigma:'Σ',Phi:'Φ',Psi:'Ψ',Omega:'Ω',infty:'∞',partial:'∂',nabla:'∇',emptyset:'∅',varnothing:'∅',ell:'ℓ',hbar:'ℏ',R:'ℝ',N:'ℕ',Z:'ℤ',Q:'ℚ',C:'ℂ'};
+const MO = {cdot:'⋅',times:'×',div:'÷',pm:'±',mp:'∓',le:'≤',leq:'≤',ge:'≥',geq:'≥',ne:'≠',neq:'≠',approx:'≈',equiv:'≡',sim:'∼',cong:'≅',propto:'∝',to:'→',rightarrow:'→',leftarrow:'←',Rightarrow:'⇒',implies:'⇒',
+  Leftrightarrow:'⇔',iff:'⇔',mapsto:'↦',in:'∈',notin:'∉',subset:'⊂',subseteq:'⊆',cup:'∪',cap:'∩',setminus:'∖',forall:'∀',exists:'∃',angle:'∠',circ:'∘',degree:'°',cdots:'⋯',ldots:'…',dots:'…',perp:'⊥',parallel:'∥',
+  neg:'¬',land:'∧',lor:'∨',mid:'∣',prime:'′',therefore:'∴',langle:'⟨',rangle:'⟩',lfloor:'⌊',rfloor:'⌋',lceil:'⌈',rceil:'⌉',int:'∫',iint:'∬',oint:'∮','{':'{','}':'}','|':'‖','%':'%','$':'$','#':'#','&':'&','_':'_'};
+const BIG = {sum:'∑',prod:'∏',lim:'lim',max:'max',min:'min',sup:'sup',inf:'inf',bigcup:'⋃',bigcap:'⋂'};   // limits go under and over in display math
+const SPACE = {',':'.17em',':':'.22em',';':'.28em','!':'-.17em',' ':'.25em',quad:'1em',qquad:'2em'};
+const ACCENT = {overline:'‾',bar:'‾',vec:'→',overrightarrow:'→',hat:'^',widehat:'^',tilde:'~',widetilde:'~',dot:'˙',ddot:'¨'};
+const FN = /^(sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|lg|exp|det|gcd|deg|arg|dim|ker)$/;
+const ENV = {pmatrix:['(',')'],bmatrix:['[',']'],Bmatrix:['{','}'],vmatrix:['|','|'],matrix:['',''],cases:['{',''],aligned:['',''],align:['',''],'align*':['',''],gathered:['',''],array:['','']};
+const tex = (src, block) => {
+  if (src.length > 3000) throw Error('long');
+  const found = [...src.matchAll(/\\[a-zA-Z]+\*?|\\.|\d+(?:\.\d+)?|\S/g)], t = found.map(m => m[0]), at = found.map(m => m.index);
+  let i = 0;
+  const fail = () => { throw Error('tex'); };
+  const node = (tag, kids = [], attrs = {}) => { const n = document.createElementNS(MML, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); n.append(...kids); return n; };
+  const leaf = (tag, s, attrs) => node(tag, [s], attrs);
+  const row = kids => kids.length === 1 ? kids[0] : node('mrow', kids);
+  const fence = d => leaf('mo', d, {fence: 'true', stretchy: 'true'});
+  const delim = () => { const d = t[i++] ?? fail(); return d === '.' ? '' : d[0] === '\\' ? MO[d.slice(1)] ?? fail() : d; };
+  const raw = () => {   // \text{…}: the source as written, spaces kept
+    if (t[i] !== '{') fail();
+    let depth = 0, j = i;
+    do { depth += t[j] === '{' ? 1 : t[j] === '}' ? -1 : 0; j++; } while (depth && j < t.length);
+    if (depth) fail();
+    const s = src.slice(at[i] + 1, at[j - 1]); i = j; return s.replace(/\\(.)/g, '$1');
+  };
+  const expr = stop => { const kids = []; while (i < t.length && !stop.includes(t[i])) kids.push(scripts()); return row(kids); };
+  const group = () => { if (t[i] !== '{') return atom(true); i++; const g = expr(['}']); if (t[i++] !== '}') fail(); return g; };
+  const atom = arg => {
+    const s = t[i++];
+    if (s === undefined || s === '}' || s === '&') fail();
+    if (s === '{') { i--; return group(); }
+    if (/^\d/.test(s)) { if (arg && s.length > 1) { t[--i] = s.slice(1); at[i]++; return leaf('mn', s[0]); } return leaf('mn', s); }   // \frac12: one digit each
+    if (s[0] !== '\\') return /^[a-zA-Z]$/.test(s) ? leaf('mi', s) : leaf('mo', {'-': '−', '*': '∗', "'": '′'}[s] || s, /^[()[\]|]$/.test(s) ? {stretchy: 'false'} : undefined);   // only \left…\right grows
+    const c = s.slice(1);
+    if (/^[dtc]?frac$/.test(c)) return node('mfrac', [group(), group()]);
+    if (c === 'binom') return row([leaf('mo', '('), node('mfrac', [group(), group()], {linethickness: '0'}), leaf('mo', ')')]);
+    if (c === 'sqrt') { if (t[i] !== '[') return node('msqrt', [group()]); i++; const n = expr([']']); i++; return node('mroot', [group(), n]); }
+    if (/^(text|textrm|textit|mbox)$/.test(c)) return leaf('mtext', raw());
+    if (c === 'textbf') return leaf('mtext', raw(), {mathvariant: 'bold'});
+    if (c === 'mathrm' || c === 'operatorname') return leaf('mi', raw(), {mathvariant: 'normal'});
+    if (c === 'mathbb') { const s = raw(); return leaf('mi', MI[s] ?? fail()); }
+    if (c === 'mathbf' || c === 'boldsymbol') { const g = group(); g.setAttribute('mathvariant', 'bold'); return g; }
+    if (ACCENT[c]) return node('mover', [group(), leaf('mo', ACCENT[c], {stretchy: String(!/^(dot|ddot|hat|tilde|vec)$/.test(c))})], {accent: 'true'});
+    if (c === 'underline') return node('munder', [group(), leaf('mo', '_', {stretchy: 'true'})], {accentunder: 'true'});
+    if (c === 'boxed') return node('mrow', [group()], {style: 'border: 1px solid; padding: 3px 5px'});
+    if (c === 'left') { const open = delim(), body = expr(['\\right']); if (t[i++] !== '\\right') fail(); return row([fence(open), body, fence(delim())]); }
+    if (c === 'begin') {
+      const env = raw(), [open, close] = ENV[env] ?? fail(), rows = [[]];
+      if (env === 'array') raw();   // its column spec
+      for (;;) {
+        rows.at(-1).push(expr(['&', '\\\\', '\\end']));
+        const sep = t[i++];
+        if (sep === '\\\\') rows.push([]); else if (sep === '\\end') { raw(); break; } else if (sep !== '&') fail();
+      }
+      const align = /^align|aligned/.test(env) ? {columnalign: 'right left', columnspacing: '0'} : env === 'cases' ? {columnalign: 'left left'} : {};
+      const table = node('mtable', rows.filter(r => r.some(c => c.childNodes.length || c.textContent)).map(r => node('mtr', r.map(c => node('mtd', [c])))), align);
+      return row([open && fence(open), table, close && fence(close)].filter(Boolean));
+    }
+    if (c in SPACE) return node('mspace', [], {width: SPACE[c]});
+    if (/^(displaystyle|textstyle|limits|nolimits|\\)$/.test(c)) return node('mrow');
+    if (FN.test(c)) { const n = leaf('mi', c); n.fn = true; return n; }
+    if (BIG[c]) { const n = leaf('mo', BIG[c], {movablelimits: 'true'}); n.big = true; return n; }
+    if (MI[c]) return leaf('mi', MI[c]);
+    if (MO[c]) return leaf('mo', MO[c], /^([{}|]|[lr](angle|vert|floor|ceil))$/.test(c) ? {stretchy: 'false'} : undefined);
+    return fail();
+  };
+  const scripts = () => {
+    const base = atom(); let sub = null, sup = null;
+    for (;;) { if (t[i] === '_' && !sub) { i++; sub = group(); } else if (t[i] === '^' && !sup) { i++; sup = group(); } else break; }
+    const r = sub && sup ? node(base.big ? 'munderover' : 'msubsup', [base, sub, sup]) : sub || sup ? node(base.big ? (sub ? 'munder' : 'mover') : (sub ? 'msub' : 'msup'), [base, sub || sup]) : base;
+    return base.fn && t[i] && t[i] !== '(' ? row([r, node('mspace', [], {width: '0.1667em'})]) : r;   // \sin x: TeX's thin space after a function name
+  };
+  const body = expr([]);
+  if (i < t.length) fail();
+  return node('math', [body], block ? {display: 'block'} : {displaystyle: 'true'});   // inline fractions full size, as in a textbook
+};
+const math = (src, block) => { try { return tex(src.trim(), block); } catch { return el('span', block ? 'tex block' : 'tex', src.trim()); } };   // unreadable TeX: show what the model wrote
+// Safe Markdown → DOM (no HTML from the model): headings, lists, rules, tables, bold, italics, code, links, $…$ and $$…$$ math
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const INLINE = /((?<!\\)\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$(?=\S)(?:\\.|[^$\\\n])+?(?<=\S)\$(?!\d)|\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:|mailto:)[^\s)]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]|\*[^*\s][^*]*\*|(?<![\w\\])_[^_\s][^_]*_(?!\w))/g;
+const inline = (parent, text) => {
+  const plain = s => s.replace(/\\\$/g, '$').split('\n').forEach((l, k) => { if (k) parent.append(el('br')); if (l) parent.append(l); });   // a line break the model wrote stays one
+  let at = 0;
+  for (const m of text.matchAll(INLINE)) {
+    plain(text.slice(at, m.index)); const s = m[0]; at = m.index + s.length;
+    if (s.startsWith('$$') || s.startsWith('\\[')) parent.append(math(s.slice(2, -2), true));
+    else if (s[0] === '$') parent.append(math(s.slice(1, -1)));
+    else if (s.startsWith('\\(')) parent.append(math(s.slice(2, -2)));
+    else if (s.startsWith('**')) inline(parent.appendChild(el('strong')), s.slice(2, -2));
+    else if (s[0] === '`') parent.append(el('code', '', s.slice(1, -1)));
+    else if (s[0] === '[') { const k = s.indexOf(']('), a = el('a', '', s.slice(1, k)); a.href = a.title = s.slice(k + 2, -1); parent.append(a); }
+    else if (s.startsWith('http')) { const a = el('a', '', s); a.href = s; parent.append(a); }
+    else inline(parent.appendChild(el('em')), s.slice(1, -1));
+  }
+  plain(text.slice(at)); return parent;
+};
+const markdown = text => {
+  const out = document.createDocumentFragment(), lines = text.replace(/\r/g, '').split('\n'), item = /^\s*([-*•]|\d+[.)])\s+(.*)/;
+  const row = /^\s*\|.*\|\s*$/, cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()), isTable = i => row.test(lines[i]) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] || '');
+  for (let i = 0, m; i < lines.length;) {
+    if (!lines[i].trim()) { i++; continue; }
+    if (/^\s*```/.test(lines[i])) {   // a fenced block keeps its lines (code, a small text drawing)
+      const code = []; while (++i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i]);
+      i++; out.append(el('pre', '', code.join('\n'))); continue;
+    }
+    if (isTable(i)) {
+      const wrap = el('div', 'table'), table = wrap.appendChild(el('table')), head = table.appendChild(el('tr'));
+      cells(lines[i]).forEach(c => head.append(inline(el('th'), c))); i += 2;
+      while (i < lines.length && row.test(lines[i])) { const tr = table.appendChild(el('tr')); cells(lines[i++]).forEach(c => tr.append(inline(el('td'), c))); }
+      out.append(wrap); continue;
+    }
+    if ((m = lines[i].match(/^\s*#{1,4}\s+(.*)/))) { out.append(inline(el('div', 'h'), m[1])); i++; continue; }
+    if (/^\s*-{3,}\s*$/.test(lines[i])) { out.append(el('hr')); i++; continue; }
+    if ((m = lines[i].match(item))) {
+      const list = el(/\d/.test(m[1]) ? 'ol' : 'ul'); if (/\d/.test(m[1])) list.start = parseInt(m[1]);
+      while (i < lines.length && (m = lines[i].match(item))) { list.append(inline(el('li'), m[2])); i++; }
+      out.append(list); continue;
+    }
+    const para = []; while (i < lines.length && lines[i].trim() && !(para.length && (item.test(lines[i]) || /^\s*(#{1,4}\s|```|-{3,}\s*$)/.test(lines[i]) || isTable(i)))) para.push(lines[i++].trim());
+    out.append(inline(el('p'), para.join('\n')));
+  }
+  return out;
+};
+const shut = s => {   // a streamed line waits at a **bold, `code, [link or $math that has not closed yet, so its marks never flash as symbols
+  const k = s.lastIndexOf('\n') + 1, l = s.slice(k), b = s.replace(INLINE, m => ' '.repeat(m.length));   // its last word was cut, so a link still arriving is a [ with no ] yet; [1] or [ ] shows at once
+  const open = [l.split('**').length % 2 ? -1 : l.lastIndexOf('**'), l.split('`').length % 2 ? -1 : l.lastIndexOf('`'), l.search(/\[[^\]]*$/),
+    b.slice(k).search(/(?<!\\)\$(?![\d\s])/)].filter(i => i >= 0).map(i => k + i);   // b: closed math blanked; a $ before a digit is a price and shows at once
+  const block = b.search(/(?<!\\)\$\$|\\[[(]/); if (block >= 0) open.push(block);   // $$, \[ or \( math still open, even lines back
+  return !open.length || (s.match(/^\s*```/gm) || []).length % 2 ? s : s.slice(0, Math.min(...open));   // inside a code block every mark is text
+};
+export { MML, markdown, shut };

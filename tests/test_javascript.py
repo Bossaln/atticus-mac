@@ -71,8 +71,8 @@ if($('done-title').textContent!=='Voice is ready'||$('finish').textContent!=='St
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_answer_markdown_and_math_build_safe_dom(self):
-        source = (Path(__file__).resolve().parents[1] / 'ui' / 'ui.html').read_text()
-        helper = source[source.index('  // TeX → MathML'):source.index('  const reveal =')]
+        source = (Path(__file__).resolve().parents[1] / 'ui' / 'orbs.js').read_text()
+        helper = source[source.index('// TeX → MathML'):source.index('export { MML')]
         script = r'''
 class N{constructor(tag,ns){this.tag=tag;this.ns=ns||'';this.kids=[];this.attrs={};this.className=''}
  append(...k){this.kids.push(...k)}appendChild(k){this.kids.push(k);return k}setAttribute(k,v){this.attrs[k]=v}
@@ -99,22 +99,8 @@ expect(md('**Branch:** r2\n**Commit:** 3c14f84'),'<p><strong>Branch:</strong> r2
 expect(md('$$\na^2\n$$'),'<math display=block><msup><mi>a</mi><mn>2</mn></msup></math>','Display math may span lines');
 expect(md('Desks:\n| Desk | Price |\n|---|:-:|\n| **E7** | $300 |'),'<p>Desks:</p><div.table><table><tr><th>Desk</th><th>Price</th></tr><tr><td><strong>E7</strong></td><td>$300</td></tr></table></div>','Tables');
 expect(md('See:\n```\n  /|\n\n /_|  **b**\n```\nDone.'),'<p>See:</p><pre>  /|\n\n /_|  **b**</pre><p>Done.</p>','Fenced blocks keep their lines as plain text');
+expect(md('Above\n---\nBelow'),'<p>Above</p><hr></hr><p>Below</p>','A rule between paragraphs');
 expect(md('snake_case_name and _em_'),'<p>snake_case_name and <em>em</em></p>','Underscores inside words stay');
-'''
-        result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_agent_view_markdown_keeps_fences_and_line_breaks(self):
-        source = (Path(__file__).resolve().parents[1] / 'ui' / 'agents.html').read_text()
-        helper = source[source.index('function inline(parent,text,r)'):source.index('// ── shelf ──')]
-        script = r'''
-class N{constructor(tag){this.tag=tag;this.kids=[];this.className=''}append(...k){this.kids.push(...k)}set textContent(s){this.kids=[String(s)]}}
-const document={createElement:t=>new N(t)},el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;},host=()=>'',command=()=>{};
-const html=n=>typeof n==='string'?n:'<'+n.tag+'>'+n.kids.map(html).join('')+'</'+n.tag+'>';
-''' + helper + r'''
-const got=html(markdown('Run:\n```\nnpm  install\n  npm test\n```\n**Branch:** r2\n**Commit:** abc',{}));
-const want='<div><p>Run:</p><pre>npm  install\n  npm test</pre><p><strong>Branch:</strong> r2<br></br><strong>Commit:</strong> abc</p></div>';
-if(got!==want){console.error(got);process.exit(1);}
 '''
         result = subprocess.run(['node', '--input-type=module'], input=script, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

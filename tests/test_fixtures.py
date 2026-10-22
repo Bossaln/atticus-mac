@@ -2,6 +2,7 @@
 import functools
 import http.server
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,11 @@ class FixtureTests(unittest.TestCase):
     def test_mock_bridge_fixtures(self):
         self.check_fixtures(['settings', 'worksheet', 'meeting', 'onboarding', 'web', 'agents', 'agent_done'])
 
+    def test_fixtures_inline_orbs_literally(self):
+        # A string replacement expands $' and $& inside orbs.js (its TeX table has '$'), so the page gets a broken module.
+        for page in ROOT.glob('tests/*.html'):
+            self.assertIsNone(re.search(r"replace\('/\*ORBS\*/',\s*[^\s(]", page.read_text()), page.name)
+
     def check_fixtures(self, names):
         class Quiet(http.server.SimpleHTTPRequestHandler):
             def log_message(self, *args):
@@ -35,7 +41,8 @@ import WebKit
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleDisplaySleepDisabled], reason: "Atticus isolated WebKit fixtures")
-let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 900))
+let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()   // a disk cache keyed by the reused port served the last run's ui/*.js
+let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 900), configuration: config)
 let panel = NSPanel(contentRect: web.frame, styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
 panel.contentView = web; panel.sharingType = .none
 panel.ignoresMouseEvents = true   // nonactivating fixture windows exercise real compositor frames without changing the user's focus

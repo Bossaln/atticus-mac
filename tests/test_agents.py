@@ -221,8 +221,9 @@ class AgentTests(unittest.TestCase):
         p=unittest.mock.Mock();p.ask=self.root.name;p.waiting=threading.Event()
         move=atticus.MainMove('Continue the task',p);self.addCleanup(move.close)
         move.last=0
+        move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':'slow','name':'Bash','input':{'command':'fixture'}}]}})
         with patch.object(atticus,'stop_claude'),patch.object(atticus.time,'monotonic',return_value=14),contextlib.redirect_stdout(io.StringIO()) as output:
-            move.poll();self.assertFalse(move.moved)
+            move.poll();self.assertEqual(move.elapsed,14);self.assertFalse(move.moved)
             p.waiting.set();move.last=0;move.poll();self.assertEqual(move.elapsed,14);self.assertFalse(move.moved)
             p.waiting.clear()
             for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Read','input':{'file_path':'fixture'}}]}})

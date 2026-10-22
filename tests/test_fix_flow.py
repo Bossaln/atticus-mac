@@ -174,6 +174,43 @@ class FlowTests(unittest.TestCase):
                              (pretty + ' Sure, two agents.\n[agent {"title":"Late"', ['Helmets']), ('[agent {"title":"X"}]', []), ('[agent [1]]', [])):
             self.assertEqual([d['title'] for d in atticus.parse_handoffs(text)], titles, text)
 
+    def question_run(self, request, final):
+        clock = [100.0]
+        def lines():
+            for i, cmd in enumerate([' --window Preview', ' --window Preview --offset 8000', ' --window Preview --offset 16000']):
+                yield json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': f't{i}', 'name': 'Bash', 'input': {'command': atticus.ME + cmd}}]}})
+                clock[0] += 1
+                yield json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': f't{i}', 'content': 'study guide page'}]}})
+            clock[0] += 20   # the model writes its answer
+            yield json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': final}]}})
+            yield json.dumps({'type': 'result', 'result': final, 'total_cost_usd': 0})
+        p = Mock(ask=self.root.name, returncode=0, stdin=Mock(), stdout=lines(), pid=0)
+        with patch.dict(os.environ, {'ATTICUS_UI': '1', 'ATTICUS_CARET': '', 'ATTICUS_SELECTION': ''}), patch.object(atticus, 'selection_context', return_value=''), \
+             patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'relay'), patch.object(atticus, 'preview_commands'), \
+             patch.object(atticus, 'stop_claude'), patch.object(atticus.threading, 'Timer'), patch.object(atticus.time, 'monotonic', side_effect=lambda: clock[0]), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            reply, _, _ = atticus.run('Context: Front app: Preview.', p, request=request)
+        return reply, output.getvalue()
+
+    def test_a_question_answered_from_window_pages_stays_in_the_box(self):
+        request = ('And then for problem C too, could I just cross and multiply? Or do I have to multiply by like, or do I have to like, um, like how can I do it? '
+                   'Do I multiply the root 18 by the 4 and the root 6 by the root 12 or do I cross multiplier? How do I do it?')
+        answer = "Don't cross-multiply; divide straight across: outside with outside, inside with inside."
+        reply, output = self.question_run(request, answer)
+        self.assertEqual(reply, answer)
+        self.assertIsNone(atticus.run.handoff)
+        self.assertNotIn('⤴', output)
+        title = atticus.agent_title(request).lower().split()
+        self.assertEqual(len(title), len(set(title)), title)
+        self.assertFalse(set(title) & (atticus.FILLER | {'have', 'by', 'do', 'i'}), title)
+
+    def test_an_explicit_background_ask_hands_off_with_the_model_title(self):
+        marker = '[agent {"title":"Cross-multiplying radicals","brief":"Explain problem C"}]'
+        reply, output = self.question_run('Do this in the background: explain problem C.', marker)
+        self.assertEqual(reply, '')
+        self.assertEqual(atticus.run.handoff['title'], 'Cross-multiplying radicals')
+        self.assertEqual(output.count('⤴ '), 1)
+
     def test_long_writing_only_ask_stays_main_before_its_result_mode_arrives(self):
         move = atticus.MainMove('Write a long draft', Mock(ask=self.root.name, waiting=threading.Event()))
         self.addCleanup(move.close)

@@ -161,7 +161,8 @@ class StreamTests(unittest.TestCase):
         """Runs the page's real line()/markdown()/reveal() on a tiny fake DOM and clock; the answer starts 100px into a 420px-tall thread."""
         page = (ROOT / 'ui' / 'ui.html').read_text()
         unstream = re.search(r'  const unstream = .*\n', page).group(0)
-        reveal = page[page.index('  const MML ='):page.index('  let mini = null')]
+        shared = (ROOT / 'ui' / 'orbs.js').read_text()
+        reveal = shared[shared.index('// TeX → MathML'):shared.index('export { MML')] + page[page.index('  const leaf = c =>'):page.index('  let mini = null')]
         line = page[page.index('    line(l) {'):page.index('    msg(s) {')]
         script = r'''
 class C{constructor(n){this.n=n}has(){return this.n.className.split(' ').filter(Boolean)}contains(c){return this.has().includes(c)}
