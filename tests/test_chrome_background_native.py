@@ -292,4 +292,112 @@ signal(SIGTERM) { _ in exit(0) }; app.run()
                 except subprocess.TimeoutExpired: os.killpg(process.pid, signal.SIGKILL); process.wait()
                 log.close()
 
+    def test_point_click_confirms_a_landed_click_in_a_fullscreen_window(self):
+        """Saarth's Oct 21 case: a canvas in a cross-origin iframe in a native-full-screen Chrome window, Chrome inactive while an
+        accessory app (as Atticus is) is front. The click lands, and the reply must confirm the change, not say 'Nothing changed'
+        (a full-screen window's own capture returns a stale frame; the real screen at the spot shows the change)."""
+        root_dir = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix='atticus-fs-') as tmp:
+            root = Path(tmp); profile = root / 'profile'; profile.mkdir()
+            seen, hits = {}, []
+            class Pages(http.server.SimpleHTTPRequestHandler):
+                def log_message(self, *a): pass
+                def do_POST(self):
+                    data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                    if self.path == '/hit': hits.append(data)
+                    else: seen[data['w']] = data
+                    self.send_response(204); self.end_headers()
+            server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Pages, directory=tmp))
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+            port = server.server_port
+            say = 'const say=(p,d)=>fetch(p,{method:"POST",body:JSON.stringify(d),keepalive:true});'
+            # localhost vs 127.0.0.1 is a cross-origin iframe: the canvas is in a different-origin document, as Google Minesweeper is.
+            (root / 'top.html').write_text(f'''<title>ATTICUS FS {root.name}</title><body style="margin:0;background:#888"><iframe src="http://localhost:{port}/game.html" width=440 height=420 style="border:0;display:block"></iframe><script>{say}
+const info=()=>say('/info',{{w:'full',x:screenX,y:screenY,bar:outerHeight-innerHeight,ow:outerWidth,sw:screen.width,focus:document.hasFocus()}});info();setInterval(info,300);</script>''')
+            (root / 'game.html').write_text(f'''<body style="margin:0"><canvas id=c width=440 height=300 style="display:block;background:#fff"></canvas><script>{say}const c=document.getElementById('c'),g=c.getContext('2d');
+for(const t of ['pointerdown','mousedown','click'])c.addEventListener(t,e=>{{say('/hit',[e.type,e.offsetX,e.offsetY,e.isTrusted]);if(t=='pointerdown'){{g.fillStyle='#000';g.fillRect(e.offsetX-20,e.offsetY-15,40,30)}}}});</script>''')
+            binary = root / 'Atticus'
+            compiled = subprocess.run(['swiftc', str(root_dir / 'Atticus.swift'), '-o', str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            env = {**os.environ, 'ATTICUS_DIR': tmp, 'ATTICUS_RESOURCES_DIR': str(root_dir), 'ATTICUS_HANDS_STATE': str(root / 'hands.json')}
+            env.pop('ATTICUS_AX_ONLY', None); env.pop('ATTICUS_HANDS_WINDOW', None)
+            if 'Allow Atticus' in subprocess.run([str(binary), '--hands', 'see', '2147483647'], env=env, capture_output=True, text=True).stdout:
+                self.skipTest('Temporary binary lacks Accessibility permission; no permission changes made')
+            def hands(*args):
+                label = subprocess.run([str(binary), '--hands', 'label', *args], env=env, capture_output=True, text=True, timeout=20)
+                self.assertEqual(label.returncode, 0, label.stdout + label.stderr)
+                r = subprocess.run([str(binary), '--hands', *args], input=label.stdout, env={**env, 'ATTICUS_HANDS_RECEIPT': '1'}, capture_output=True, text=True, timeout=20)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr); return r.stdout
+            source = root / 'cover.swift'   # an accessory app, as Atticus is: it floats over Chrome's full-screen Space without switching away from it
+            source.write_text('''import Cocoa
+let app=NSApplication.shared; app.setActivationPolicy(.accessory)
+let w=NSWindow(contentRect:NSRect(x:0,y:0,width:300,height:120),styleMask:[.titled],backing:.buffered,defer:false)
+w.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary]
+w.title="Atticus scratch foreground"; w.setFrameTopLeftPoint(NSPoint(x:700,y:(NSScreen.screens.first?.frame.height ?? 800)-200)); w.orderFrontRegardless()
+DispatchQueue.main.asyncAfter(deadline:.now()+0.2) { app.activate(ignoringOtherApps:true); w.makeKeyAndOrderFront(nil) }
+DispatchQueue.main.asyncAfter(deadline:.now()+0.6) { print(ProcessInfo.processInfo.processIdentifier); fflush(stdout) }
+NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didActivateApplicationNotification,object:nil,queue:.main) { n in
+ if let a=n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication, a.processIdentifier != ProcessInfo.processInfo.processIdentifier { print("FOCUS LOST: \\(a.processIdentifier)"); fflush(stdout) }
+}
+DispatchQueue.global().async { while let line=readLine() { DispatchQueue.main.async {
+ if line=="front" { print("FRONT \\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)") }
+ else if line=="key" { print("KEY \\(w.isKeyWindow) \\(app.isActive)") }
+ fflush(stdout) } } }
+signal(SIGTERM) { _ in exit(0) }; app.run()
+''')
+            cover = root / 'ForegroundFixture.app/Contents/MacOS/cover'; cover.parent.mkdir(parents=True)
+            with open(cover.parent.parent / 'Info.plist', 'wb') as f:
+                plistlib.dump({'CFBundleIdentifier': 'com.atticus.fs.foreground', 'CFBundleExecutable': 'cover', 'CFBundleName': 'FS Foreground', 'CFBundlePackageType': 'APPL'}, f)
+            subprocess.run(['swiftc', str(source), '-o', str(cover)], env=env, check=True, capture_output=True)
+            log = open(root / 'chrome.log', 'w')
+            origin = f'http://127.0.0.1:{port}'
+            process = subprocess.Popen([str(CHROME), f'--user-data-dir={profile}', '--no-first-run', '--no-default-browser-check', '--disable-sync',
+                                        '--disable-background-networking', '--use-mock-keychain', '--disable-popup-blocking', '--start-fullscreen', origin + '/top.html'],
+                                       env=env, stdout=log, stderr=log, start_new_session=True)
+            foreground, lost = None, []
+            try:
+                deadline = time.time() + 90
+                while not ('full' in seen and seen['full']['ow'] >= seen['full']['sw'] - 2) and time.time() < deadline:
+                    if process.poll() is not None or time.time() > deadline:
+                        self.fail('Scratch Chrome did not reach full screen: ' + json.dumps(seen) + (root / 'chrome.log').read_text()[-2000:])
+                    time.sleep(.3)
+                time.sleep(2)
+                foreground = subprocess.Popen([str(cover)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                pid = int(foreground.stdout.readline())
+                def ask(line, prefix):
+                    foreground.stdin.write(line + '\n'); foreground.stdin.flush()
+                    while (out := foreground.stdout.readline()):
+                        if out.startswith(prefix + ' '): return out[len(prefix) + 1:].strip()
+                        lost.append(out)
+                    self.fail('The foreground fixture quit')
+                front = lambda: int(ask('front', 'FRONT'))
+                deadline = time.time() + 5
+                while front() != pid and time.time() < deadline: time.sleep(.2)
+                self.assertEqual(front(), pid); lost.clear()
+                at = seen['full']
+                self.assertGreaterEqual(at['ow'], at['sw'] - 2, 'Chrome is not full screen')
+                mapped = subprocess.run([str(binary), '--hands', 'see', str(pid)], env=env, capture_output=True, text=True, timeout=15)
+                self.assertIn('Window: Atticus scratch foreground', mapped.stdout, mapped.stdout + mapped.stderr)
+                before = len(hits)
+                out = hands('click', f"{at['x'] + 120},{at['y'] + at['bar'] + 90}")
+                deadline = time.time() + 3
+                while len(hits) < before + 3 and time.time() < deadline: time.sleep(.1)
+                down = [h for h in hits[before:] if h[0] == 'pointerdown']
+                self.assertEqual(len(down), 1, (out, hits[before:]))   # the click reached the cross-origin iframe canvas in the full-screen window
+                self.assertTrue(abs(down[0][1] - 120) <= 3 and abs(down[0][2] - 90) <= 3 and down[0][3], (out, hits[before:]))
+                self.assertNotIn('Nothing changed', out)   # the fix: a landed click on a full-screen window is confirmed from the real screen, not falsely denied
+                self.assertIn('changed at that spot', out, out)
+                self.assertEqual(front(), pid); self.assertEqual(ask('key', 'KEY'), 'true true', "the user's window keeps the keyboard")
+                print('CANVAS FULLSCREEN CLICK: ' + json.dumps({'hits': hits[before:], 'page': at, 'reply': out.splitlines()[0]}), flush=True)
+                foreground.terminate(); rest, _ = foreground.communicate(timeout=5); foreground = None
+                self.assertNotIn('FOCUS LOST', ''.join(lost) + rest, 'Even transient focus theft is a failure')
+            finally:
+                if foreground:
+                    foreground.terminate(); foreground.communicate(timeout=5)
+                if process.poll() is None: os.killpg(process.pid, signal.SIGTERM)
+                try: process.wait(timeout=5)
+                except subprocess.TimeoutExpired: os.killpg(process.pid, signal.SIGKILL); process.wait()
+                log.close()
+
 if __name__ == '__main__': unittest.main()

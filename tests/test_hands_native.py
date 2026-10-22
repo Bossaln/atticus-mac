@@ -318,7 +318,7 @@ print("hands Quartz spies ok")
         header = section[:section.index('    static func attribute(')]
         header = header.replace('AXUIElement','TestElement')
         header = header.replace('ProcessInfo.processInfo.environment', '["ATTICUS_DIR":CommandLine.arguments[1], "ATTICUS_AX_ONLY":"1"]')
-        names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','visibleFrame','resolve','menuItem','menu','screenLease',
+        names = ['documentIdentity','identify','read','children','array','name','capture','save','load','at','point','picturePoint','visibleFrame','resolve','menuItem','menu','screenLease',
                  'pixelsChanged','contentMoved','pageKeysAllowed','scrollArea','scroll','findText','scrollTo','stringValue','selectedRange','insertionTarget','insertAfter','typeText',
                  'settle','validate','clickOptions','targets','freshIDs','checked','selftest','windowElement','root','windowNumber','userWindowLists','keepTaskWindow','targetWindow','windowAt','windowsAt','lease','unlock','submitReceipt','keysReachTask',
                  'isShortcut','menuShortcut','webFocused']

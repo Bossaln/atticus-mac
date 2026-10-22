@@ -155,6 +155,8 @@ const state=r=>({'needs-you':'Needs you','waiting-screen':'Waiting for the scree
 const word=r=>({'needs-you':'Needs you','waiting-screen':'Waiting for the screen',running:'Working',queued:'Queued',offered:'Ready to start',done:'Done',failed:'Couldn’t finish',stopped:'Stopped'})[r.status]||r.status;
 const apiCost=u=>'≈'+(u<1?(u*100).toFixed(u<.1?2:1)+'¢':'$'+u.toFixed(2))+' at API prices';   // as Settings → Usage shows it
 const time=r=>{const s=Math.max(0,Math.floor((r.ended||Date.now()/1000)-(r.started||r.created)));return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';};
+const clock=new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}),day=new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric'});
+const begun=r=>{const d=new Date((r.started||r.created)*1000),days=Math.round((new Date().setHours(0,0,0,0)-new Date(d).setHours(0,0,0,0))/864e5);return (days<1?'':days===1?'Yesterday ':day.format(d)+', ')+clock.format(d);};   // calendar days, so 11:50 PM is "Yesterday" ten minutes later
 const command=(action,id,more={})=>post({action,id,...more});
 const showNamedStatus=text=>{clearTimeout(namedTimer);setText($('named-status'),text);if(text)namedTimer=setTimeout(()=>setText($('named-status'),''),6000);};
 const button=(text,fn,cls='')=>{const b=el('button',cls);if(typeof text==='string')b.textContent=text;else b.append(...text);b.onclick=e=>{e.stopPropagation();fn();};return b;};
@@ -254,8 +256,8 @@ const chipOf=id=>$('shelf').querySelector('.chip[data-id="'+id+'"]');
 const shelfRows=()=>rows.filter(r=>(active(r)||fin(r)&&onScreen.get(r.id)<LINGER)&&!dismissed.has(r.id))
  .sort((a,b)=>tucked(a)-tucked(b)||(tucked(a)?b.ended-a.ended:(b.started||b.created)-(a.started||a.created)));   // working first, newest on top
 const tucked=r=>fin(r)&&r.id!==held;   // held: it finished under the pointer, so it keeps its place until the pointer leaves the shelf
-// Which agents get a chip and which fold into the pill: minimized → all; auto with 3+ working → the newest one; finished ones unless opened; the expanded one, a question, words just sent to it, or agents just started, always show.
-function split(list){const live=list.filter(r=>!tucked(r)).length,keep=stack==='open'?list.length:stack==='min'?0:live>2?1:live;const shown=list.filter((r,i)=>i<keep||r.id===expanded||starting.has(r.id)||r.question||steered(r));return [shown,list.filter(r=>!shown.includes(r))];}
+// Which agents get a chip and which fold into the pill: minimized → all; auto with 3+ working → the newest one; finished ones, or ones whose start group folded, unless opened; the expanded one, a question, words just sent to it, or agents just started, always show.
+function split(list){const fresh=list.filter(r=>!tucked(r)&&!rested.has(r.id)),keep=stack==='open'?list:stack==='min'?[]:fresh.slice(0,fresh.length>2?1:2);const shown=list.filter(r=>keep.includes(r)||r.id===expanded||starting.has(r.id)||r.question||steered(r));return [shown,list.filter(r=>!shown.includes(r))];}
 const tops=()=>new Map([...$('shelf').children].map(n=>[n,n.getBoundingClientRect().top]));
 const moving=(ms=480)=>{motionUntil=Math.max(motionUntil,performance.now()+ms);};   // orbs pause while chips move: motion gets the frame budget
 function settle(){for(const n of $('shelf').children){n.getAnimations().forEach(a=>a.cancel());n.classList.toggle('expanded',n.dataset.id===expanded);}}
@@ -319,8 +321,8 @@ function collapse(chip){const delta=chip.offsetHeight-44;if(reduced.matches||del
  after.forEach(n=>n.animate([{transform:'none'},{transform:'translateY('+(-delta)+'px)'}],{duration:240,easing:EASE,fill:'forwards'}));
  shut.finished.then(()=>{if(expanded!==chip.dataset.id){settle();renderShelf();}},()=>{});}   // cancelled: a newer state took over
 // A finish pops its chip open and agents starting together all show; 4 s after the last, with the pointer off the shelf, they fold back. Pointer on the shelf holds them; a click on one keeps them until Esc or a click off.
-let popped='', starting=new Set(), kept=false, popTimer=0;
-const unpop=()=>{clearTimeout(popTimer);popped='';starting.clear();kept=false;};
+let popped='', starting=new Set(), rested=new Set(), kept=false, popTimer=0;
+const unpop=()=>{clearTimeout(popTimer);popped='';starting.forEach(id=>rested.add(id));starting.clear();kept=false;};
 const arm=()=>{clearTimeout(popTimer);if((popped||starting.size)&&!kept&&!$('shelf').classList.contains('near'))popTimer=setTimeout(()=>{const open=expanded&&expanded===popped;unpop();open?setExpanded(''):renderShelf();},4000);};
 function setStack(value){unpop();over?.classList.remove('hover');over=null;held='';stack=value;if(value!=='open')home=value;post({action:'stack',value:home});if(value==='min')expanded='';renderShelf();post({action:'hover',id:previewId()});}
 function dismiss(...ids){for(const id of ids){dismissed.add(id);post({action:'dismiss',id});}ids.forEach(leave);}
@@ -334,7 +336,7 @@ function land(id){if(!arriving.delete(id))return;arm();const chip=chipOf(id);if(
 function previewId(){const shown=split(shelfRows())[0];const open=shown.find(r=>r.id===expanded&&r.target);return (open||shown.find(r=>r.target&&ACTIVE.includes(r.status)))?.id||'';}
 // ── Agent view ──
 function renderList(){const ordered=[...rows].sort((a,b)=>b.created-a.created),now=ordered.filter(r=>ACTIVE.includes(r.status)||r.status==='offered'),past=ordered.filter(r=>!now.includes(r));
- const item=r=>[r.id,JSON.stringify([r.title,r.status,selected===r.id]),()=>{const b=el('button','item s-'+r.status+(selected===r.id?' selected':'')),txt=el('span');b.dataset.id=r.id;txt.append(el('b','',r.title),el('small','',word(r)+' · '+time(r)));b.append(el('i','dot'),txt);
+ const item=r=>[r.id,JSON.stringify([r.title,r.status,selected===r.id,r.started||r.created]),()=>{const b=el('button','item s-'+r.status+(selected===r.id?' selected':'')),txt=el('span');b.dataset.id=r.id;txt.append(el('b','',r.title),el('small','',word(r)+' · '+time(r)),el('small','started',begun(r)));b.append(el('i','dot'),txt);
   b.onclick=()=>{if(selected===r.id)return;selected=r.id;renderView();post({action:'hover',id:r.id});};const row=el('div','agent-row');row.append(b);if(['done','failed','stopped'].includes(r.status)){const remove=button('×',()=>command('remove',r.id),'remove');remove.setAttribute('aria-label','Remove '+r.title);row.append(remove);}return row;}];
  const saved=r=>['named:'+r.name,JSON.stringify([r.name,r.brief,renaming===r.name,deleting===r.name]),()=>{const row=el('div','named-row');
   if(renaming===r.name){const edit=el('div','named-edit'),input=el('input');input.value=r.name;input.setAttribute('aria-label','New name for '+r.name);const save=()=>{const value=input.value.trim();if(!value)return showNamedStatus('Enter a name.');if(value===r.name){renaming='';showNamedStatus('Name unchanged.');return renderList();}post({action:'named-rename',name:r.name,newName:value});renaming='';showNamedStatus('Renaming…');renderList();};input.onkeydown=e=>{if(e.key==='Enter')save();if(e.key==='Escape'){e.preventDefault();e.stopPropagation();renaming='';renderList();}};edit.append(input,button('Save',save,'go'));row.append(edit);setTimeout(()=>input.focus());return row;}
@@ -345,7 +347,7 @@ function renderView(){if(!rows.some(r=>r.id===selected))selected=([...rows].sort
  const r=rows.find(r=>r.id===selected),scroll=$('scroll'),nearBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<90;$('followup').disabled=!r;$('send').disabled=!r;document.querySelector('header canvas').hidden=!r;
  if(!r){setText($('title'),'Agents');setText($('brief'),'Your tasks, while you do something else.');$('status').replaceChildren();$('tools').replaceChildren();sync($('body'),[['empty','',()=>{const n=el('div','empty');n.append(el('b','','No agents yet'),el('span','','Ask Atticus for something that takes a while.'));return n;}]]);return;}
  $('page').className='s-'+r.status;setText($('title'),r.title);setText($('brief'),r.brief||'');document.querySelector('header canvas').style.filter=hue(r);
- const status=$('status');if(status.dataset.sig!==r.status){status.dataset.sig=r.status;status.className='status s-'+r.status;status.replaceChildren(el('i','dot'),el('span','',word(r)),el('span','time-label','· '+time(r)));}
+ const status=$('status');if(status.dataset.sig!==r.status+r.id){status.dataset.sig=r.status+r.id;status.className='status s-'+r.status;status.replaceChildren(el('i','dot'),el('span','',word(r)),el('span','time-label','· '+time(r)),el('span','time-label started','· Started '+begun(r)));}
  const live=ACTIVE.includes(r.status),files=things(r).some(m=>m.url.startsWith('/'));
  sync($('tools'),[['tools',JSON.stringify([r.status,files,!!r.directory]),()=>{const a=el('div','actions');if(r.status==='offered')a.append(button('Start',()=>command('start',r.id),'go'));if(live)a.append(button([icon('stop'),'Stop'],()=>command('stop',r.id)));
   if(r.directory){const b=button([icon('reveal')],()=>command('reveal',r.id),'ghost');b.title='Show in Finder';b.setAttribute('aria-label','Show in Finder');a.append(b);}return a;}]]);
@@ -399,7 +401,7 @@ document.addEventListener('keydown',e=>{const fallback=!e.isComposing&&(e.key===
  if(card&&(e.key==='Enter'||e.key==='Escape')){const b=card.querySelector(e.key==='Enter'?'button.go':'[data-esc]');if(b){e.preventDefault();b.click();return;}}
  if(e.key==='Escape')post({action:'close'});});document.addEventListener('pointerdown',e=>{if(mode==='shelf'&&!e.target.closest('button,input,a,.mini'))post({action:'drag'});});
 setInterval(()=>{if(!visible)return;for(const r of rows){const chip=chipOf(r.id);if(chip){const label=chip.querySelector('.time');if(label)setText(label,time(r));if(r.status==='done'&&!steered(r))setText(chip.querySelector('.step'),state(r));}
- const item=$('list').querySelector('[data-key="'+r.id+'"] small');if(item)setText(item,word(r)+' · '+time(r));if(r.id===selected){const label=document.querySelector('#status .time-label');if(label)setText(label,'· '+time(r));}}
+ const item=$('list').querySelector('[data-key="'+r.id+'"] small');if(item){setText(item,word(r)+' · '+time(r));setText(item.nextSibling,begun(r));}if(r.id===selected){const label=document.querySelector('#status .time-label');if(label)setText(label,'· '+time(r));const when=document.querySelector('#status .started');if(when)setText(when,'· Started '+begun(r));}}
  if(mode==='shelf'&&!over)for(const r of shelfRows())if(fin(r)){const s=onScreen.get(r.id)+1;onScreen.set(r.id,s);if(s>=LINGER)leave(r.id);}},1000);   // the clock stops while hidden, asleep or under the pointer
 $('scroll').addEventListener('scroll',()=>fit(),{passive:true});new ResizeObserver(()=>{if(mode==='view')fit();}).observe($('full'));
 const orbState=r=>!r?'breathing':r.status==='running'?(/search|reading/i.test(r.step||'')?'searching':'working'):'breathing';

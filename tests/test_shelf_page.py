@@ -233,7 +233,7 @@ return out;
 
 STARTFOLD = AUTOFOLD.split('const b =')[0] + r'''
 const pill = () => document.querySelector('.pill')?.getClientRects().length ? text('.pill') : '', look = () => [n('.chip'), pill()];
-const begin = async ids => { const ask = ids.map(i => ({...work, id: String(i).repeat(32), title: 'Task ' + i, step: 'Starting…', created: now + i / 100, started: now + i / 100}));
+const begin = async (ids, more = {}) => { const ask = ids.map(i => ({...work, id: String(i).repeat(32), title: 'Task ' + i, step: 'Starting…', created: now + i / 100, started: now + i / 100, ...more}));
   for (const r of ask) { agents.arrive(r.id); agents.state(r); } settle(); const slots = ask.map(r => agents.slot(r.id));   // native: arrive + state per agent, then reads each slot
   const miss = ask.map((r, i) => { const o = mid('.chip[data-id="' + r.id + '"] .head canvas'); return Math.hypot(slots[i][0] - o[0], slots[i][1] - o[1]) < 1; });
   for (const r of ask) agents.land(r.id); await tick(30); settle(); return miss; };
@@ -250,6 +250,11 @@ out.minMiss = await go([4, 5, 6], 'min', linger); out.min = look();
 await advance(4000); out.minFolded = [...look(), [...document.querySelectorAll('.pill canvas')].map(c => c.style.filter.startsWith('hue') ? 'working' : 'done')];
 await go([4, 5], ''); await advance(2000); await begin([6]); out.later = look();   // one more starts 2 s later: one timer, from the last start
 await advance(2000); out.laterEarly = look(); await advance(2000); out.laterFolded = look();
+await go([4, 5, 6], ''); await advance(2000); agents.state({...work, id: '5'.repeat(32), title: 'Task 5', status: 'done', ended: Date.now() / 1000, summary: 'Done it.'}); agents.expand('5'.repeat(32)); await tick(30); settle();   // one finishes 2 s in: native's state, then its pop
+out.finish = [...look(), agents.expanded() === '5'.repeat(32)]; await advance(3900); out.finishEarly = look(); await advance(100); out.finishFolded = [...look(), agents.expanded()];
+await go([4, 5], ''); await advance(2000); await begin([6], {status: 'queued', step: 'Queued'}); out.queued = look();   // a queued one arrives 2 s later
+await advance(3900); out.queuedEarly = look(); await advance(100); out.queuedFolded = look();
+agents.state({...work, id: '4'.repeat(32), title: 'Task 4', step: 'Reading', created: now + .04, started: now + .04}); await tick(30); out.queuedLive = look();   // live updates keep them folded
 return out;
 '''
 
@@ -341,11 +346,13 @@ class ShelfPageTests(unittest.TestCase):
     def test_agents_started_together_all_show_then_fold_after_four_seconds_unless_held(self):
         _, out = self.run_page(STARTFOLD)
         self.assertEqual([out['miss'], out['minMiss']], [[True] * 3, [True] * 3])   # each start orb lands on its own chip
-        self.assertEqual([out['started'], out['early'], out['folded']], [[3, ''], [3, ''], [1, '2 more']])   # Oct 21: the third folded the older two at once
-        self.assertEqual([out['held'], out['leftEarly'], out['leftFolded']], [[3, ''], [3, ''], [1, '2 more']])   # the pointer on the shelf holds them; off it, the same 4 s
-        self.assertEqual([out['clicked'], out['clickedBlur']], [[3, ''], [1, '2 more']])   # clicked: they stay until Esc or a click off
+        self.assertEqual([out['started'], out['early'], out['folded']], [[3, ''], [3, ''], [0, '3 agents']])   # Oct 21: the third folded the older two at once; then the fold left the newest open
+        self.assertEqual([out['held'], out['leftEarly'], out['leftFolded']], [[3, ''], [3, ''], [0, '3 agents']])   # the pointer on the shelf holds them; off it, the same 4 s
+        self.assertEqual([out['clicked'], out['clickedBlur']], [[3, ''], [0, '3 agents']])   # clicked: they stay until Esc or a click off
         self.assertEqual([out['min'], out['minFolded']], [[3, '✓ 1 done'], [0, '3 agents · 1 done', ['working', 'done']]])   # minimized stays minimized, its per-state orbs
-        self.assertEqual([out['later'], out['laterEarly'], out['laterFolded']], [[3, ''], [3, ''], [1, '2 more']])
+        self.assertEqual([out['later'], out['laterEarly'], out['laterFolded']], [[3, ''], [3, ''], [0, '3 agents']])
+        self.assertEqual([out['finish'], out['finishEarly'], out['finishFolded']], [[3, '', True], [3, ''], [0, '2 agents · 1 done', '']])   # a finish 2 s in: one timer, all fold 4 s after it
+        self.assertEqual([out['queued'], out['queuedEarly'], out['queuedFolded'], out['queuedLive']], [[3, ''], [3, ''], [0, '3 agents'], [0, '3 agents']])
 
     def test_finished_agents_on_the_real_webkit_shelf(self):
         posts, out = self.run_page(SCRIPT)

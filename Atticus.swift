@@ -5870,9 +5870,12 @@ enum Hands {
         if pieces.count == 1 { return CGPoint(x: x, y: y) }
         guard pieces.count == 2, let n = Int(pieces[0]), NSScreen.screens.indices.contains(n - 1) else { throw Failure("No such screen.") }
         let screen = NSScreen.screens[n - 1], id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID(), r = CGDisplayBounds(id)
-        // --look pictures are 1280 pixels wide; Quartz events use display points.
+        guard x >= 0, y >= 0, x <= 1280, y <= r.height / (r.width / 1280) else { throw Failure("Point is outside that picture.") }
+        return picturePoint(x, y, in: r)
+    }
+    // A --look picture spot (1280 px wide, from this display's top-left) to a global display point; Quartz events use display points.
+    static func picturePoint(_ x: Double, _ y: Double, in r: CGRect) -> CGPoint {
         let scale = r.width / 1280
-        guard x >= 0, y >= 0, x <= 1280, y <= r.height / scale else { throw Failure("Point is outside that picture.") }
         return CGPoint(x: r.minX + x * scale, y: r.minY + y * scale)
     }
     static func visibleFrame(_ e: AXUIElement) -> CGRect {
@@ -6170,25 +6173,30 @@ enum Hands {
     }
     static func unlock(_ fd: Int32) { flock(fd, LOCK_UN); Darwin.close(fd) }
     static func fingerprint(_ map: Map, around spot: CGPoint? = nil) -> [UInt8] {
-        // Window-only capture avoids Atticus's ring and unrelated displays. No disk image is kept. With a spot: 64x40 points around it.
+        // No disk image is kept. With a spot: the real screen 64x40 points around it, minus Atticus's own ring and box, so a
+        // click shows whether it took even when the target window is full screen or on another Space, where a window-only
+        // capture returns a stale frame. Without a spot (scroll, settle): the target window's content, 64x40.
         final class Capture { let lock = NSLock(); var image: CGImage? }
         let result = Capture(), done = DispatchSemaphore(value: 0), id = spot.flatMap { windowAt($0, map.pid) } ?? UInt32(map.windowID)
         Task {
             defer { done.signal() }
-            guard let all = try? await SCShareableContent.excludingDesktopWindows(true,onScreenWindowsOnly:false),
-                  let window = all.windows.first(where: {
-                      guard $0.owningApplication?.processID == map.pid && $0.windowLayer == 0 else { return false }
-                      if let id { return $0.windowID == id }
-                      return array($0.frame) == map.windowFrame
-                  }),
-                  let image = try? await SCScreenshotManager.captureImage(contentFilter:SCContentFilter(desktopIndependentWindow:window), configuration: {
-                    let cfg = SCStreamConfiguration(); cfg.width = 64; cfg.height = 40
-                    if let spot { cfg.sourceRect = CGRect(x: spot.x - window.frame.minX - 32, y: spot.y - window.frame.minY - 20, width: 64, height: 40) }
-                    return cfg
-                  }()) else { return }
+            guard let all = try? await SCShareableContent.excludingDesktopWindows(true,onScreenWindowsOnly:false) else { return }
+            let filter: SCContentFilter, cfg = SCStreamConfiguration(); cfg.width = 64; cfg.height = 40
+            if let spot, let display = all.displays.first(where: { $0.frame.contains(spot) }) {
+                filter = SCContentFilter(display: display, excludingWindows: all.windows.filter { $0.owningApplication?.bundleIdentifier == Bundle.main.bundleIdentifier })
+                cfg.sourceRect = CGRect(x: spot.x - display.frame.minX - 32, y: spot.y - display.frame.minY - 20, width: 64, height: 40)
+            } else {
+                guard let window = all.windows.first(where: {
+                          guard $0.owningApplication?.processID == map.pid && $0.windowLayer == 0 else { return false }
+                          if let id { return $0.windowID == id }
+                          return array($0.frame) == map.windowFrame
+                      }) else { return }
+                filter = SCContentFilter(desktopIndependentWindow: window)
+            }
+            guard let image = try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg) else { return }
             result.lock.withLock { result.image = image }
         }
-        guard done.wait(timeout:.now() + 0.3) == .success else { return [] }
+        guard done.wait(timeout:.now() + 0.5) == .success else { return [] }
         result.lock.lock(); let captured = result.image; result.lock.unlock()
         guard let image = captured else { return [] }
         var pixels = [UInt8](repeating: 0, count: 64 * 40)
@@ -6699,6 +6707,8 @@ enum Hands {
                 let same = after.signature == known.signature
                 if let sheet = (attribute(w,"AXSheets") as? [AXUIElement])?.first ?? (attribute(w,kAXRoleAttribute) as? String == "AXSheet" ? w : nil) { result += " — a sheet opened: \(quote(mask(name(sheet))))" }
                 else if same, let spot, !spotPixels.isEmpty, pixelsChanged(spotPixels, fingerprint(after, around: spot), threshold: 1.5) { result += " — the screen changed at that spot" }
+                // A background click the screen could not be read for (its window covered, or on another Space): say what happened, not "nothing changed".
+                else if same, background, spotPixels.isEmpty { result += " in the background. Its spot could not be read to confirm a change (the window may be covered or on another Space); read the window, or add front to the same click to bring it forward for that click only" }
                 // front only on evidence: neither the accessibility tree nor the pixels at the spot changed after a background click
                 else if same { result = "Nothing changed after clicking \(quote((check["labels"] as? [String])?.first ?? input[1]))" + (background && !spotPixels.isEmpty ? ". It went in the background; if this app ignores background clicks, add front to the same click: the app comes forward for that click only, then the user's app returns" : "") }
             }
@@ -6734,6 +6744,9 @@ enum Hands {
         let node = Node(id:1,role:"AXTextField",label:"Password",value:"private",frame:[0,0,10,10],path:[],secret:true)
         precondition(!node.line.contains("private") && node.line.contains("[1]"))
         precondition(!pixelsChanged([],[]) && pixelsChanged([0,0],[5,5]))
+        // A 2:x,y spot on a 1920-wide display at x=1470 is the external monitor in Saarth's Oct 21 case: 602,397 -> global 2373,595.
+        precondition(picturePoint(602, 397, in: CGRect(x: 1470, y: 0, width: 1920, height: 1080)) == CGPoint(x: 2373, y: 595.5))
+        precondition(picturePoint(0, 0, in: CGRect(x: 0, y: 0, width: 1280, height: 800)) == .zero && picturePoint(640, 400, in: CGRect(x: 0, y: 0, width: 1280, height: 800)) == CGPoint(x: 640, y: 400))
         for args in [["click","Export","--yes"],["press","cmd+q","0"],["type","Name","text","force"],["wait","nan"]] { do { try validate(args); preconditionFailure("Accepted invalid hands args") } catch {} }
     }
 }

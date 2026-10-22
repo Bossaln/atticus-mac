@@ -1207,7 +1207,7 @@ if (agentMade({ result: 'Filed it: ' + issue, made: [{ url: issue, title: 'Login
         page = (Path(__file__).resolve().parents[1] / 'ui' / 'agents.html').read_text()
         cut = lambda a, b: page[page.index(a):page.index(b, page.index(a))]
         code = cut('const ACTIVE=', 'const word=') + cut('const shelfRows=', 'const tops=') + cut('const steered=', '\n') + '\n' + cut('function paintPill(', 'function renderShelf(')
-        script = 'let rows=[],dismissed=new Set(),starting=new Set(),stack="",held="",expanded="";const el=()=>({append(){},dataset:{},style:{}}),hue=()=>"",tint=()=>"";\n' + code + r'''
+        script = 'let rows=[],dismissed=new Set(),starting=new Set(),rested=new Set(),stack="",held="",expanded="";const el=()=>({append(){},dataset:{},style:{}}),hue=()=>"",tint=()=>"";\n' + code + r'''
 const fail = m => { console.error(m); process.exit(1); }, now = Date.now() / 1000;
 const label = (folded, total) => { const p = { dataset: {}, setAttribute(k, v) { this[k] = v; }, replaceChildren() {} }; paintPill(p, folded, total); return p['aria-label'].replace('. Show agents', ''); };
 const view = () => { const [shown, folded] = split(shelfRows()); return [shown.map(r => r.id).join(), folded.length ? label(folded, shelfRows().length) : '']; };
