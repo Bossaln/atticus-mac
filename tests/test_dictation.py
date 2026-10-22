@@ -60,6 +60,12 @@ class DictationCleanupTests(unittest.TestCase):
         source = 'We should send the complete release report to everyone on the team before lunch today.'
         extract = '<cleaned>Send the report to the team.</cleaned>'
         self.assertEqual(atticus.dictate_result(source, extract), source)
+        self.assertEqual(atticus.dictate_result(source, '<cleaned>Send the report to the team today.</cleaned>'), source)
+        retries = 'So, yeah, could you release it by this window? Um, Can you read you see by this Wednesday? We know, um, this Friday, actually. Um, and then we can get working on deployment.'
+        fixed = 'Could you release it by this Friday? And then we can get working on deployment.'
+        self.assertEqual(atticus.dictate_result(retries, f'<cleaned>{fixed}</cleaned>'), fixed)
+        long = 'I tested the build this morning. It crashed twice when I opened settings, and the logs show a nil window. I want it fixed before Friday.'
+        self.assertEqual(atticus.dictate_result(long, '<cleaned>I tested the build this morning. I want it fixed before Friday.</cleaned>'), long)
         restart = 'Book the table for six, scratch that, book it for eight.'
         self.assertEqual(atticus.dictate_result(restart, '<cleaned>Book the table for eight.</cleaned>'),
                          'Book the table for eight.')

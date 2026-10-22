@@ -6123,10 +6123,13 @@ DICTATE_SYSTEM = (
     'Fix words clearly misheard or garbled and broken grammar, by sound and context, above all tech, product and code terms (names/terms data helps): '
     '“talk it and it’ type” → “talk to it and it’ll type”, “clear the cash” → “clear the cache”. '
     'In its language, remove fillers (um/uh/ah/euh), filler like/you know/kind of that adds no meaning (keep “I like it”, “something like X”), '
-    'stutters, exact repetitions, abandoned false starts, and repair cues. Keep only the final restart: “I wanted to, we need to deploy” → “We need to deploy”. '
-    '“scratch/delete that” erases the previous thought, keeping its unchanged context in '
-    'the replacement: “Book the table for six, scratch that, book it for eight” → “Book the table for eight”. “actually/I mean/no wait” substitutes '
-    'only the corrected detail: “Call Mom after work, no wait, call her at lunch” → “Call Mom at lunch”. Render “new line” as a line break and '
+    'stutters, exact repetitions and repair cues. Self-corrections: speakers abandon a phrase and retry it, often garbled, sometimes three tries in '
+    'one sentence, or correct it with actually/I mean/no wait/scratch that. Write each sentence once, as finally meant: each detail’s last version, '
+    'keeping names and context from earlier tries; delete abandoned or garbled tries whole instead of repairing them; a sentence that trails off and '
+    'restarts with the same opening is abandoned. “I wanted to, we need to deploy” → “We need to deploy”; “Is the bakery open Monday? Is it, sopen '
+    'the bake, Tuesday, actually.” → “Is the bakery open Tuesday?”; “Book the table for six, scratch that, book it for eight” → “Book the table for '
+    'eight”; “Call Mom after work, no wait, call her at lunch” → “Call Mom at lunch”. Examples show patterns only; never copy their words. '
+    'Render “new line” as a line break and '
     '“new paragraph” as a blank line, never literally. '
     'Render spoken punctuation (“colon deploy period” → “: deploy.”) and symbols (“sam at gmail dot com” → “sam@gmail.com”). '
     'Format lists like a careful typist: three or more items, tasks or steps the speaker is listing (“I need milk, apples and bananas”, a labeled series, '
@@ -6193,6 +6196,12 @@ def dictate_result(text, output, corrections=''):
     spoken = DICTATE_WORD.findall(dictate_fallback(text).casefold().replace('’', "'"))   # a dropped filler is no edit
     edits = [(i1, i2, j1, j2) for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, spoken, output_words).get_opcodes() if tag != 'equal' and i1 != i2]
     tail_cut = bool(edits) and edits[-1][1] == len(spoken) and edits[-1][2] == edits[-1][3]   # a restart re-says the ending; a deleted ending is a dropped thought
+    # An abandoned try opens like its replacement or shares a phrase or real word with it ("by this window… by this Friday"); an extract drops words never re-said.
+    def resaid(i1, i2, j1, j2):
+        near = output_words[max(0, j1 - 6):j2 + 6]
+        return (output_words[j2:j2 + 1] == spoken[i1:i1 + 1] or any(len(w) > 3 and w in near for w in spoken[i1:i2]) or
+                bool(set(zip(spoken[i1:i2], spoken[i1 + 1:i2])) & set(zip(near, near[1:]))))
+    unsaid = sum(i2 - i1 - (j2 - j1) for i1, i2, j1, j2 in edits if not resaid(i1, i2, j1, j2))
     def familiar(word):
         stem, _, tail = word.partition("'")
         if word in heard or tail not in ('', 't') and stem in heard: return True   # "it'" → "it'll"
@@ -6211,7 +6220,8 @@ def dictate_result(text, output, corrections=''):
             negations(output_words) > negations(source_words) or   # a fix never flips meaning; "no wait" is a repair cue
             dropped > 0 and dropped * 2 > len(source_words) - len(output_words) or
             len(output_words) * 3 < len(source_words) or   # "scratch that" can drop more than half; under a third is an extracted payload
-            cut and (len(edits) > 1 or tail_cut) or   # one restart may replace one span; scattered deletions are an extractive rewrite
+            cut and (tail_cut or unsaid > max(3, len(spoken) // 6)) or   # a restart drops re-said tries; dropping words never re-said is an extract
+            unsaid > max(8, len(spoken) // 6) or   # spoken punctuation and fillers drop a few words; a dropped sentence is a summary
             len(new) > room + respelled or sum(len(w) > 3 for w in new) > respelled):
         return dictate_fallback(text)
     return dictate_fallback(cleaned)
