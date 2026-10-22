@@ -90,6 +90,8 @@ const ui = {''' + dictated + r'''};
 ui.dictated({ text: 'Nothing selected to insert — saved to History.', ok: false }); if (button) process.exit(1);
 ui.dictated({ text: 'Couldn’t insert. Your words are still here.', ok: false, words: 'my words' }); button.onclick();
 if (sent?.copy !== 'my words' || button.textContent !== 'Copied') process.exit(1);
+ui.dictated({ text: 'Couldn’t insert. Press ⌃⌘V to paste it.', ok: false, history: true }); button.onclick();
+if (sent?.dictationHistory !== true || button.textContent !== 'History') process.exit(1);
 ''')
 
     def test_agent_start_releases_an_empty_typed_composer_for_the_fade(self):

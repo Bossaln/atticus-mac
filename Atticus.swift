@@ -1987,6 +1987,7 @@ final class App: NSObject, WKScriptMessageHandler {
                     Atticus.settings.send("dictation", DictationData.state())
                 }
             }
+            if b["dictationHistory"] != nil { hide(after: 0); Atticus.settings.open(tab: "dictation") }
             if let enabled = b["agentDefault"] as? Bool { defaultKey(enabled) }
             if let value = b["miniRect"] as? [String:Any] { mini.layout(value) }
             // a click on the mini screen = the user wants to see it: the focus guard stands aside
@@ -2693,7 +2694,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
-    var correctionTimer: Timer?, learnedWord: String?, dictationAppName = "App", dictateSeconds = 0.0
+    var correctionTimer: Timer?, learnedWord: String?, dictationAppName = "App", dictateSeconds = 0.0, lastDictation: String?
     @discardableResult func saveDictation(_ value: String, appName: String) -> Bool {
         let saved = DictationData.record(value, raw: text.trimmingCharacters(in: .whitespacesAndNewlines), app: appName, seconds: dictateSeconds > 0 ? dictateSeconds : Date().timeIntervalSince(began))
         if !saved { js("dictated", ["text": "Your words are ready. Couldn’t save history or stats.", "ok": false]) }
@@ -2705,6 +2706,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let range = target.range
         return { [weak self] in
             guard let self else { return }
+            lastDictation = value
             saveDictation(value, appName: target.app.localizedName ?? "App")
             correctionTimer?.invalidate()
             guard Prefs.bool("dictateLearn"), let before, let range,
@@ -2732,6 +2734,23 @@ final class App: NSObject, WKScriptMessageHandler {
                 Atticus.settings.send("dictation", DictationData.state())
             }
         }
+    }
+
+    // ⌃⌘V, like Willow Voice: the last dictation goes in at the cursor wherever it is now; the user's clipboard comes back after.
+    func pasteLastDictation(_ tries: Int = 0) {
+        if NSEvent.modifierFlags.contains(.control) && tries < 50 {   // ⌃ still held from the shortcut turns ⌘V into ⌃⌘V in apps that read live modifiers
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in self?.pasteLastDictation(tries + 1) }; return
+        }
+        guard !Prefs.bool("paused"), !dictating, let value = lastDictation ?? DictationData.archive.history.first?.text, !value.isEmpty,
+              let clipboard = try? Hands.lease("clipboard.lock", wait: false) else { NSSound.beep(); return }
+        guard let restore = borrowPasteboard(value) else { Hands.unlock(clipboard); NSSound.beep(); return }
+        let front = NSWorkspace.shared.frontmostApplication
+        for down in [true, false] {
+            guard let e = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: down) else { continue }
+            e.flags = .maskCommand
+            if NSApp.keyWindow == nil || front == nil || front == .current { e.post(tap: .cghidEventTap) } else { e.postToPid(front!.processIdentifier) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { restore(); Hands.unlock(clipboard) }
     }
 
     func stopDictationCleanup() {
@@ -2773,7 +2792,7 @@ final class App: NSObject, WKScriptMessageHandler {
         if !dictateCleanup { return insertDictation(source) }
         if dictateProcess?.isRunning != true { warmDictationCleanup() }
         guard let p = dictateProcess, let input = dictateInput, let output = dictateOutput else {
-            dictationDeliveryFailed(source, cleanup: true); return
+            return insertDictation(source)   // cleanup could not start: the heard words still go in
         }
         let id = dictateID
         do {
@@ -2781,7 +2800,7 @@ final class App: NSObject, WKScriptMessageHandler {
             try input.close()
             dictateInput = nil
         } catch {
-            stopDictationCleanup(); dictationDeliveryFailed(source, cleanup: true); return
+            stopDictationCleanup(); return insertDictation(source)
         }
         DispatchQueue.global().async { [weak self] in
             let data = output.readDataToEndOfFile(); p.waitUntilExit()
@@ -2789,22 +2808,21 @@ final class App: NSObject, WKScriptMessageHandler {
                 guard let self, self.dictateID == id, self.dictateProcess === p else { return }
                 self.dictateProcess = nil; self.dictateOutput = nil
                 let cleaned = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if p.terminationStatus == 0 && !cleaned.isEmpty { self.insertDictation(cleaned) }
-                else { self.dictationDeliveryFailed(source, cleanup: true) }
+                self.insertDictation(p.terminationStatus == 0 && !cleaned.isEmpty ? cleaned : source)
             }
         }
     }
 
-    func dictationDeliveryFailed(_ value: String, cleanup: Bool = false) {
-        let noTarget = dictateSelection == nil
-        busy = false; dictating = false; dictateSelection = nil
-        let failed = cleanup ? "Couldn’t clean up." : "Couldn’t insert."
+    func dictationDeliveryFailed(_ value: String) {
+        let failed = dictateSelection == nil ? "No text field." : "Couldn’t insert."
+        busy = false; dictating = false; dictateSelection = nil; lastDictation = value
+        let paste = pasteHotkeyRegistered ? " Press ⌃⌘V to paste it." : ""
         cue("soundStop")
         // Never the clipboard: the user's own copy stays. History keeps the words; with it off (or unsaved) they stay on screen.
         guard Prefs.bool("dictateHistory") && saveDictation(value, appName: dictationAppName) else {
-            js("dictated", ["text": failed + " Your words are still here.", "ok": false, "words": value]); return
+            js("dictated", ["text": failed + (paste.isEmpty ? " Your words are still here." : paste), "ok": false, "words": value]); return
         }
-        js("dictated", ["text": cleanup || !noTarget ? failed + " Saved to History." : "Nothing selected to insert — saved to History.", "ok": false]); hide(after: 3)
+        js("dictated", ["text": failed + (paste.isEmpty ? " Saved to History." : paste), "ok": false, "history": true]); hide(after: 6)
     }
 
     func insertDictation(_ value: String) {
@@ -4066,6 +4084,10 @@ final class MenuBar: NSObject, NSMenuDelegate {
         head.isEnabled = false; m.addItem(head)
         m.addItem(.separator())
         add(m, "Ask Atticus", #selector(ask), "")
+        add(m, "Dictation History…", #selector(dictationHistory), "")
+        if pasteHotkeyRegistered && (app.lastDictation ?? DictationData.archive.history.first?.text) != nil {
+            add(m, "Paste Last Dictation", #selector(pasteDictation), "v"); m.items.last?.keyEquivalentModifierMask = [.control, .command]
+        }
         add(m, agentsUI.count > 0 ? "Agents · \(agentsUI.count) running…" : "Agents…", #selector(openAgents), "")
         if agentsUI.hasLive || agentsUI.lingering { add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "") }
         if Prefs.bool("meeting") { add(m, meeting.running ? "Stop Meeting Copilot" : "Meeting Copilot…", #selector(toggleMeeting), "") }
@@ -4104,6 +4126,8 @@ final class MenuBar: NSObject, NSMenuDelegate {
     @objc func ask() { if meeting.running { return meeting.focus() }; app.clickTalk = true; app.start(); if !app.engine.isRunning { app.clickTalk = false } }   // the same box as the shortcut, like its mic button
     @objc func pause() { Prefs.set("paused", !Prefs.bool("paused")); if Prefs.bool("paused") { meeting.stop(paused: true); app.close(clear: false); agentsUI.stopAll() }; paint(); settings.push() }
     @objc func openSettings() { settings.open() }
+    @objc func dictationHistory() { settings.open(tab: "dictation") }
+    @objc func pasteDictation() { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { app.pasteLastDictation() } }   // after the menu closes and focus returns
     @objc func openAgents() { agentsUI.openView() }
     @objc func hideAgents() { Prefs.set("agentsHidden",!Prefs.bool("agentsHidden")) }
     @objc func openSetup() { onboarding.open() }
@@ -6917,7 +6941,7 @@ InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in
     let pressed = GetEventKind(ev) == UInt32(kEventHotKeyPressed)
     var hk = EventHotKeyID()
     GetEventParameter(ev, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hk)
-    DispatchQueue.main.async { if hk.id == 2 { if pressed { app.escape() } } else if hk.id == 3 || hk.id == 4 { if pressed { app.defaultAction() } } else if hk.id == 5 { if pressed { app.moveToAgent() } } else if hk.id == 6 { app.dictateShortcut(pressed) } else { app.shortcut(pressed) } }
+    DispatchQueue.main.async { if hk.id == 2 { if pressed { app.escape() } } else if hk.id == 3 || hk.id == 4 { if pressed { app.defaultAction() } } else if hk.id == 5 { if pressed { app.moveToAgent() } } else if hk.id == 6 { app.dictateShortcut(pressed) } else if hk.id == 7 { if pressed { app.pasteLastDictation() } } else { app.shortcut(pressed) } }
     return noErr
 }, 2, &specs, nil, nil)
 var ref: EventHotKeyRef?
@@ -6992,6 +7016,11 @@ func refreshSpecialHotkeys() {
 }
 registerHotkey()
 registerDictateHotkey()
+// ⌃⌘V pastes the last dictation; skipped when Atticus's own shortcuts hold it or another app (Willow Voice) already does.
+var pasteRef: EventHotKeyRef?
+let pasteHotkey = (code: 9, mods: controlKey | cmdKey, flags: NSEvent.ModifierFlags([.control, .command]))
+let pasteHotkeyRegistered = !hotkeysConflict(pasteHotkey, hotkey()) && (Prefs.str("dictateHotkeyLabel").isEmpty || !hotkeysConflict(pasteHotkey, dictateHotkey())) &&
+    RegisterEventHotKey(UInt32(pasteHotkey.code), UInt32(pasteHotkey.mods), EventHotKeyID(signature: 0x41545443, id: 7), GetApplicationEventTarget(), 0, &pasteRef) == noErr
 if Prefs.bool("speak") { siriVoice() }
 let settings = SettingsWindow()
 let bar = MenuBar()

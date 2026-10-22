@@ -866,13 +866,18 @@
       listening = false; boost = 1; $('orb').style.transform = ''; document.body.classList.remove('locked', 'hearing');
       setState('solving'); pill('finishing', label);
     },
-    dictated({ text, ok, words }) {   // landed (no text): a green check; otherwise one short line (ok: with a check); words: unsaved, so they can be copied
+    dictated({ text, ok, words, history }) {   // landed (no text): a green check; otherwise one short line (ok: with a check); words: unsaved, so they can be copied; history: saved there
       listening = false; boost = 1; $('orb').style.transform = ''; document.body.classList.remove('locked', 'hearing');
       setState('breathing');
       const n = text ? pill('said', text, ok) : pill('done', 'Inserted');
       if (words) {
         const button = document.createElement('button'); button.className = 'btn'; button.textContent = 'Copy';
         button.onclick = () => { post({ copy: words }); button.textContent = 'Copied'; };
+        n.append(' ', button); fit(false);
+      }
+      if (history) {
+        const button = document.createElement('button'); button.className = 'btn'; button.textContent = 'History';
+        button.onclick = () => post({ dictationHistory: true });
         n.append(' ', button); fit(false);
       }
     },

@@ -404,7 +404,7 @@ print("clipboard borrow ok")
 struct Prefs { static var on: Set<String> = ["dictateHistory"]; static func bool(_ key: String) -> Bool { on.contains(key) } }
 final class AppRef: Equatable { static func == (a: AppRef, b: AppRef) -> Bool { a === b } }
 final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: AppRef? }
-var saves = true, saved: [String] = []
+var saves = true, saved: [String] = [], pasteHotkeyRegistered = true
 final class Target {
     let app: AppRef; var received: [String] = [], deferred = false, pending: (() -> Void)?
     init(_ app: AppRef) { self.app = app }
@@ -415,7 +415,7 @@ final class Target {
 }
 final class Harness {
     var dictateSelection: Target?, busy = false, dictating = true, dictateID = 1, dictateCleanup = false
-    var dictationAppName = "App"
+    var dictationAppName = "App", lastDictation: String?
     func saveDictation(_ value: String, appName: String) -> Bool { if saves { saved.append(value) }; return saves }
     var log: [String] = [], hides: [Double] = [], words: [String] = []
     func cue(_ value: String) {}
@@ -435,20 +435,23 @@ precondition(done.log == ["finishing ", "dictated  true"] && done.hides == [0.8]
 let clean = Harness(); clean.dictateCleanup = true; clean.release()
 precondition(clean.log == ["finishing Cleaning up…"], "Clean up mode did not label its wait")
 let fallback = Harness(); fallback.release(); fallback.insertDictation("keep me safe")
-precondition(fallback.log == ["finishing ", "dictated Nothing selected to insert — saved to History. false"] && saved == ["keep me safe"] && fallback.hides == [3], "fallback: \(fallback.log)")
+precondition(fallback.log == ["finishing ", "dictated No text field. Press ⌃⌘V to paste it. false"] && saved == ["keep me safe"] && fallback.hides == [6], "fallback: \(fallback.log)")
+precondition(fallback.lastDictation == "keep me safe", "⌃⌘V would not paste the words that failed to insert")
 let moved = Harness(); moved.dictateSelection = Target(user); moved.release(); NSWorkspace.shared.frontmostApplication = AppRef(); moved.insertDictation("switched away")
 NSWorkspace.shared.frontmostApplication = user
-precondition(moved.log == ["finishing ", "dictated Couldn’t insert. Saved to History. false"], "a failed insert into a field said nothing was selected: \(moved.log)")
+precondition(moved.log == ["finishing ", "dictated Couldn’t insert. Press ⌃⌘V to paste it. false"], "a failed insert into a field said nothing was selected: \(moved.log)")
 saves = false
 let fail = Harness(); fail.release(); fail.insertDictation("keep me")
-precondition(fail.log == ["finishing ", "dictated Couldn’t insert. Your words are still here. false"] && fail.hides.isEmpty, "unsaved words faded away: \(fail.log)")
+precondition(fail.log == ["finishing ", "dictated No text field. Press ⌃⌘V to paste it. false"] && fail.hides.isEmpty, "unsaved words faded away: \(fail.log)")
 saves = true; Prefs.on = []; saved = []
 let off = Harness(); off.release(); off.insertDictation("history off")
-precondition(off.log == ["finishing ", "dictated Couldn’t insert. Your words are still here. false"] && off.hides.isEmpty && saved.isEmpty, "History off: \(off.log)")
+precondition(off.log == ["finishing ", "dictated No text field. Press ⌃⌘V to paste it. false"] && off.hides.isEmpty && saved.isEmpty, "History off: \(off.log)")
 precondition(off.words == ["history off"] && fallback.words.isEmpty, "unsaved words cannot be copied from the pill")
-Prefs.on = ["dictateHistory"]
-let cleanupFail = Harness(); cleanupFail.dictationDeliveryFailed("raw words", cleanup: true)
-precondition(cleanupFail.log == ["dictated Couldn’t clean up. Saved to History. false"] && saved == ["raw words"], "cleanup failure lost the words")
+Prefs.on = ["dictateHistory"]; pasteHotkeyRegistered = false   // another app (Willow Voice) holds ⌃⌘V
+let taken = Harness(); taken.dictateSelection = Target(user); NSWorkspace.shared.frontmostApplication = AppRef(); taken.insertDictation("raw words")
+NSWorkspace.shared.frontmostApplication = user
+precondition(taken.log == ["dictated Couldn’t insert. Saved to History. false"] && saved == ["raw words"], "a shortcut Atticus does not own was offered: \(taken.log)")
+pasteHotkeyRegistered = true
 let late = Target(user); late.deferred = true
 let cancelled = Harness(); cancelled.dictateSelection = late; cancelled.release(); cancelled.insertDictation("never"); cancelled.cancel(); late.pending?()
 precondition(cancelled.log == ["finishing ", "close"] && late.received.isEmpty && cancelled.hides.isEmpty, "cancel: \(cancelled.log)")

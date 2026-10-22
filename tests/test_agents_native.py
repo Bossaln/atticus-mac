@@ -66,7 +66,7 @@ final class AppStub{
  func frame(_ f:NSRect,animate:Bool=false){panel.setFrame(f,display:true)}
  func cue(_ name:String){};func sound(_ name:String,_ v:Float){};func startFollowingPointerScreen(){}
  func hide(after:Double){}
- func escape(){};func shortcut(_ pressed:Bool){};func dictateShortcut(_ pressed:Bool){}
+ func escape(){};func shortcut(_ pressed:Bool){};func dictateShortcut(_ pressed:Bool){};func pasteLastDictation(){}
  struct DrawingStub{var active=false};let drawing=DrawingStub();func avoidDrawing(){}
 ''' + show + defaults + '''
 }
