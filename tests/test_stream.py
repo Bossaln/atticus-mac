@@ -187,7 +187,7 @@ let atBottom=true,clock=null,working=true;const fit=(follow=true)=>{if(follow&&a
 ''' + unstream + reveal + 'const ui={' + line + r'''};
 const words=()=>a.words().map(w=>w.textContent).join(' '),check=(ok,name)=>{if(!ok){console.error(name,'|',words(),'|',a.className,thread.scrollTop);process.exit(1)}};
 ''' + checks
-        result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        result = subprocess.run(['node', '-'], input=script, capture_output=True, text=True)   # stdin: Linux caps one argument at 128 KB
         self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'Node runs the box handler')

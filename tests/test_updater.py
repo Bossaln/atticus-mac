@@ -1,9 +1,10 @@
-import os, re, subprocess, tempfile, unittest
+import os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 SCRIPT = re.search(r'let r = sh\(#"""\n(.*?)"""#\)', (Path(__file__).parent.parent / 'Atticus.swift').read_text(), re.S).group(1)
 
 
+@unittest.skipUnless(sys.platform == 'darwin', 'the app runs this updater with macOS /bin/zsh')
 class UpdaterTests(unittest.TestCase):
     # Oct 21: main was 99 commits ahead of origin; HEAD != @{u} read as an update, so Atticus rebuilt and relaunched every ~90 s.
     def test_only_new_upstream_commits_rebuild(self):

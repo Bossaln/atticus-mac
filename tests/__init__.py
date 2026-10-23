@@ -21,8 +21,9 @@ def scratch_dir(test):
 
 def run_swift(test, source, timeout=10):
     """Compile Swift source to a temp binary, run it, assert both succeed; returns its stdout."""
-    import subprocess
+    import subprocess, sys
     from pathlib import Path
+    if sys.platform != 'darwin': test.skipTest('needs macOS frameworks (Cocoa, AppKit)')
     with tempfile.TemporaryDirectory() as root:
         path, binary = Path(root) / 'test.swift', Path(root) / 'test'
         path.write_text(source)
