@@ -187,6 +187,7 @@ print("dictation routing ok")
         method = source[source.index('    func insertDictation('):source.index('    func typed(')]
         swift = r'''import Foundation
 struct Prefs { static func bool(_ key: String) -> Bool { false } }
+enum DictationData { static func fixed(_ text: String) -> String { text } }
 final class AppRef: Equatable {
     let id: Int
     init(_ id: Int) { self.id = id }
@@ -409,6 +410,7 @@ print("clipboard borrow ok")
         self.assertNotIn('NSPasteboard', delivery)
         swift = r'''import Foundation
 struct Prefs { static var on: Set<String> = ["dictateHistory"]; static func bool(_ key: String) -> Bool { on.contains(key) } }
+enum DictationData { static func fixed(_ text: String) -> String { text } }
 final class AppRef: Equatable { static func == (a: AppRef, b: AppRef) -> Bool { a === b } }
 final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: AppRef? }
 var saves = true, saved: [String] = [], pasteHotkeyRegistered = true

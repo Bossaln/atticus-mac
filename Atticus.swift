@@ -76,10 +76,38 @@ enum DictationData {
         guard !value.isEmpty, value.count <= 80, !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return false }
         var list = words.filter { $0 != replacing }
         if !list.contains(value) { guard list.count < 500, list.reduce(0, { $0 + $1.count }) + value.count <= 4000 else { return false }; list.append(value) }
-        return Prefs.set("dictateWords", list)
+        guard Prefs.set("dictateWords", list) else { return false }
+        if let replacing, replacing != value { Prefs.set("dictateFixes", fixes.mapValues { $0 == replacing ? value : $0 }) }
+        return true
     }
-    // Only an isolated word replacement inside the dictated span counts as a spelling correction.
-    static func correction(_ original: String, _ edited: String) -> String? {
+    @discardableResult static func forget(_ word: String) -> Bool {
+        guard Prefs.set("dictateWords", words.filter { $0 != word }) else { return false }
+        Prefs.set("dictateFixes", fixes.filter { $0.value != word }); return true
+    }
+    // Heard spelling (lowercased) → the user's spelling, swapped in whole words before dictation is inserted.
+    static var fixes: [String: String] { Prefs.d["dictateFixes"] as? [String: String] ?? [:] }
+    static func known(_ word: String) -> Bool { NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0).location == NSNotFound }
+    // A heard word that is itself a real word ("cash" for "cache") is never swapped: the dictionary only hints it.
+    @discardableResult static func fix(_ heard: String, _ word: String) -> Bool {
+        let key = heard.lowercased()
+        guard key != word, !known(heard), words.contains(word), fixes.count < 500 else { return false }
+        var list = fixes; list[key] = word
+        return Prefs.set("dictateFixes", list)
+    }
+    static func fixed(_ text: String) -> String {
+        fixes.reduce(text) { text, fix in
+            guard let re = try? NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: fix.key) + "(?![\\p{L}\\p{N}])", options: .caseInsensitive) else { return text }
+            let out = NSMutableString(string: text)
+            for m in re.matches(in: text, range: NSRange(location: 0, length: out.length)).reversed() {
+                let found = out.substring(with: m.range), value = fix.value
+                // A sentence-start capital stays when the learned spelling is lowercase.
+                out.replaceCharacters(in: m.range, with: found.first?.isUppercase == true && value.first?.isLowercase == true ? value.prefix(1).uppercased() + value.dropFirst() : value)
+            }
+            return out as String
+        }
+    }
+    // Only an isolated word replacement inside the dictated span counts as a spelling correction; an everyday lowercase word is no name to learn.
+    static func correction(_ original: String, _ edited: String) -> (heard: String, word: String)? {
         let a = original.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         let b = edited.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard a.count == b.count else { return nil }
@@ -96,7 +124,8 @@ enum DictationData {
             for (j, d) in y.enumerated() { next.append(min(next[j] + 1, row[j + 1] + 1, row[j] + (c == d ? 0 : 1))) }
             row = next
         }
-        return row[y.count] <= max(1, max(x.count, y.count) / 3) ? new : nil
+        guard row[y.count] <= max(1, max(x.count, y.count) / 3), !(new == new.lowercased() && known(new)) else { return nil }
+        return (old, new)
     }
 }
 
@@ -114,7 +143,7 @@ enum Prefs {
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
         "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
-        "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "boxW": 500, "boxH": 420]
+        "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "verbatim", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
         "meetingNudge", "meetingDetect", "meetingAuto", "fixSetup", "dictateLearn"]
@@ -1982,7 +2011,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         if m.name == "c", let b = m.body as? [String: Any] {
             if b["learnedUndo"] != nil, let word = learnedWord {
-                if Prefs.set("dictateWords", DictationData.words.filter { $0 != word }) {
+                if DictationData.forget(word) {
                     learnedWord = nil; js("dictated", ["text": "Forgot that spelling", "ok": true]); hide(after: 2)
                     Atticus.settings.send("dictation", DictationData.state())
                 }
@@ -2727,9 +2756,11 @@ final class App: NSObject, WKScriptMessageHandler {
                       current.hasPrefix(prefix), current.hasSuffix(suffix), current.count >= prefix.count + suffix.count else { timer.invalidate(); return }
                 let span = String(current.dropFirst(prefix.count).dropLast(suffix.count))
                 if span != last { last = span; changed = Date(); return }
-                guard Date().timeIntervalSince(changed) > 1, let word = DictationData.correction(value, span), !DictationData.words.contains(word) else { return }
+                guard Date().timeIntervalSince(changed) > 1, let fix = DictationData.correction(value, span), !DictationData.words.contains(fix.word) else { return }
                 timer.invalidate()
+                let word = fix.word
                 guard DictationData.word(word) else { return }
+                DictationData.fix(fix.heard, word)
                 learnedWord = word; pill(true); show(); js("learned", word); hide(after: 6)
                 Atticus.settings.send("dictation", DictationData.state())
             }
@@ -2825,7 +2856,8 @@ final class App: NSObject, WKScriptMessageHandler {
         js("dictated", ["text": failed + (paste.isEmpty ? " Saved to History." : paste), "ok": false, "history": true]); hide(after: 6)
     }
 
-    func insertDictation(_ value: String) {
+    func insertDictation(_ heard: String) {
+        let value = DictationData.fixed(heard)
         guard let target = dictateSelection else {
             dictationDeliveryFailed(value); return
         }
@@ -3582,7 +3614,7 @@ final class RoutineWake {
 // Shows until finished once; to see it again: defaults delete com.atticus.app onboarded, then restart the app.
 final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     var win: NSWindow?, web: WKWebView?, timer: Timer?
-    var screenInitiallyGranted = false, screenGrantedDuringSetup = false, tourPending = false
+    var screenInitiallyGranted = false, screenGrantedDuringSetup = false
     let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 
     func open() {
@@ -3613,8 +3645,6 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         }
     }
 
-    func tour() { tourPending = true; open(); push() }   // the feature pages setup skips, from the menu bar
-
     // Which permissions are on, sent to the page every second (System Settings changes them behind our back).
     func push() {
         DispatchQueue.global().async { [weak self] in
@@ -3626,7 +3656,6 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
                 self?.call("ob.prefs", ["meeting": Prefs.bool("meeting"), "draw": Prefs.bool("draw"), "routing": Prefs.str("routing"), "hotkeyLabel": Prefs.str("hotkeyLabel"), "safe": Prefs.bool("safe"),
                                         "dictateMode": Prefs.str("dictateMode"), "dictateHotkeyLabel": Prefs.str("dictateHotkeyLabel"), "globeTaken": globeKeyTaken()])
                 self?.call("ob.server", ["apiBase": Prefs.str("apiBase"), "apiModel": Prefs.str("apiModel")])
-                if self?.tourPending == true { self?.web?.evaluateJavaScript("ob.tour()") { _, error in if error == nil { self?.tourPending = false } } }   // fails until the page loads
             }
         }
     }
@@ -4100,7 +4129,6 @@ final class MenuBar: NSObject, NSMenuDelegate {
         m.addItem(.separator())
         add(m, "Settings…", #selector(openSettings), ",")
         add(m, "Setup & Permissions…", #selector(openSetup), "")
-        add(m, "What Atticus Can Do…", #selector(openTour), "")
         add(m, "Report Feedback…", #selector(reportFeedback), "")
         add(m, "Leave a Tip…", #selector(tipJar), "")
         if !Prefs.bool("tips") { add(m, "Show Tips Again", #selector(tipsOn), "") }   // a tip's "Turn off" has no Settings row to undo it
@@ -4135,7 +4163,6 @@ final class MenuBar: NSObject, NSMenuDelegate {
     @objc func openAgents() { agentsUI.openView() }
     @objc func hideAgents() { Prefs.set("agentsHidden",!Prefs.bool("agentsHidden")) }
     @objc func openSetup() { onboarding.open() }
-    @objc func openTour() { onboarding.tour() }
     @objc func reportFeedback() { settings.open(tab:"feedback") }
     @objc func tipJar() { NSWorkspace.shared.open(kofi) }
     @objc func tipsOn() { settings.apply("tips", true); settings.push() }
@@ -4505,7 +4532,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             if let word = b["word"] as? String, DictationData.word(word, replacing: b["old"] as? String) { send("dictation", DictationData.state()) }
             else { send("notice", ["text": "Couldn’t save that word. Use 1–80 characters, up to 500 words and 4,000 characters total."]) }
         case "dictationWordDelete":
-            if let word = b["word"] as? String, Prefs.set("dictateWords", DictationData.words.filter { $0 != word }) { send("dictation", DictationData.state()) }
+            if let word = b["word"] as? String, DictationData.forget(word) { send("dictation", DictationData.state()) }
             else { send("notice", ["text": "Couldn’t remove that word."]) }
         case "dictationDelete", "dictationClear":
             let old = DictationData.archive

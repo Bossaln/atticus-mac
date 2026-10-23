@@ -14,7 +14,7 @@ class DictationDataTests(unittest.TestCase):
     def test_private_bounded_history_stats_and_dictionary(self):
         source = (ROOT / 'Atticus.swift').read_text()
         store = source[source.index('enum DictationData {'):source.index('enum Prefs {')]
-        swift = r'''import Foundation
+        swift = r'''import AppKit
 struct Prefs {
     static let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path + "/settings.json"
     static var d: [String: Any] = ["dictateHistory": true]
@@ -64,7 +64,7 @@ print("private dictation data ok")
     def test_corrections_are_single_words_and_reject_rewrites(self):
         source = (ROOT / 'Atticus.swift').read_text()
         store = source[source.index('enum DictationData {'):source.index('enum Prefs {')]
-        swift = r'''import Foundation
+        swift = r'''import AppKit
 struct Prefs {
     static var path = "/tmp/unused-atticus-dictation-test/settings.json"
     static var d: [String: Any] = [:]
@@ -72,15 +72,45 @@ struct Prefs {
     static func set(_ k: String, _ v: Any) -> Bool { true }
 }
 ''' + store + r'''
-precondition(DictationData.correction("Hello Sarth.", "Hello Saarth.") == "Saarth")
-precondition(DictationData.correction("open atticus", "open Atticus") == "Atticus")
-precondition(DictationData.correction("Hi Andree", "Hi André") == "André")
+let saarth = DictationData.correction("Hello Sarth.", "Hello Saarth.")
+precondition(saarth?.heard == "Sarth" && saarth?.word == "Saarth")
+precondition(DictationData.correction("open atticus", "open Atticus")?.word == "Atticus")
+precondition(DictationData.correction("Hi Andree", "Hi André")?.word == "André")
+precondition(DictationData.correction("I went their", "I went there") == nil)   // an everyday word is no name to learn
 for text in ["Hello", "Hello Sarth. again", "Changed everything.", "Hello 123.", "Hello Sarth.", "Hi Saarth."] {
     precondition(DictationData.correction("Hello Sarth.", text) == nil, text)
 }
 print("correction bounds ok")
 '''
         self.assertIn('correction bounds ok', run_swift(self, swift))
+
+    def test_learned_fix_swaps_the_heard_word_until_forgotten(self):
+        source = (ROOT / 'Atticus.swift').read_text()
+        store = source[source.index('enum DictationData {'):source.index('enum Prefs {')]
+        swift = r'''import AppKit
+struct Prefs {
+    static var path = "/tmp/unused-atticus-dictation-test/settings.json"
+    static var d: [String: Any] = [:]
+    static func bool(_ k: String) -> Bool { false }
+    static func set(_ k: String, _ v: Any) -> Bool { d[k] = v; return true }
+}
+''' + store + r'''
+precondition(DictationData.word("Saarth") && DictationData.fix("Sarth", "Saarth"), "saved fix")
+precondition(DictationData.fixed("sarth met Sarth's friend, not Sarthak.") == "Saarth met Saarth's friend, not Sarthak.", "whole-word swap")
+precondition(DictationData.word("cache") && !DictationData.fix("cash", "cache"), "real heard word")   // a real heard word stays: only a hint
+precondition(DictationData.fixed("cash it") == "cash it", "real word swapped")
+precondition(!DictationData.fix("Bob", "Robert"), "non-dictionary fix")   // only a dictionary word gets a fix
+precondition(DictationData.word("vexlar") && DictationData.fix("vexlor", "vexlar"), "lowercase fix")
+precondition(DictationData.fixed("Vexlor then vexlor.") == "Vexlar then vexlar.", "capital kept")
+precondition(DictationData.word("Vexlar", replacing: "vexlar") && DictationData.fixes["vexlor"] == "Vexlar", "edit retargets")
+precondition(DictationData.forget("Saarth") && DictationData.fixes["sarth"] == nil && !DictationData.words.contains("Saarth"), "forget")
+precondition(DictationData.fixed("Sarth") == "Sarth", "forgotten swap")
+print("learned fixes ok")
+'''
+        self.assertIn('learned fixes ok', run_swift(self, swift))
+        self.assertIn('let value = DictationData.fixed(heard)', source)   # every insert path goes through insertDictation
+        self.assertIn('DictationData.fix(fix.heard, word)', source)
+        self.assertEqual(source.count('DictationData.forget('), 2)   # Undo and Settings remove both drop the fix
 
     def test_dictionary_reaches_cleanup_and_keeps_saved_rules(self):
         import atticus

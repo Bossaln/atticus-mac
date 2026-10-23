@@ -354,7 +354,7 @@
   <p class="sub r">macOS asks once for each one. You can change them any time in System Settings.</p>
   <div id="list" class="r"></div>
   <div id="count" class="r"></div>
-  <button class="btn quiet r" id="next" data-go="try">Skip for Now</button>
+  <button class="btn quiet r" id="next" data-go="agents">Skip for Now</button>
 </section>
 
 <section class="page" id="agents">
@@ -364,7 +364,7 @@
   <div class="list r" id="own"></div>
   <div class="cap r">Only you can allow these. macOS and Claude ask you directly.</div>
   <div class="list r" id="yours"></div>
-  <div class="bar2 r"><button class="btn quiet" data-go="next" id="agents-next">Skip for Now</button><button class="btn" id="enable">Enable All</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="try" id="agents-next">Skip for Now</button><button class="btn" id="enable">Enable All</button></div>
 </section>
 
 <section class="page" id="try">
@@ -372,7 +372,7 @@
   <p class="sub r" id="try-talk">Hold the keys anywhere, say what you need, then let go. Try one now.</p>
   <div class="keys big r" id="trykeys"><div class="key">⌃</div><div class="key">⌥</div><div class="key wide">Space</div></div>
   <div id="hint" class="r">Hold the keys and say “open Calculator”.</div>
-  <div class="bar2 r"><button class="btn quiet" data-go="dictate" id="try-skip">Skip</button><button class="btn" data-go="dictate" id="try-next" hidden>Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="mac" id="try-skip">Skip</button><button class="btn" data-go="mac" id="try-next" hidden>Next</button></div>
 </section>
 
 <section class="page" id="mac">
@@ -409,7 +409,7 @@
   </div>
   <textarea id="pad" class="r" aria-label="Practice text">hey can u send me the notes from today, thx</textarea>
   <div class="done-note r">Your turn: select this line, hold the keys, say “make this polite”.</div>
-  <div class="bar2 r"><button class="btn quiet" data-go="point">Skip</button><button class="btn" data-go="point">Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="dictate">Skip</button><button class="btn" data-go="dictate">Next</button></div>
 </section>
 
 <section class="page" id="dictate">
@@ -428,7 +428,7 @@
     <div class="keyfield"><button class="kf" id="dc-field" aria-labelledby="dc-label" aria-describedby="dc-hint"></button><button class="x" id="dc-clear" aria-label="Clear dictation shortcut" hidden>×</button></div></div>
   <div class="subrow r" id="dc-globe" hidden><span>Set Press 🌐 key to Do Nothing</span><button id="dc-globe-open">Open Keyboard Settings</button></div>
   <div class="subrow r" id="dc-mode"><span id="dc-mode-hint">Clean up tidies it as shown. Verbatim types every word.</span><div class="seg" data-k="dictateMode" role="group" aria-label="Dictated text"><button data-v="verbatim">Verbatim</button><button data-v="cleanup">Clean up</button></div></div>
-  <div class="bar2 r"><button class="btn quiet" data-go="next">Skip</button><button class="btn" data-go="next">Next</button></div>
+  <div class="bar2 r"><button class="btn quiet" data-go="point">Skip</button><button class="btn" data-go="point">Next</button></div>
 </section>
 
 <section class="page" id="point">
@@ -531,7 +531,7 @@
   <p class="sub r" id="done-sub">Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.</p>
   <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click an answer to copy</div><div>Click away to close</div><div>Hover the box to type</div></div>
   <p class="done-note r" id="feedback-note">Something off? Report feedback from the menu bar.</p>
-  <div class="bar2 r"><button class="btn quiet" id="tour">See What Else It Can Do</button><button class="btn" id="finish">Start Using Atticus</button></div>
+  <button class="btn r" id="finish">Start Using Atticus</button>
 </section>
 
 <div id="prov" hidden role="dialog" aria-modal="true" aria-labelledby="prov-h">
@@ -556,34 +556,27 @@
   </div>
 </div>
 
-<div id="dots"></div>
+<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
-  // Setup is short, like Wispr Flow's; the feature pages are a tour, from the done page or the menu bar.
-  const SETUP = ['welcome', 'perms', 'try', 'dictate', 'done'], TOUR = ['agents', 'mac', 'learn', 'text', 'point', 'pointer', 'work', 'meeting', 'improve', 'tip', 'done'];
-  let pages = SETUP;
-  const dots = () => $('dots').replaceChildren(...pages.map(() => document.createElement('i')));
+  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'dictate', 'point', 'pointer', 'work', 'meeting', 'improve', 'tip', 'done'];
   let cur = '', orbWake = null;
   const skip = id => ['devin', 'pi'].includes(provider) && ['agents', 'work'].includes(id);   // their CLIs run no Atticus agents
   const go = id => {
-    if (id === 'next') id = pages[pages.indexOf(cur) + 1];
     while (skip(id)) id = pages[pages.indexOf(id) + 1];
-    if (id === 'agents') post({ do: 'connectors' });
-    $('tour').hidden = pages === TOUR;
     if (recording) post({ do: 'cancelRecord' });
     if (cur) { $(cur).classList.remove('on'); $(cur).classList.add('gone'); const c = cur; setTimeout(() => $(c).classList.remove('gone'), 600); }
     cur = id; orbWake?.(); orbWake = null; $(id).classList.add('on');
-    for (const page of document.querySelectorAll('.page')) { page.inert = page.id !== id; page.setAttribute('aria-hidden', String(page.id !== id)); }
+    for (const page of pages) { $(page).inert = page !== id; $(page).setAttribute('aria-hidden', String(page !== id)); }
     [...$('dots').children].forEach((d, i) => { d.classList.toggle('on', pages[i] === id); d.hidden = skip(pages[i]); });
     $('back').hidden = pages.indexOf(id) < 1;
   };
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   $('back').onclick = () => { let i = pages.indexOf(cur) - 1; while (skip(pages[i])) i--; go(pages[i]); };
   $('finish').onclick = () => post({ do: 'done' });
-  $('tour').onclick = () => ob.tour();
   $('kofi').onclick = () => post({ do: 'kofi' });
   document.querySelectorAll('[data-improve]').forEach(b => b.onclick = () => { post({ do: 'set', k: 'improve', v: b.dataset.improve }); go('tip'); });
   document.querySelectorAll('.sw input').forEach(i => i.onchange = () => post({ do: 'set', k: i.dataset.k, v: String(i.checked) }));
@@ -605,8 +598,7 @@
       $('welkeys').replaceChildren(...caps()); $('trykeys').replaceChildren(...caps());
     }
     const key = prefs.dictateHotkeyLabel;
-    $('dc-sub').textContent = (key ? `Hold ${key} and talk; double-tap to lock. ` : 'Give dictation a shortcut, hold it and talk. ') +
-      (other ? 'Your words land at the cursor.' : 'It types what you meant: no ums or false starts, misheard words fixed, lists formatted. Fix a word by hand once and it learns it.');
+    $('dc-sub').textContent = key ? `Hold ${key} to talk. Double-tap to lock.` : 'Give dictation a shortcut. Hold it to talk, double-tap to lock.';
     $('dc-key').textContent = key || 'fn'; $('dc-globe').hidden = !prefs.globeTaken;
     $('dc-mode').classList.toggle('dim', !prefs.dictateHotkeyLabel);
     document.querySelector('[data-k=dictateMode] [data-v=cleanup]').disabled = other;
@@ -728,6 +720,7 @@
   $('a-connectors').querySelector('.allow').textContent = 'Connect';
   let connected = false;
   $('enable').onclick = () => post({ do: 'enableAll', connected: String(connected) });
+  document.querySelector('[data-go="agents"]').addEventListener('click', () => { if (!['devin', 'pi'].includes(provider)) post({ do: 'connectors' }); });
   document.querySelectorAll('.allow').forEach(b => b.onclick = () => {   // setup's two lists share ids: the click is the same grant
     const was = b.textContent; b.classList.add('wait'); b.textContent = 'Waiting';
     setTimeout(() => { b.classList.remove('wait'); b.textContent = was; }, 12000);   // gave up in System Settings
@@ -742,7 +735,6 @@
     $('finish').textContent=voice?'Start Using Atticus':'Finish Setup Later';
   };
   window.ob = {
-    tour() { if (pages === TOUR) return; pages = TOUR; dots(); go(TOUR[0]); },
     mode(toggle) {
       toggleMode = toggle;
       if (!$('hint').classList.contains('yes')) $('hint').textContent = (toggle ? 'Press the shortcut' : 'Hold the keys') + ' and say “open Calculator”.';
@@ -853,10 +845,10 @@
   };
   // Dictate's examples: what you say, then what Clean up types. [Brackets] mark the words that go.
   const DC = [['Fillers', '[Um,] I was, [like, you know,] thinking we could leave.', 'I was thinking we could leave.'],
-    ['Self-corrections', 'Can we [meet Monday? Can we, uh, can we] meet [on the, actually,] Tuesday?', 'Can we meet Tuesday?'],
-    ['Misheard words', 'Can you clear the cash and push to Maine?', 'Can you clear the cache and push to main?'],
-    ['Lists', 'For the trip I need socks, a charger and snacks.', 'For the trip, I need:\n- Socks\n- A charger\n- Snacks'],
-    ['Numbers', 'It costs five dollars and starts at three thirty.', 'It costs $5 and starts at 3:30.']];
+    ['Scratch that', '[Table for six, scratch that,] table for eight.', 'Table for eight.'],
+    ['Actually…', 'Meet me at [four, actually] five.', 'Meet me at five.'],
+    ['Lists', 'Shopping list: eggs, milk, and bread.', 'Shopping list:\n- Eggs\n- Milk\n- Bread'],
+    ['New line', 'Hi Sam [new line] can you review this [question mark]', 'Hi Sam\nCan you review this?']];
   const said = s => s.match(/\[[^\]]+\]|\S+/g).flatMap(t => t[0] === '[' ? t.slice(1, -1).split(' ').map(w => [w, true]) : [[t, false]]);
   const word = ([w, x]) => Object.assign(document.createElement('span'), { textContent: w, className: x ? 'x' : '' });
   let dcAt = 0, dcGen = 0, dcWake = null;
@@ -959,7 +951,7 @@
     else setTimeout(press, 1200);
   });
 
-  dots(); paintPrefs(); go('welcome');
+  paintPrefs(); go('welcome');
 
   // The same orb as the overlay, breathing.
   try {
