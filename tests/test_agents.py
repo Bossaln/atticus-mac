@@ -226,7 +226,7 @@ class AgentTests(unittest.TestCase):
         p=unittest.mock.Mock();p.ask=self.root.name;p.waiting=threading.Event()
         move=atticus.MainMove('Continue the task',p);self.addCleanup(move.close)
         move.last=0
-        move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':'slow','name':'Bash','input':{'command':'fixture'}}]}})
+        move.record({'type':'assistant','message':{'content':[{'type':'text','text':'[text] Working'},{'type':'tool_use','id':'slow','name':'Bash','input':{'command':'fixture'}}]}})
         with patch.object(atticus,'stop_claude'),patch.object(atticus.time,'monotonic',return_value=14),contextlib.redirect_stdout(io.StringIO()) as output:
             move.poll();self.assertEqual(move.elapsed,14);self.assertFalse(move.moved)
             p.waiting.set();move.last=0;move.poll();self.assertEqual(move.elapsed,14);self.assertFalse(move.moved)
@@ -234,7 +234,7 @@ class AgentTests(unittest.TestCase):
             for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Read','input':{'file_path':'fixture'}}]}})
             move.poll();self.assertTrue(move.moved);self.assertNotIn('offer',output.getvalue())
         other=atticus.MainMove('Work',p);self.addCleanup(other.close);other.last=0
-        other.record({'message':{'content':[{'type':'tool_use','id':'read','name':'Read','input':{}}]}})
+        other.record({'message':{'content':[{'type':'text','text':'[text]'},{'type':'tool_use','id':'read','name':'Read','input':{}}]}})
         with patch.object(atticus,'stop_claude'),patch.object(atticus.time,'monotonic',return_value=15),contextlib.redirect_stdout(io.StringIO()):other.poll()
         self.assertTrue(other.moved)
 
@@ -252,7 +252,7 @@ class AgentTests(unittest.TestCase):
                 self.prefs['longAsks']=mode;move,p=self.moving()
                 with patch.object(atticus,'stop_claude') as stop,contextlib.redirect_stdout(io.StringIO()) as output:
                     move.poll();self.assertEqual(self.lines(output.getvalue()),[{'a':move.answer}]);self.assertFalse(move.moved)   # movable before the threshold
-                    for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':mode+str(i),'name':'Read','input':{}}]}})
+                    for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'text','text':'[text]'},{'type':'tool_use','id':mode+str(i),'name':'Read','input':{}}]}})
                     move.poll()
                     self.assertFalse(any(l.get('offer') for l in self.lines(output.getvalue())))
                     self.assertTrue(move.moved);stop.assert_called_once_with(p)

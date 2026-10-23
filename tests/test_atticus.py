@@ -1,4 +1,5 @@
 """Offline regressions: no Claude calls, Mac actions, or user settings."""
+import contextlib
 import io
 import json
 import os
@@ -188,6 +189,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
         def attempt(*args, **kwargs):
             reply, ok, actions = outcomes[min(brain.call_count - 1, len(outcomes) - 1)]
             brain.ok = ok; brain.cmds = actions[:] if ok else []; brain.ran = actions[:]; brain.handoff = None; brain.work = bool(actions)
+            brain.modes = {'text'}   # the model's first output decided a text reply (DRAWING)
             brain.observed = [{'action': action, 'result': 'Verified fixture state', 'error': False} for action in actions]
             prior = Path(os.environ['ATTICUS_ASK'], 'prior-work.json'); brain.prior = json.loads(prior.read_text()) if prior.exists() else None   # the ask folder goes with main()
             return reply, .001, actions[:]
@@ -353,7 +355,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
             def __init__(self, target=None, **_): self.target, self.starts = target, 0; self.made.append(self)
             def start(self): self.starts += 1
             def join(self, *_): pass
-        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []; brain.observed = []
+        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []; brain.observed = []; brain.modes = {'text'}
         with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
                             front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
                             describe=lambda *a: '', me_line=lambda: '', selection_context=lambda: '',
@@ -368,7 +370,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
         self.assertIn('Text head unavailable', brain.call_args.args[0])
 
     def test_a_correction_reports_the_ask_not_the_answer_it_corrects(self):
-        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []; brain.observed = []
+        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []; brain.observed = []; brain.modes = {'text'}
         earlier = [{'t': time.time(), 'q': 'Summarize my inbox', 'a': 'Dana wrote about the lawsuit settlement'}]
         with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
                             front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
@@ -388,7 +390,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
     def test_front_window_is_one_system_events_call_and_displays_are_read_alongside(self):
         calls = []
         def osa(script, *_): calls.append(script); return 'Q3 plan, draft, -1400, 30' if 'of front window' in script else ''
-        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []; brain.observed = []
+        brain = unittest.mock.Mock(return_value=('Done.', 0, [])); brain.ok = True; brain.cmds = brain.ran = []; brain.observed = []; brain.modes = {'text'}
         displays = unittest.mock.Mock(return_value=[('Built-in', 0, 0, 1470, 956, True), ('Acer', -1920, 0, 1920, 1080, False)])
         with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None, osa=osa, screens=displays,
                             window_summary=lambda *a: {'text': 'Readable'}, tool_help=lambda *a, **k: '', selection_context=lambda: '',
@@ -439,8 +441,8 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                          'can you write out a similar equation and work it out on the screen')
 
     def test_on_screen_results_require_fresh_context_and_draw(self):
-        self.assertIn("UI where/how asks, even if known: point, not tell;", atticus.DRAWING)   # Haiku answered "where do I click" from memory, unpointed; "how do I cook rice" is no screen ask
-        self.assertIn("draw/explain on screen: diagram the idea, not marks.", atticus.DRAWING)   # "draw and explain cell wall vs membrane" got two rects around words
+        self.assertIn("[show] for UI where/how asks, even if known (point, not tell)", atticus.DRAWING)   # Haiku answered "where do I click" from memory, unpointed; "how do I cook rice" is no screen ask
+        self.assertIn("Draw/explain on screen: diagram the idea, not marks.", atticus.DRAWING)   # "draw and explain cell wall vs membrane" got two rects around words
         self.assertIn("about the screen, even if known,", atticus.POINTER)
         self.assertIn("use " + atticus.DRAW + " once on Request screen", atticus.DRAWING)
         self.assertIn("After --look && --draw --help (one call)", atticus.DRAWING)   # draw() refuses before this ask's --look
@@ -1747,8 +1749,9 @@ class BoxLookTests(unittest.TestCase):
         click_away = app.split('NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown])', 1)[1].split('close(clear: false)', 1)[0]
         fade = app.split('func hide(after s: Double', 1)[1].split('NSAnimationContext', 1)[0]
         for name, guard in [('click away', click_away), ('auto fade', fade)]:
-            for held in ('!stuck', '!drawing.active', '!drawing.hasInput'):
+            for held in ('stuck', 'drawing.holds', 'drawing.hasInput'):
                 self.assertIn(held, guard, f'{name} ignores {held}')
+        self.assertIn('if kept() { panel.alphaValue = 1 } else { gone() }', app.split('func hide(after s: Double', 1)[1])   # a drawing or grab during the fade keeps it
         self.assertIn('stuck = true', app.split('case .leftMouseDragged:', 1)[1].split('default:', 1)[0])   # a drag places it
         self.assertIn('stuck = false', app.split('func gone() {', 1)[1].split('\n    }', 1)[0])   # cleared only once it is gone
         # the dictation pill is not a box to keep: clicking or dragging it must not hold it (or bring the box back) after its check
@@ -1862,6 +1865,88 @@ class AppleEventTests(unittest.TestCase):
         started = time.monotonic()
         self.assertEqual(atticus.osa('delay 5', timeout=1), '')
         self.assertLess(time.monotonic() - started, 3)
+
+
+class ClientGuideTests(unittest.TestCase):
+    """Devin and Pi run each turn in a fresh ask folder: it carries the ask's live guide and [show], so their gate and draw() hold."""
+    PROBE = '''
+import json, os, subprocess, sys, time
+from pathlib import Path
+sys.path.insert(0, {repo!r}); import atticus
+if sys.argv[1:3] == ['list', '--format']: print(json.dumps([{{'id': 'fixture', 'cwd': os.getcwd()}}])); raise SystemExit(0)
+if sys.argv[1:2] == ['rm']: raise SystemExit(0)
+ask, say = os.environ['ATTICUS_ASK'], os.environ['FIXTURE_SAY']
+files = [f for f in (atticus.guide_file(ask), atticus.show_file(ask)) if os.path.exists(f)]
+seen = {{'guide': json.loads(Path(atticus.guide_file(ask)).read_text()) if os.path.exists(atticus.guide_file(ask)) else None,
+        'request': Path(atticus.request_file(ask)).read_text(), 'private': all(os.stat(f).st_mode & 0o777 == 0o600 for f in files),
+        'receipt': os.path.exists(os.path.join(ask, 'guide-shown'))}}
+if {streams}:   # Pi: the [show] note streams before its tool call runs
+    print(json.dumps({{'type': 'message_update', 'message': {{'role': 'assistant', 'content': [{{'type': 'text', 'text': say}}]}}}}), flush=True)
+    for _ in range(50):
+        if os.path.exists(atticus.show_file(ask)): break
+        time.sleep(.1)
+seen['held'] = os.path.exists(atticus.guide_file(ask)) or os.path.exists(atticus.show_file(ask))
+if seen['held']:   # the client's own hook: the same gate, in this turn's folder
+    event = json.dumps({{'tool_name': 'exec', 'tool_input': {{'command': atticus.HANDS + ' click Insert'}}}})
+    gate = subprocess.run([sys.executable, atticus.ME, '--gate'], input=event, text=True, capture_output=True, env={{**os.environ, 'ATTICUS_CLIENT': {client!r}}})
+    seen['click'] = json.loads(gate.stdout)['decision']
+if os.environ.get('FIXTURE_DRAW'): Path(ask, 'guide-shown').write_text('Guide shown (step 1 of 1). Leave it running.')
+Path(os.environ['FIXTURE_LOG']).write_text(json.dumps(seen))
+if {streams}: print(json.dumps({{'type': 'message_end', 'message': {{'role': 'assistant', 'content': [{{'type': 'text', 'text': say}}]}}}}))
+else: print(say)
+'''
+
+    def setUp(self):
+        if atticus.DIR != os.environ.get('ATTICUS_DIR'): self.skipTest('the fake client must share atticus.DIR')
+        self.root = Path(tempfile.mkdtemp()); self.addCleanup(subprocess.run, ['rm', '-rf', str(self.root)])
+        self.parent = self.root / 'parent-ask'; self.parent.mkdir()
+        atticus.save_request(str(self.parent), 'add a margin note')
+        self.guide = {'goal': 'add a margin note', 'done': ['Click Annotate.'], 'pid': 123}
+
+    def turn(self, client, say, draw=False):
+        fake, log = self.root / client, self.root / 'seen.json'
+        fake.write_text(f'#!{sys.executable}\n' + self.PROBE.format(repo=str(Path(atticus.__file__).parent), streams=client == 'pi', client=client))
+        fake.chmod(0o755)
+        previous = signal.getsignal(signal.SIGTERM)
+        env = {'PATH': str(self.root) + os.pathsep + os.environ['PATH'], 'ATTICUS_ASK': str(self.parent), 'FIXTURE_SAY': say, 'FIXTURE_LOG': str(log)}
+        try:
+            with patch.dict(os.environ, {**env, **({'FIXTURE_DRAW': '1'} if draw else {})}), patch.object(atticus, 'wait_commit', return_value=True), \
+                 patch.object(atticus, 'pref', side_effect=lambda k, d: client if k == 'client' else False if k == 'safe' else d), \
+                 python_fixture_cli() if client == 'pi' else contextlib.nullcontext():   # Devin starts by name, from PATH
+                reply, _, _ = (atticus.run_pi if client == 'pi' else atticus.run_devin)('add a margin note', request='add a margin note')
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        return reply, json.loads(log.read_text())
+
+    def test_a_live_guide_and_a_show_marker_reach_the_clients_gate_and_draw(self):
+        for client in ('pi', 'devin'):
+            with self.subTest(client=client):
+                atticus.private_json(atticus.guide_file(str(self.parent)), self.guide)   # main() wrote it for this continuation
+                reply, seen = self.turn(client, 'Click Margin Note.', draw=True)
+                self.assertEqual(seen['guide'], self.guide)   # draw() keeps the original goal and steps
+                self.assertEqual(seen['request'], 'add a margin note'); self.assertTrue(seen['private'])
+                self.assertEqual(seen['click'], 'block')   # the continuation cannot click for the user
+                self.assertTrue(atticus.guide_shown(atticus.run.observed))
+                os.remove(atticus.guide_file(str(self.parent)))
+                atticus.guard_show(str(self.parent))   # main() before a recovery turn
+                reply, seen = self.turn(client, '[text] Margin notes sit beside the text.')
+                self.assertIsNone(seen['guide']); self.assertTrue(seen['held'] and seen['private']); self.assertEqual(seen['click'], 'block')
+                self.assertFalse(seen['receipt']); self.assertEqual(atticus.run.observed, [])   # the last turn's receipt never counts again
+                os.remove(atticus.show_file(str(self.parent)))
+                reply, seen = self.turn(client, 'Margin notes sit beside the text.')   # nothing declared: an ordinary turn is not held
+                self.assertFalse(seen['held']); self.assertNotIn('click', seen)
+
+    def test_a_streamed_show_holds_pis_own_turn_and_any_later_turn(self):
+        reply, seen = self.turn('pi', '[show] Checking your screen')
+        self.assertTrue(seen['held']); self.assertEqual(seen['click'], 'block')   # written from the stream, before its first tool ran
+        self.assertIn('show', atticus.run.modes)
+        self.assertTrue(os.path.exists(atticus.show_file(str(self.parent))))   # its recovery or retry is held too
+        os.remove(atticus.show_file(str(self.parent)))
+        reply, seen = self.turn('devin', '[show] Open Annotate.')   # Devin streams nothing: its later turns are held
+        self.assertFalse(seen['held']); self.assertIn('show', atticus.run.modes)
+        self.assertTrue(os.path.exists(atticus.show_file(str(self.parent))))
+        os.remove(atticus.show_file(str(self.parent)))
+
 
 if __name__ == '__main__':
     unittest.main()

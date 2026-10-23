@@ -422,9 +422,10 @@ final class Target {
         if deferred { pending = work } else { work() }
     }
 }
+final class DrawingStub { func detach() {} }
 final class Harness {
     var dictateSelection: Target?, busy = false, dictating = true, dictateID = 1, dictateCleanup = false
-    var dictationAppName = "App", lastDictation: String?
+    var dictationAppName = "App", lastDictation: String?; let drawing = DrawingStub()
     func saveDictation(_ value: String, appName: String) -> Bool { if saves { saved.append(value) }; return saves }
     var log: [String] = [], hides: [Double] = [], words: [String] = []
     func cue(_ value: String) {}
@@ -476,7 +477,7 @@ print("dictation states ok")
         swift = r'''import Foundation
 final class Ctx { var duration = 0.0 }
 enum NSAnimationContext { static func runAnimationGroup(_ a: (Ctx) -> Void, completionHandler: (() -> Void)?) { a(Ctx()); completionHandler?() } }
-final class Panel { var alphaValue = 1.0; func animator() -> Panel { self } }
+final class Panel { var faded: (() -> Void)?; var alphaValue = 1.0 { didSet { if alphaValue == 0 { faded?() } } }; func animator() -> Panel { self } }
 final class Flag { var active = false, hasInput = false, holds = false, isRunning = false }
 final class Harness {
     var gen = 1, busy = false, hovering = false, pinned = false, stuck = false, composing = false, pillOn = true, dictating = false
@@ -488,7 +489,7 @@ final class Harness {
 func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
 let pinned = Harness(); pinned.pinned = true; pinned.hide(after: 0); settle()
 precondition(pinned.log == ["pill false"], "a pinned box kept the pill: \(pinned.log)")
-let drawn = Harness(); drawn.drawing.active = true; drawn.hide(after: 0); settle()
+let drawn = Harness(); drawn.drawing.holds = true; drawn.hide(after: 0); settle()
 precondition(drawn.log == ["pill false"], "a drawing kept the pill: \(drawn.log)")
 let plain = Harness(); plain.hide(after: 0); settle()
 precondition(plain.log == ["gone"], "a free pill did not fade: \(plain.log)")
@@ -496,6 +497,10 @@ let hover = Harness(); hover.pinned = true; hover.hovering = true; hover.hide(af
 precondition(hover.log.isEmpty, "a hovered pill changed: \(hover.log)")
 let box = Harness(); box.pillOn = false; box.pinned = true; box.hide(after: 0); settle()
 precondition(box.log.isEmpty, "a pinned box changed: \(box.log)")
+for (name, during) in [("a guide step", { (h: Harness) in h.drawing.holds = true }), ("a drag", { (h: Harness) in h.stuck = true })] {
+    let raced = Harness(); raced.pillOn = false; raced.panel.faded = { during(raced) }; raced.hide(after: 0); settle()
+    precondition(raced.log.isEmpty && raced.panel.alphaValue == 1, "\(name) during the fade still hid the box: \(raced.log)")
+}
 print("pill gives the box back")
 '''
         self.assertIn('pill gives the box back', run_swift(self, swift))

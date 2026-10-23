@@ -734,8 +734,9 @@ struct DrawingStep: Codable {
 }
 struct DrawingRequest: Decodable {
     let steps: [DrawingStep], teaching: Bool, target: DrawingWindow, state: String
-    let receipt: String?
+    let receipt: String?, guide: DrawingGuide?
 }
+struct DrawingGuide: Codable { let goal: String, done: [String], pid: Int32 }   // live: after the last step, the next is asked for from the fresh screen
 struct DrawingWindow: Decodable {
     let pid: Int32, windowID: String, windowFrame: [Double]
     var bounds: CGRect { CGRect(x:windowFrame[0], y:windowFrame[1], width:windowFrame[2], height:windowFrame[3]) }
@@ -896,7 +897,7 @@ final class DrawingCalloutView: NSView {
         p.addArc(tangent1End:pt(card.minX,card.minY),tangent2End:pt(card.maxX,card.minY),radius:r)
         p.closeSubpath(); return p
     }
-    init(frame: CGRect, card: CGRect, side: NSRectEdge?, tip: CGFloat, text: String, step: Int, total: Int) {
+    init(frame: CGRect, card: CGRect, side: NSRectEdge?, tip: CGFloat, text: String, step: Int, total: Int, more: Bool = false) {
         super.init(frame: frame)
         wantsLayer = true
         let shape = CAShapeLayer(), path = Self.bubble(card,side:side,tip:tip)
@@ -928,7 +929,7 @@ final class DrawingCalloutView: NSView {
             scroll.documentView = body; addSubview(scroll)
             y += height + 12
         }
-        let last = step >= total
+        let last = step >= total && !more
         let next = NSButton(title:last ? "Done" : "Next",target:self,action:#selector(nextStep))
         next.bezelStyle = .rounded; next.bezelColor = .systemBlue; next.frame = CGRect(x:card.maxX-16-68,y:y,width:68,height:26)
         next.setAccessibilityLabel(last ? "Done" : "Next step"); addSubview(next)
@@ -967,9 +968,14 @@ final class ScreenDrawing {
         return AXUIElementCopyAttributeValue(e,kAXValueAttribute as CFString,&value) == .success ? value : nil
     }
     var cleanup: (() -> Void)?
+    var proceed: ((DrawingGuide) -> Void)?, pending: DispatchWorkItem?   // a live guide's next ask, waiting for the app to settle
+    var detached = false   // the user asked something else or cancelled: the guide's own click only finishes it; Next still continues
+    var eligible: (Int32) -> Bool = { NSWorkspace.shared.frontmostApplication?.processIdentifier == $0 }   // a live guide shows and continues only while its app is in front
     var status: ((String) -> Void)?
     var speechEnabled: () -> Bool = { false }
     var active: Bool { request != nil }
+    var session = false   // a live guide holds the box from its first step through every wait, settle and next ask until the user ends it
+    var holds: Bool { active || pending != nil || session }
     var hasInput: Bool { inputMode || !inputPath.isEmpty }
     var summary: [String:Any]? {   // what is on screen, for the next ask to build on
         guard let r = request, let data = try? JSONEncoder().encode(r.steps), let steps = try? JSONSerialization.jsonObject(with:data) else { return nil }
@@ -1074,7 +1080,7 @@ final class ScreenDrawing {
     }
     // The box's spot (Cocoa points): where it is if clear of every mark, else the nearest clear spot fully on any display, else nil (it stays).
     static func clearSpot(_ box: CGRect, avoiding marks: [CGRect], in screens: [CGRect]) -> CGPoint? {
-        let keep = marks.map { $0.insetBy(dx:-12,dy:-12) }
+        let keep = marks.map { $0.insetBy(dx:-32,dy:-32) }
         func clear(_ r: CGRect) -> Bool { !keep.contains { $0.intersects(r) } }
         if clear(box) { return box.origin }
         // no fully clear spot: the one covering the least drawing, nearest first
@@ -1098,6 +1104,7 @@ final class ScreenDrawing {
         guard r.target.valid, (1...12).contains(r.steps.count) else { return false }
         let teaching = r.steps.allSatisfy { $0.wait != true && $0.target == nil && $0.hit == nil }
         guard r.teaching == teaching, !teaching || r.steps.allSatisfy({ $0.say?.isEmpty == false }) else { return false }
+        guard r.guide.map({ !teaching && r.steps.last?.wait == true && $0.pid == r.target.pid && (1...2000).contains($0.goal.count) && (1...24).contains($0.done.count) }) ?? true else { return false }
         return r.steps.allSatisfy { step in
             guard (1...40).contains(step.shapes.count), (5...120).contains(step.timeout ?? 60), (step.say?.count ?? 0) <= 1000,
                   step.hit.map(validRect) ?? true, step.wait != true || step.target != nil || step.hit != nil else { return false }
@@ -1129,20 +1136,17 @@ final class ScreenDrawing {
     }
     @discardableResult func receive(_ data: Data) -> Bool {
         guard let r = try? JSONDecoder().decode(DrawingRequest.self,from:data), Self.valid(r), Self.onDisplays(r) else { return false }
-        clear(); request = r; index = 0
+        if let guide = r.guide, !eligible(guide.pid) {   // the user went to another app while this step was being read
+            if let path = r.receipt { try? "The guide’s app is no longer in front, so the guide stopped. Say so in one line".write(toFile:path,atomically:true,encoding:.utf8) }
+            return false
+        }
+        clear(); request = r; index = 0; session = session || r.guide != nil
         board = Self.board(r.steps,near:shapeBounds(r.steps.flatMap { $0.shapes.filter { $0.kind != "text" } }) ?? r.target.bounds)
         let click: (NSEvent) -> Void = { [weak self] event in
             guard let self, event.window !== calloutPanel, !panels.contains(where: { $0 === event.window }), let point = event.cgEvent?.location else { return }   // a click on a mark selects it, never the app under it
-            if request?.teaching == true { return }
-            guard let target else { return }
+            guard let r = request, !r.teaching, let target else { return }
             let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []
-            let clickedWindow = windows.first { info in
-                guard (info[kCGWindowLayer as String] as? Int) == 0,
-                      let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-                      let frame = CGRect(dictionaryRepresentation:bounds) else { return false }
-                return frame.contains(point)
-            }
-            guard (clickedWindow?[kCGWindowNumber as String] as? NSNumber)?.stringValue == target.windowID else { return }
+            guard Self.inApp(point,windows,pid:target.pid,hit:r.steps[index].wait == true ? hit : nil,front:eligible(target.pid)) else { return }
             clicked(point)
         }
         if let m = NSEvent.addGlobalMonitorForEvents(matching:.leftMouseDown,handler:click) { monitors.append(m) }
@@ -1155,22 +1159,24 @@ final class ScreenDrawing {
     }
     func clear() {
         let wasActive = active
+        dropPending()
         timer?.invalidate(); timer = nil; monitors.forEach(NSEvent.removeMonitor); monitors.removeAll()
         stopVoice(); panels.forEach { $0.close() }; panels.removeAll(); calloutPanel?.close(); calloutPanel = nil
         request = nil; target = nil; hit = nil; element = nil; originalValue = nil; previousPointer = nil; focus = nil
-        advanceAt = .distantPast; manual = false; board = nil; selected = nil; occupied = []
+        advanceAt = .distantPast; manual = false; detached = false; board = nil; selected = nil; occupied = []
         if overMark { overMark = false; NSCursor.arrow.set() }
         clearInput()
         cleanup?()
         if wasActive { changed?() }
     }
+    func end() { let held = holds && !active; session = false; clear(); if held { changed?() } }   // the user closed it: ✕, close, a new spoken ask
     func clearInput() {   // the user's own mark only; a guide stays
         let hadInput = hasInput
         inputPanels.forEach { $0.close() }; inputPanels.removeAll()
         inputPath = []; inputMode = false; inputDone = nil
         if hadInput { NSCursor.arrow.set(); inputCleared?() }
     }
-    func hold() { stopVoice(); manual = true }   // the user is asking about it: no more talking or stepping on
+    func hold() { stopVoice(); manual = true; detach() }   // the user is asking about it: no more talking, stepping on or continuing by itself
     func pick(_ point: CGPoint) {
         guard let r = request, let m = panels.lazy.compactMap({ ($0.contentView as? DrawingView)?.mark(at:point) }).first,
               r.steps.indices.contains(m.step), r.steps[m.step].shapes.indices.contains(m.shape) else { return }
@@ -1252,7 +1258,8 @@ final class ScreenDrawing {
         }
         return result.isNull ? nil : result
     }
-    func showCallout(_ text: String, step: Int, total: Int, marks: CGRect, avoid: [CGRect]) {
+    static let level = NSWindow.Level(rawValue:NSWindow.Level.popUpMenu.rawValue + 1)   // above the menu a step's click opened, so the next step's marks show on it
+    func showCallout(_ text: String, step: Int, total: Int, marks: CGRect, avoid: [CGRect], more: Bool = false) {
         calloutPanel?.close(); calloutPanel = nil
         let screens = NSScreen.screens, top = screens.first?.frame.maxY ?? 0
         func display(_ s: NSScreen) -> CGRect { CGDisplayBounds(s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()) }
@@ -1266,10 +1273,10 @@ final class ScreenDrawing {
         let panel = DrawingPanel(contentRect:CGRect(x:frame.minX,y:top-frame.maxY,width:frame.width,height:frame.height),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         panel.isReleasedWhenClosed = false; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
         panel.appearance = NSAppearance(named:.darkAqua)
-        panel.ignoresMouseEvents = false; panel.hidesOnDeactivate = false; panel.level = .statusBar
+        panel.ignoresMouseEvents = false; panel.hidesOnDeactivate = false; panel.level = Self.level
         panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]; applySharing(panel)
-        let callout = DrawingCalloutView(frame:CGRect(origin:.zero,size:frame.size),card:local,side:side,tip:tip,text:text,step:step,total:total)
-        callout.onClose = { [weak self] in self?.clear() }
+        let callout = DrawingCalloutView(frame:CGRect(origin:.zero,size:frame.size),card:local,side:side,tip:tip,text:text,step:step,total:total,more:more)
+        callout.onClose = { [weak self] in self?.end() }
         callout.onNext = { [weak self] in self?.next() }
         callout.onBack = { [weak self] in self?.back() }
         panel.contentView = callout; calloutPanel = panel
@@ -1306,7 +1313,7 @@ final class ScreenDrawing {
                 let panel = DrawingPanel(contentRect:screen.frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
                 panel.isReleasedWhenClosed = false
                 panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = true
-                panel.hidesOnDeactivate = false; panel.level = .statusBar; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
+                panel.hidesOnDeactivate = false; panel.level = Self.level; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
                 applySharing(panel)
                 let view = DrawingView(frame:CGRect(origin:.zero,size:screen.frame.size)); view.origin = CGDisplayBounds(displayID).origin
                 view.pick = { [weak self] in self?.pick($0) }
@@ -1333,8 +1340,8 @@ final class ScreenDrawing {
         let now = Date(); deadline = r.teaching ? .distantFuture : now.addingTimeInterval(step.timeout ?? 60); ready = now.addingTimeInterval(0.35)
         let words = step.say ?? ""
         advanceAt = now.addingTimeInterval(max(3,min(12,1.5+Double(words.split(separator:" ").count)/3.5)))   // long enough to read the callout
-        if !words.isEmpty || r.steps.count > 1 {
-            showCallout(words,step:index+1,total:r.steps.count,marks:marks.isNull ? shapeBounds(shapes) ?? target.bounds : marks,avoid:earlier + (hit.map { [$0] } ?? []))
+        if !words.isEmpty || r.steps.count > 1 || r.guide != nil {   // a live guide always has its Next, for clicks Atticus cannot see
+            showCallout(words,step:index+1,total:r.steps.count,marks:marks.isNull ? shapeBounds(shapes) ?? target.bounds : marks,avoid:earlier + (hit.map { [$0] } ?? []),more:r.guide != nil)
         }
         if !words.isEmpty, speechEnabled() {
             let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/say"); p.arguments = ["--",words]
@@ -1347,12 +1354,25 @@ final class ScreenDrawing {
     }
     func advance() {
         guard let r = request else { return }
-        if index+1 < r.steps.count { index += 1; showStep() } else if !r.teaching { clear() }
+        if index+1 < r.steps.count { index += 1; showStep() } else if !r.teaching, detached || !proceedGuide() { clear() }
     }
     func next() {   // the user's Next ("next" by voice or typing too); on the last step it is Done
         guard let r = request else { return }
         manual = true
-        if index+1 < r.steps.count { index += 1; showStep() } else { clear() }
+        if index+1 < r.steps.count { index += 1; showStep() } else if !proceedGuide() { clear() }
+    }
+    func dropPending() { pending?.cancel(); pending = nil }
+    func detach() { dropPending(); detached = true }   // a new ask or cancel; its marks stay for the follow-up
+    // Dropped by clear() and cancel: Esc, close, a new ask or drawing.
+    func later(_ seconds: Double, _ work: @escaping () -> Void) {
+        let item = DispatchWorkItem { [weak self] in self?.pending = nil; work() }
+        pending = item; DispatchQueue.main.asyncAfter(deadline:.now() + seconds, execute:item)
+    }
+    // A live guide's last step done: its marks go, and once the app settles the next step is asked for. The user did the click; Atticus never does.
+    func proceedGuide() -> Bool {
+        guard let guide = request?.guide, let proceed else { return false }
+        clear(); later(0.8) { proceed(guide) }
+        return true
     }
     func back() {
         guard request != nil, index > 0 else { return }
@@ -1363,6 +1383,18 @@ final class ScreenDrawing {
         let step = r.steps[index]
         guard step.wait != true || hit?.contains(point) == true else { return }
         advance()
+    }
+    // A click belongs to the target's app in any of its windows at any layer (its menus, popovers and sheets), or on the
+    // menu bar, which the system owns and which shows the front app's menus: there only on the waiting step's own target.
+    static func inApp(_ point: CGPoint, _ windows: [[String:Any]], pid: Int32, hit: CGRect?, front: Bool) -> Bool {
+        let owner = { (info: [String:Any]) in (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value }
+        let under = windows.filter { info in
+            guard owner(info) != getpid(), let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation:bounds) else { return false }
+            return frame.contains(point)
+        }
+        if let w = under.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 || owner($0) == pid }), owner(w) == pid { return true }
+        return front && hit?.contains(point) == true && (under.first?[kCGWindowLayer as String] as? Int) == Int(CGWindowLevelForKey(.mainMenuWindow))
     }
     static func current(_ target: DrawingWindow) -> Bool {
         let infos = CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []
@@ -1781,14 +1813,14 @@ final class App: NSObject, WKScriptMessageHandler {
         if let path = pointContext?["image"] as? String { try? FileManager.default.removeItem(atPath:path) }
         pointContext = nil; drawing.deselect(); js("point", false)
     }
-    // While a drawing is up, the box glides to the nearest spot clear of its marks, and back home when it goes.
+    // While a drawing is up, the box glides to the nearest spot clear of its marks, and back home once the drawing or guide ends.
     var boxHome: NSPoint?   // where the box was before a drawing moved it; nil once the user drags it
     func avoidDrawing() {
         guard panel.isVisible, !dragging else { return }
         guard drawing.active else {
             DispatchQueue.main.async { [self] in   // a replaced drawing clears, then draws again at once
                 guard !drawing.active else { return }
-                if let home = boxHome { boxHome = nil; var f = panel.frame; f.origin = home; glide(f) }
+                if !drawing.holds, let home = boxHome { boxHome = nil; var f = panel.frame; f.origin = home; glide(f) }   // between guide steps it stays put
                 hide(after: 3)
             }
             return
@@ -1805,7 +1837,7 @@ final class App: NSObject, WKScriptMessageHandler {
                                              completionHandler: { [weak self] in guard let self else { return }; if !dragging { frame(panel.frame) }; done?() })   // keeps it on a display and updates its height limit
     }
     func followPointerScreen() {   // the box, typing box, answer and dictation pill alike
-        guard panel.isVisible, !dragging, !hovering, let f = pointerFollow(panel.frame) else { return }
+        guard panel.isVisible, !dragging, !hovering, let f = pointerFollow(panel.frame), !drawing.holds else { return }   // a guide places its box
         boxHome = nil; frame(f)
     }
     func startFollowingPointerScreen() {
@@ -1885,6 +1917,7 @@ final class App: NSObject, WKScriptMessageHandler {
         drawing.inputAway = { [weak self] in self?.finishPointing() }
         drawing.picked = { [weak self] r, words in self?.finishPoint([CGPoint(x:r.minX,y:r.minY),CGPoint(x:r.maxX,y:r.maxY)],mark:words) }
         drawing.changed = { [weak self] in self?.avoidDrawing() }
+        drawing.proceed = { [weak self] in self?.continueGuide($0) }
         cfg.userContentController.add(self, name: "h")
         cfg.userContentController.add(self, name: "c")
         web.setValue(false, forKey: "drawsBackground")
@@ -1923,7 +1956,7 @@ final class App: NSObject, WKScriptMessageHandler {
         loadPage(web, "ui.html")
         // Click anywhere else closes the box once the answer is up; on the box: ✕ closes, elsewhere copies the answer.
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, panel.isVisible, !busy, !engine.isRunning, !stuck, !drawing.active, !drawing.hasInput else { return }
+            guard let self, panel.isVisible, !busy, !engine.isRunning, !stuck, !drawing.holds, !drawing.hasInput else { return }
             close(clear: false)
         }
         var grab: (mouse: NSPoint, origin: NSPoint)?, moved = false
@@ -2146,14 +2179,15 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func hide(after s: Double) {
         let g = gen
+        let kept = { [self] in pinned || stuck || composing || mini.holds || drawing.holds || drawing.hasInput || ringGone != nil || voice?.isRunning == true }
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { [self] in
             guard g == gen, !busy, !engine.isRunning, !hovering else { return }
-            guard !pinned, !stuck, !composing, !mini.holds, !drawing.active, !drawing.hasInput, ringGone == nil, voice?.isRunning != true else {   // moved or drawn on: only ✕ (Esc for a drawing); an answer's ring keeps its text up
+            guard !kept() else {   // moved or drawn on, or a guide between steps: only ✕ (Esc for a drawing); an answer's ring keeps its text up
                 if pillOn && !dictating { pill(false) }   // the box stays up for its answer or drawing: give it back, not a pill stuck on its check
                 return
             }
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; panel.animator().alphaValue = 0 },
-                                                 completionHandler: { [self] in if g == gen { gone() } })
+                                                 completionHandler: { [self] in guard g == gen else { return }; if kept() { panel.alphaValue = 1 } else { gone() } })   // a drawing or grab during the fade keeps it
         }
     }
 
@@ -2241,7 +2275,7 @@ final class App: NSObject, WKScriptMessageHandler {
             js("agentEscape")
         } else if busy {
             cancel()
-        } else if drawing.active {
+        } else if drawing.active || drawing.pending != nil {
             drawing.clear()
         } else if panel.isVisible {
             close(clear: false)
@@ -2288,14 +2322,14 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func cancel() {
         if dictating { cue("soundStop"); return close(clear: false) }   // listening or finishing: fade out, nothing inserted
-        hush(); shush()
+        hush(); shush(); drawing.detach()
         cue("soundStop"); js("stopped", "Answer stopped"); hide(after: 1.5)
     }
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
     func close(clear: Bool) {
         let pending = clear || replacement == nil ? nil : (replacement, selection)
-        shush(); hush(); drawing.clear(); unpoint()   // gone means quiet: no mic, no voice, no answer, no drawing or ring
+        shush(); hush(); drawing.end(); unpoint()   // gone means quiet: no mic, no voice, no answer, no drawing or ring
         if let pending { replacement = pending.0; selection = pending.1 }   // a hidden Insert/Replace keeps its validated target
         if clear { try? FileManager.default.removeItem(atPath: recent); lastDone = .distantPast }
         gen += 1
@@ -2331,7 +2365,7 @@ final class App: NSObject, WKScriptMessageHandler {
         dictateTap?.cancel(); dictateTap = nil
         let transient = engine.isRunning || dictating || drawing.active || drawing.hasInput
         if engine.isRunning || dictating { hush() }
-        if drawing.active || drawing.hasInput { drawing.clear() }
+        if drawing.holds || drawing.hasInput { drawing.end() }
         quietAudio.end(immediate: true)
         if transient { gone() }
     }
@@ -2499,7 +2533,7 @@ final class App: NSObject, WKScriptMessageHandler {
         drawingReply = !dictate && drawing.active
         let replying = drawingReply || retryOffer && !askFile.isEmpty
         replyAgent = dictate || (retryOffer && !askFile.isEmpty) ? "" : agentCard
-        if !replying { if !dictate && !drawing.hasInput { drawing.clear() }; mini.reset(); try? FileManager.default.removeItem(atPath: focusFile) }   // a new ask: "show it" from the last one no longer counts
+        if !replying { if !dictate && !drawing.hasInput && !busy { drawing.end() }; mini.reset(); try? FileManager.default.removeItem(atPath: focusFile) }   // a new ask: "show it" from the last one no longer counts
         guard !Prefs.bool("paused") else { dictating = false; return }
         dictating = dictate
         unpoint(false)   // a new ask replaces the held answer; do not schedule that old answer's delayed hide
@@ -2897,6 +2931,15 @@ final class App: NSObject, WKScriptMessageHandler {
         if !heard { js("listen", keep); if let s = selection { js("selected", s.text) } }; show(); js("words", t); run(t)
     }
 
+    // A live guide's step is done: the same goal is asked again from the fresh screen, in the app it started in. Never an action: the user clicks.
+    func continueGuide(_ guide: DrawingGuide, wait: Int = 20) {
+        if engine.isRunning || dictating { return }   // the user started something else
+        if busy { if wait > 0 { drawing.later(0.5) { [weak self] in self?.continueGuide(guide, wait: wait - 1) } }; return }   // the ask that drew it is still finishing its line
+        guard !Prefs.bool("paused"), Prefs.bool("draw"), drawing.eligible(guide.pid) else { return }
+        text = guide.goal; replacement = nil; selection = nil; replyAgent = ""
+        show(); run(guide.goal, guide: guide)
+    }
+
     func finish() {
         guard busy else { return }   // cancelled while the last words landed
         if let old = offerText {
@@ -3007,7 +3050,7 @@ final class App: NSObject, WKScriptMessageHandler {
                     }
                     if line.hasPrefix("✓") {
                         let result = self.replacement.flatMap { $0.isEmpty ? nil : $0 } ?? line.dropFirst(2).replacingOccurrences(of: "\u{2028}", with: "\n")
-                        let finish = self.drawing.request?.steps.count == 1 ? "Done. It’s on your screen." : "Done. Steps are on screen."
+                        let finish = self.drawing.request?.guide != nil ? "Your next step is on screen." : self.drawing.request?.steps.count == 1 ? "Done. It’s on your screen." : "Done. Steps are on screen."
                         self.mini.finish(); self.answer = "✓ " + (guided ? finish : result); self.deliver(guided ? finish : result, aloud: !guided)   // a guide's steps speak for themselves
                         self.js("line", self.answer); continue
                     }
@@ -3038,7 +3081,8 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func unwarm() { warm?.p.terminate(); warm = nil }
 
-    func run(_ t: String, speculative: Bool = false, remaining: String? = nil) {
+    func run(_ t: String, speculative: Bool = false, remaining: String? = nil, guide: DrawingGuide? = nil) {
+        if guide == nil { drawing.detach() }   // another ask: a shown guide or one waiting for its next step no longer continues by itself
         let point = pointContext, drawn = drawing.summary
         pointContext = nil; unpoint(false)
         drawing.clearInput(); drawing.deselect(); mini.reset(); if !busy && !engine.isRunning { noteHidden() }; busy = true; agentMoveFile = ""; answer = ""; showAgent = ""; try? FileManager.default.removeItem(atPath: focusFile)
@@ -3061,6 +3105,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if let remaining { request["remaining"] = remaining; request["done"] = did }
             if let point { request["point"] = point }
             if let drawn { request["drawing"] = drawn }
+            if let guide { request["guide"] = ["goal":guide.goal, "done":guide.done, "pid":guide.pid] }
             if !replyAgent.isEmpty { request["agentCard"] = replyAgent }
             var data = try JSONSerialization.data(withJSONObject:request); data.append(10)
             try w.input.write(contentsOf:data); try w.input.close()
@@ -4476,7 +4521,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             return
         }
         guard Prefs.set(k, v) else { push(); send("notice", ["text": "Couldn’t save that change, so the old setting is back."]); return }
-        if k == "draw", v as? Bool == false { app.drawing.clear(); app.unwarm() }
+        if k == "draw", v as? Bool == false { app.drawing.end(); app.unwarm() }
         if k == "meetingSave" { meeting.savingChanged(v as? Bool == true) }
         if k == "meeting", v as? Bool == false { meeting.stop() }
         if k == "meetingNudge", v as? Bool == true, EKEventStore.authorizationStatus(for: .event) != .fullAccess {

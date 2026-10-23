@@ -1,5 +1,6 @@
 """Screen drawing boundaries and coordinate mapping; native windows run only through the VM runner."""
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -247,17 +248,17 @@ class DrawingTests(unittest.TestCase):
         source = (ROOT/'Atticus.swift').read_text()
         app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
         section = lambda start, end: app.split(start,1)[1].split(end,1)[0]
-        self.assertIn('drawing.clear()',section('func close(clear: Bool)','\n    }'))   # the box's ✕ takes the drawing with it
+        self.assertIn('drawing.end()',section('func close(clear: Bool)','\n    }'))   # the box's ✕ takes the drawing with it
         self.assertIn('unpoint(false)',section('func start(dictate: Bool)','func heard('))   # a voice ask clears the old answer ring at key-down
         for start,end in [('func hush()', 'func stopOfferInput()'),('func run(_ t:', '// MARK: - Agent panels'),('func typed(', 'func finish()')]:
             self.assertNotIn('drawing.clear()',section(start,end),start)   # a follow-up keeps the drawing; only a new one replaces it
         self.assertIn('drawing.clearInput(); drawing.deselect()',section('func run(_ t:', '// MARK: - Agent panels'))
         self.assertIn('if let drawn { request["drawing"] = drawn }',app)
         esc = section('func escape()','func hush()')
-        self.assertLess(esc.index('} else if busy {'),esc.index('} else if drawing.active {'))   # Esc stops the answer first, then clears the drawing
+        self.assertLess(esc.index('} else if busy {'),esc.index('} else if drawing.active || drawing.pending != nil {'))   # Esc stops the answer first, then clears the drawing or its pending next step
         self.assertIn('app.drawing.clear()',source.split('func applicationShouldTerminate',1)[1].split('\n    }',1)[0])
-        self.assertIn('!stuck, !drawing.active',app)
-        self.assertIn('!mini.holds, !drawing.active',app)
+        self.assertIn('!stuck, !drawing.holds',app)
+        self.assertIn('mini.holds || drawing.holds',app)
         ask_finish = app.split('func spawn()',1)[1].split('func unwarm()',1)[0]
         self.assertNotIn('drawing.clear()',ask_finish)
 
@@ -277,12 +278,14 @@ class DrawingTests(unittest.TestCase):
         source = (ROOT/'Atticus.swift').read_text()
         drawing = source.split('final class ScreenDrawing {',1)[1].split('// The box can take typing',1)[0]
         self.assertIn('r.steps[..<index].enumerated().map { view.render($0.element.shapes,animate:false,previous:nil,append:true,dim:true,step:$0.offset) }',drawing)
-        for wiring in ('callout.onClose = { [weak self] in self?.clear() }','callout.onNext = { [weak self] in self?.next() }',
+        for wiring in ('callout.onClose = { [weak self] in self?.end() }','callout.onNext = { [weak self] in self?.next() }',
                        'callout.onBack = { [weak self] in self?.back() }'):
             self.assertIn(wiring,drawing)
         self.assertIn('guard step.wait != true || hit?.contains(point) == true',drawing)
         self.assertIn('deadline = r.teaching ? .distantFuture',drawing)
-        self.assertIn('else if !r.teaching { clear() }',drawing)
+        self.assertIn('else if !r.teaching, detached || !proceedGuide() { clear() }',drawing)   # after another ask or a cancel the click only finishes it
+        self.assertIn('func hold() { stopVoice(); manual = true; detach() }',drawing)
+        self.assertIn('guard Self.inApp(point,windows,pid:target.pid,hit:r.steps[index].wait == true ? hit : nil,front:eligible(target.pid))',drawing)
         self.assertIn('if !words.isEmpty, speechEnabled()',drawing)
         self.assertIn('shown = active && (!r.teaching || calloutPanel?.isVisible == true)',drawing)
         self.assertIn('!manual, autoSteps()',drawing.split('func tick()',1)[1])
@@ -313,7 +316,7 @@ class DrawingTests(unittest.TestCase):
         app = (ROOT/'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
         self.assertIn('if let point { request["point"] = point }',app)
         self.assertIn('if drawing.hasInput { drawing.clearInput(); return }',app)
-        self.assertIn('if !dictate && !drawing.hasInput { drawing.clear() }',app)
+        self.assertIn('if !dictate && !drawing.hasInput && !busy { drawing.end() }',app)
         self.assertNotIn('if drawing.active { drawing.clear() }',app.split('func startPointing()',1)[1].split('func finishPointing()',1)[0])   # pointing keeps a guide up
 
     def test_point_controls_reach_the_app(self):
@@ -344,6 +347,275 @@ class DrawingTests(unittest.TestCase):
         self.assertNotIn('Draw on screen',ui)   # that name belongs to Atticus's own drawings
         for page in ('README.md','ui/settings.html','ui/onboarding.html'):
             self.assertIn('Point at your screen',(ROOT/page).read_text(),page)
+
+
+class LiveGuideTests(unittest.TestCase):
+    """A walkthrough shows the step visible now; the user's click asks for the next from the fresh screen. The user does every click."""
+    target = {'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
+    step = {'say':'Click Insert.','wait':True,'hit':[10,10,80,30],'shapes':[{'kind':'rect','rect':[10,10,80,30]}]}
+
+    def setUp(self):
+        self.root = scratch_dir(self)
+        self.ask = self.root/'ask'; self.ask.mkdir()
+        (self.ask/'draw-screens.json').write_text(json.dumps({'screens':{'1':{'frame':[0,0,800,600],'pixels':[1600,1200]}},'target':self.target}))
+        atticus.save_request(str(self.ask),'set up a table')
+
+    def draw(self, steps, target=None):
+        def shown(lines): Path(json.loads(lines[0][2:])['receipt']).write_text('shown')
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(self.ask)}), patch.object(atticus,'wait_commit',return_value=True), \
+             patch.object(atticus,'draw_target',return_value=target or self.target), patch.object(atticus,'emit',side_effect=shown) as emit:
+            atticus.draw({'steps':steps})
+        return json.loads(emit.call_args.args[0][0][2:])
+
+    def gate(self, cmd, tool='Bash'):
+        event = {'tool_name':tool,'tool_input':{'command':cmd} if cmd else {'file_path':'/tmp/x'}}
+        with patch.dict(os.environ,{'ATTICUS_CLIENT':'claude','ATTICUS_ASK':str(self.ask)}), patch.object(atticus,'preview_commands'), \
+             patch.object(atticus,'ask_user',return_value='n'), patch('sys.stdin',io.StringIO(json.dumps(event))), patch('sys.stdout',new_callable=io.StringIO) as out:
+            atticus.gate()
+        return json.loads(out.getvalue())['hookSpecificOutput']['permissionDecision'] if out.getvalue() else 'allow'
+
+    def test_a_waiting_step_carries_the_goal_and_static_or_teaching_drawings_do_not(self):
+        self.assertIn('never describe or guess steps behind menus or dialogs not open yet',atticus.DRAW_HELP)
+        self.assertEqual(self.draw([self.step])['guide'],{'goal':'set up a table','done':['Click Insert.'],'pid':123})
+        self.assertNotIn('guide',self.draw([{'say':'Insert is here.','hit':[10,10,80,30],'shapes':[{'kind':'rect','rect':[10,10,80,30]}]}]))   # "where is it": a ring, nothing more
+        self.assertNotIn('guide',self.draw([{'say':'Rows run across.','shapes':[{'kind':'line','points':[[1,1],[50,1]]}]}]))   # a lesson stays a lesson
+        self.assertNotIn('guide',self.draw([self.step,{'say':'Done.','shapes':[{'kind':'pointer','at':[40,40]}]}]))   # its last step waits for nothing
+
+    def test_a_continuation_extends_its_steps_stays_in_its_app_and_ends(self):
+        atticus.private_json(atticus.guide_file(str(self.ask)),{'goal':'set up a table','done':['Click Insert.'],'pid':123})
+        value = self.draw([{**self.step,'say':'Click Table.'}])
+        self.assertEqual(value['guide'],{'goal':'set up a table','done':['Click Insert.','Click Table.'],'pid':123})
+        with self.assertRaisesRegex(ValueError,'guide stopped'): self.draw([self.step],target={**self.target,'pid':999})   # the user went to another app
+        atticus.private_json(atticus.guide_file(str(self.ask)),{'goal':'set up a table','done':['step']*(atticus.GUIDE_STEPS-1),'pid':123})
+        self.assertNotIn('guide',self.draw([self.step]))   # the cap: this step is the last one asked for
+
+    def test_continuation_requests_are_validated(self):
+        good = {'goal':'set up a table','done':['Click Insert.'],'pid':123}
+        self.assertEqual(atticus.live_guide(good),good)
+        for bad in (None,'x',{**good,'extra':1},{**good,'pid':0},{**good,'pid':True},{**good,'pid':'123'},{**good,'goal':''},
+                    {**good,'goal':'x'*2001},{**good,'done':[]},{**good,'done':[1]},{**good,'done':['x']*(atticus.GUIDE_STEPS+1)}):
+            with self.subTest(bad=bad): self.assertIsNone(atticus.live_guide(bad))
+        context = atticus.guide_context({**good,'done':['Click Insert.','Click Table.']})
+        for said in ('"set up a table"','just did "Click Table."','["Click Insert."]','--look again','[complete] + one short line','the user clicks'): self.assertIn(said,context)
+
+    def test_a_continuation_may_only_look_read_and_draw(self):
+        me = atticus.ME
+        allowed = [f'{atticus.LOOK} && {atticus.DRAW} --help', atticus.LOOK, atticus.DRAW + ' \'{"steps":[]}\'', f'{atticus.HANDS} see', f'{atticus.HANDS} see Pages',
+                   f'{atticus.WINDOW} Pages', f'sleep 1; {atticus.LOOK}', f'{atticus.PICK} "Which ledger?" "Q3 ledger" "Q4 ledger"']
+        denied = [f'{atticus.HANDS} click Insert', f'{atticus.HANDS} menu Pages "Insert > Table"', f'{atticus.HANDS} type Name "x"', f'{atticus.HANDS} press "cmd+t"',
+                  f'{atticus.LOOK} > /tmp/x', f'{atticus.LOOK} | sh', f'{atticus.LOOK} & {atticus.HANDS} click Insert', f'{atticus.LOOK} || {atticus.HANDS} click Insert',
+                  f'{atticus.DRAW} "$(osascript -e x)"', f'{atticus.DRAW} `x`', 'osascript -e \'tell application "System Events" to click\'', 'open -a Pages',
+                  f'python3 {me} --look', f'X=1 {atticus.LOOK}', f'{atticus.PLACE} Pages left', f'{atticus.TYPE} hello', '', '"unclosed']
+        for cmd in allowed: self.assertTrue(atticus.guide_tool('Bash',cmd),cmd)
+        for cmd in denied: self.assertFalse(atticus.guide_tool('Bash',cmd),cmd)
+        self.assertTrue(atticus.guide_tool('Read',''))
+        for tool in ('Write','Edit','WebSearch','WebFetch','mcp__fixture__send'): self.assertFalse(atticus.guide_tool(tool,''),tool)
+        self.assertEqual(self.gate(f'{atticus.HANDS} click Insert'),'allow')   # a normal ask: the guide rule stays out of the way
+        atticus.private_json(atticus.guide_file(str(self.ask)),{'goal':'set up a table','done':['Click Insert.'],'pid':123})
+        self.assertEqual(self.gate(f'{atticus.HANDS} click Insert'),'deny')
+        self.assertEqual(self.gate('osascript -e \'tell application "Pages" to activate\''),'deny')
+        self.assertEqual(self.gate(None,'WebSearch'),'deny')
+        self.assertEqual(self.gate(f'{atticus.LOOK} && {atticus.DRAW} --help'),'allow')
+        self.assertEqual(self.gate(None,'Read'),'allow')
+
+    def test_a_declared_walkthrough_only_looks_reads_picks_and_draws_from_its_first_tool(self):
+        actions = [f'{atticus.HANDS} click Insert', f'{atticus.TYPE} hello', 'osascript -e \'tell application "Pages" to activate\'', f'{atticus.LOOK} > /tmp/x']
+        self.assertEqual(self.gate(actions[0]),'allow')   # an ordinary do-it ask still acts
+        atticus.guard_show(str(self.ask))   # run() writes it as soon as [show] streams; main() before every recovery turn
+        self.assertTrue(Path(atticus.show_file(str(self.ask))).parent.samefile(Path(atticus.request_file(str(self.ask))).parent))   # beside the user's words, not in the ask folder
+        self.assertNotEqual(Path(atticus.show_file(str(self.ask))).parent, self.ask)
+        for cmd in actions: self.assertEqual(self.gate(cmd),'deny',cmd)
+        self.assertEqual(self.gate(None,'WebSearch'),'deny')
+        for cmd in (f'{atticus.LOOK} && {atticus.DRAW} --help', atticus.DRAW + ' \'{"steps":[]}\'', f'{atticus.PICK} "Which ledger?" "Q3 ledger" "Q4 ledger"', f'{atticus.WINDOW} Pages'):
+            self.assertEqual(self.gate(cmd),'allow',cmd)
+        self.assertEqual(self.gate(None,'Read'),'allow')
+
+    def continuation(self, request, reply='Click Table in the menu that opened. Then choose 3 by 3 and press Insert. ' * 4, drew=True, ran=()):
+        seen = {'calls': 0}
+        def brain(prompt, *args, **kwargs):
+            ask = os.environ['ATTICUS_ASK']
+            seen.update(prompt=prompt, main_only=kwargs.get('main_only'), guarded=os.path.exists(atticus.guide_file(ask)), calls=seen['calls'] + 1)
+            seen['click'] = self.gate_in(ask, f'{atticus.HANDS} click Table')
+            brain.ok, brain.cmds, brain.ran, brain.handoff, brain.work = True, [], list(ran), None, False
+            brain.observed = [{'action':'draw','result':'Guide shown (step 1 of 1). Leave it running.' if drew else 'ok','error':False}]
+            return reply, .001, []
+        brain = unittest.mock.Mock(side_effect=brain)
+        fast, learn = unittest.mock.Mock(return_value='Instant fixture'), unittest.mock.Mock(return_value=False)
+        workflow = unittest.mock.Mock(side_effect=lambda task, reply, *a: (reply, False))
+        with patch.dict(os.environ,{}), patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=fast, learn=learn, remember_workflow=workflow,
+                            front=lambda: ('Pages', 'Untitled'), osa=lambda *a: '', screens=lambda: [], describe=lambda *a: '', selection_context=lambda: '',
+                            relevant_rules=lambda _: '', recent=lambda: [], workflows=lambda *a: '', screen_for=lambda *a: None, wait_commit=lambda: True,
+                            run=brain, remember_turn=lambda *a: None, restore_focus=lambda *a: None, tip=lambda *a: None, start_ai=lambda *a: None,
+                            log_turn=lambda *a, **k: None, window_summary=lambda *a: {}), \
+             patch.object(atticus.os,'setpgrp'), patch.object(atticus.signal,'signal'), patch.object(atticus.threading,'Thread'), \
+             patch('sys.argv',['atticus.py','--wait']), patch('sys.stdin',io.StringIO(json.dumps(request)+'\n')), patch('sys.stdout',new_callable=io.StringIO) as out:
+            atticus.main()
+        return seen, fast, learn, workflow, out.getvalue()
+
+    def gate_in(self, ask, cmd):
+        event = {'tool_name':'Bash','tool_input':{'command':cmd}}
+        with patch.dict(os.environ,{'ATTICUS_CLIENT':'claude','ATTICUS_ASK':ask}), patch.object(atticus,'preview_commands'), \
+             patch.object(atticus,'ask_user',return_value='n'), patch('sys.stdin',io.StringIO(json.dumps(event))), patch('sys.stdout',new_callable=io.StringIO) as out:
+            atticus.gate()
+        return json.loads(out.getvalue())['hookSpecificOutput']['permissionDecision'] if out.getvalue() else 'allow'
+
+    def test_the_next_step_is_asked_with_the_goal_and_never_acts_or_repeats_the_answer(self):
+        guide = {'goal':'set up a table','done':['Click Insert.'],'pid':123}
+        seen, fast, learn, workflow, out = self.continuation({'front':'Pages','task':'set up a table','guide':guide})
+        fast.assert_not_called(); learn.assert_not_called()   # no instant replay or learned shortcut runs for the user
+        self.assertFalse(workflow.call_args.args[2])
+        self.assertTrue(seen['guarded'] and seen['main_only'])
+        self.assertEqual(seen['click'],'deny')   # the model cannot click for the user
+        self.assertIn('Live guide (data): the user is doing "set up a table" and just did "Click Insert."',seen['prompt'])
+        self.assertIn('✓ Done. Steps are on screen.',out); self.assertNotIn('Click Table in the menu',out)   # the step is on screen, not in a big answer
+        self.assertEqual(seen['calls'],1)
+        seen, *_ , out = self.continuation({'front':'Pages','task':'set up a table','guide':guide}, reply='[show] [complete] Your table is in.', drew=False, ran=[atticus.LOOK])
+        self.assertIn('✓ Your table is in.',out); self.assertEqual(seen['calls'],1)   # observed done: one short line, no new drawing
+        self.assertNotIn('Showing it on screen',out); self.assertNotIn('[complete]',out)
+        seen, fast, *_ = self.continuation({'front':'Pages','task':'set up a table','guide':{**guide,'pid':-1}})
+        fast.assert_called_once()   # a forged or broken guide is just an ordinary ask
+        self.assertNotIn('Live guide',seen.get('prompt',''))
+
+    def test_the_app_continues_only_after_the_users_step_and_drops_it_on_cancel(self):
+        source = (ROOT/'Atticus.swift').read_text()
+        app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
+        section = lambda start, end: app.split(start,1)[1].split(end,1)[0]
+        self.assertIn('drawing.proceed = { [weak self] in self?.continueGuide($0) }',app)
+        resume = section('func continueGuide(','func finish()')
+        self.assertIn('drawing.eligible(guide.pid)',resume)   # another app in front: the guide stops
+        self.assertIn('if engine.isRunning || dictating { return }',resume)   # the user is talking: their ask wins
+        self.assertIn('run(guide.goal, guide: guide)',resume)
+        self.assertNotIn('Hands.',resume)
+        self.assertIn('drawing.detach()',section('func cancel()','func close('))
+        self.assertIn('if guide == nil { drawing.detach() }',section('func run(_ t:','// MARK: - Agent panels'))
+        self.assertIn('if let guide { request["guide"] = ["goal":guide.goal, "done":guide.done, "pid":guide.pid] }',app)
+        self.assertIn('"Your next step is on screen."',app)
+        drawing = source.split('final class ScreenDrawing {',1)[1].split('// The box can take typing',1)[0]
+        self.assertNotIn('.post(',drawing)   # a guide never clicks or types for the user
+        self.assertIn('dropPending()\n        timer?.invalidate()',drawing)   # clear() takes a waiting next step with it
+
+
+class ShowDeliveryTests(unittest.TestCase):
+    """Every main reply decides how it reaches the user ([show] or [text], or a draft, action or drawing); a broken decision gets one held turn."""
+    guide = {'goal':'add a margin note','done':['Click Annotate.'],'pid':123}
+
+    def setUp(self):
+        self.root = scratch_dir(self)
+
+    def ask(self, task, *runs, prefs=None, guide=None):
+        script, seen = list(runs), []
+        def brain(prompt, *args, **kwargs):
+            r, ask = script.pop(0), os.environ['ATTICUS_ASK']
+            seen.append({'prompt': prompt, 'main_only': kwargs.get('main_only'), 'click': LiveGuideTests.gate_in(self, ask, f'{atticus.HANDS} click Annotate'),
+                         'pick': LiveGuideTests.gate_in(self, ask, f'{atticus.PICK} "Which ledger?" "Q3 ledger" "Q4 ledger"')})
+            brain.ok, brain.cmds, brain.ran, brain.handoff, brain.work = r.get('ok', True), [], r.get('ran', []), None, False
+            brain.modes, brain.error = set(r.get('modes', ())), r.get('error', '')
+            brain.observed = r.get('observed', [{'action': 'draw', 'error': False, 'result': 'Guide shown (step 1 of 1). Leave it running.'}] if r.get('drew') else [])
+            return r['reply'], .001, []
+        brain = unittest.mock.Mock(side_effect=brain)
+        pref = (lambda k, d=None: prefs.get(k, d)) if prefs else (lambda k, d=None: d)
+        request = {'front':'Lumen Ledger','task':task, **({'guide': guide} if guide else {})}
+        with patch.dict(os.environ,{}), patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda *a: None, learn=lambda *a: False,
+                            remember_workflow=lambda task, reply, *a: (reply, False), front=lambda: ('Lumen Ledger', 'Draft'), osa=lambda *a: '', screens=lambda: [],
+                            describe=lambda *a: '', selection_context=lambda: '', relevant_rules=lambda _: '', recent=lambda: [], workflows=lambda *a: '',
+                            screen_for=lambda *a: None, wait_commit=lambda: True, run=brain, remember_turn=lambda *a: None, restore_focus=lambda *a: None,
+                            tip=lambda *a: None, start_ai=lambda *a: None, log_turn=lambda *a, **k: None, window_summary=lambda *a: {}, pref=pref, report=lambda *a: None), \
+             patch.object(atticus.os,'setpgrp'), patch.object(atticus.signal,'signal'), patch.object(atticus.threading,'Thread'), \
+             patch('sys.argv',['atticus.py','--wait']), patch('sys.stdin',io.StringIO(json.dumps(request)+'\n')), \
+             patch('sys.stdout',new_callable=io.StringIO) as out:
+            atticus.main()
+        self.assertFalse(script, 'every scripted model turn runs')
+        return seen, out.getvalue()
+
+    def test_a_walkthrough_answered_in_text_is_shown_once_on_screen(self):
+        seen, out = self.ask('Show me how to add a margin note here',
+                             {'reply': 'Open the Annotate menu, then choose Margin Note.', 'modes': {'show'}},   # [show] in a note before a tool
+                             {'reply': 'Step one is on screen.', 'drew': True})
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0]['click'], 'allow')   # fake run(): only run() itself writes the marker as [show] streams (FlowTests)
+        self.assertTrue(seen[1]['main_only'])   # the recovery stays in the box the user is watching
+        self.assertEqual((seen[1]['click'], seen[1]['pick']), ('deny', 'allow'))   # and only looks, reads, picks and draws
+        self.assertIn('Your text answer was not shown', seen[1]['prompt'])
+        self.assertIn('✓ Done. Steps are on screen.', out)
+        self.assertNotIn('[show]', out); self.assertNotIn('Annotate menu', out)
+        seen, out = self.ask('Show me how to add a margin note here',   # the tag in the final text alone is enough
+                             {'reply': '[show] Open the Annotate menu, then choose Margin Note.'}, {'reply': 'On screen.', 'drew': True})
+        self.assertEqual(len(seen), 2)
+
+    def test_intent_declared_before_a_clarifying_choice_survives_it(self):
+        pick = f'{atticus.PICK} "Which ledger?" "Q3 ledger" "Q4 ledger"'
+        seen, out = self.ask('Show me how to lock this ledger',
+                             {'reply': 'Choose Protect, then Lock Sheet.', 'modes': {'show'}, 'ran': [pick, f'{atticus.WINDOW} "Lumen Ledger"'],
+                              'observed': [{'action': pick, 'error': False, 'result': 'Q4 ledger'}]},
+                             {'reply': 'On screen.', 'drew': True})
+        self.assertEqual(len(seen), 2)
+        self.assertIn('Prior work', seen[1]['prompt']); self.assertIn('Q4 ledger', seen[1]['prompt'])   # the user's pick carries into the recovery
+        self.assertIn('✓ Done. Steps are on screen.', out)
+
+    def test_decided_text_drafts_actions_and_drawn_guides_run_once(self):
+        place = f'{atticus.PLACE} "Quill Notes" left laptop'
+        for reply, ran in (('[text] A margin note sits beside the text it explains.', []), ('[text] Written steps: open Annotate, then Margin Note.', []),
+                           ('[draft] Dear Ms. Vale, the ledger is ready.', []), ('[text]\n[draft] Dear Ms. Vale, the ledger is ready.', []),
+                           ('Moved Quill Notes to the left screen.', [place])):   # a real action is its own delivery
+            with self.subTest(reply=reply):
+                seen, out = self.ask('Tell me about margin notes', {'reply': reply, 'ran': ran})
+                self.assertEqual(len(seen), 1); self.assertNotIn('Showing it on screen', out); self.assertNotIn('[text]', out)
+        seen, out = self.ask('Show me how to add a margin note here', {'reply': '[show] Steps are up.', 'drew': True})
+        self.assertEqual(len(seen), 1); self.assertIn('✓ Done. Steps are on screen.', out)
+
+    def test_an_undecided_reply_gets_one_held_turn_to_decide_never_a_silent_text_answer(self):
+        answer = 'Open the Annotate menu, then choose Margin Note.'
+        seen, out = self.ask('Can I add a margin note here?', {'reply': answer, 'ran': [f'{atticus.WINDOW} "Lumen Ledger"']}, {'reply': '[text]'})
+        self.assertEqual(len(seen), 2); self.assertTrue(seen[1]['main_only'])
+        self.assertIn('began with neither [show] nor [text]: ' + json.dumps(answer), seen[1]['prompt'])
+        self.assertEqual((seen[1]['click'], seen[1]['pick']), ('deny', 'allow'))   # deciding cannot act for the user
+        self.assertIn('✓ ' + answer, out); self.assertNotIn('Showing it on screen', out)   # [text] alone: that answer stands
+        seen, out = self.ask('Can I add a margin note here?', {'reply': answer}, {'reply': '[show] On screen.', 'drew': True})
+        self.assertEqual(len(seen), 2); self.assertIn('✓ Done. Steps are on screen.', out); self.assertNotIn(answer, out)
+        seen, out = self.ask('Can I add a margin note here?', {'reply': answer}, {'reply': answer})   # undecided twice: bounded, and an honest failure
+        self.assertEqual(len(seen), 2)
+        self.assertIn('! I couldn’t tell whether to show this on screen or write it out. Please ask again and say which.', out)
+        self.assertNotIn(answer, out); self.assertNotIn('✓', out); self.assertNotIn('[text]', out)
+        seen, out = self.ask('Can I add a margin note here?', {'reply': answer}, {'reply': '[show] Could not read the screen.', 'error': 'Screen Recording is off.'})
+        self.assertEqual(len(seen), 2); self.assertIn('Couldn’t show this on screen: Screen Recording is off.', out); self.assertNotIn('Steps are on screen', out)
+
+    def test_a_live_guide_ends_on_observed_completion_and_an_instruction_only_step_is_drawn(self):
+        seen, out = self.ask('add a margin note', {'reply': '[show]\n[complete] The margin note is in.', 'ran': [atticus.LOOK]}, guide=self.guide)
+        self.assertEqual(len(seen), 1); self.assertEqual(seen[0]['click'], 'deny')
+        self.assertIn('✓ The margin note is in.', out); self.assertNotIn('Showing it on screen', out); self.assertNotIn('Couldn’t show', out)
+        seen, out = self.ask('add a margin note', {'reply': '[show] Now click Margin Note in the menu.', 'ran': [atticus.LOOK]},
+                             {'reply': 'On screen.', 'drew': True, 'ran': [atticus.LOOK]}, guide=self.guide)
+        self.assertEqual(len(seen), 2); self.assertEqual(seen[1]['click'], 'deny')
+        self.assertIn('Your text answer was not shown', seen[1]['prompt']); self.assertIn('[complete] + one short line', seen[1]['prompt'])
+        self.assertIn('✓ Done. Steps are on screen.', out); self.assertNotIn('click Margin Note', out)
+        seen, out = self.ask('add a margin note', {'reply': '[complete] Done.'}, {'reply': '[complete] The margin note is in.', 'ran': [atticus.LOOK]}, guide=self.guide)
+        self.assertEqual(len(seen), 2); self.assertIn('✓ The margin note is in.', out)   # done is believed only after a fresh --look
+        seen, out = self.ask('add a margin note', {'reply': '[text] Click Margin Note.'}, {'reply': '[text] Click Margin Note.'}, guide=self.guide)
+        self.assertEqual(len(seen), 2); self.assertIn('Couldn’t show this on screen', out)   # [text] is no way out of a live guide's next step
+
+    def test_drawings_off_or_unavailable_answer_in_text_and_say_why(self):
+        for reply in ('[show] Open Annotate, then Margin Note.', 'Open Annotate, then Margin Note.'):
+            seen, out = self.ask('Show me how to add a margin note here', {'reply': reply}, prefs={'draw': False})
+            self.assertEqual(len(seen), 1); self.assertIn('✓ Open Annotate, then Margin Note.', out)   # no contract without drawings
+        seen, out = self.ask('Show me how to add a margin note here', {'reply': '[show] Open Annotate, then Margin Note.'},
+                             {'reply': 'Done, it is on screen.', 'ok': False, 'error': 'Screen Recording is off for Atticus.',
+                              'observed': [{'action': 'draw', 'error': True, 'result': 'Screen Recording is off for Atticus.'}]})
+        self.assertEqual(len(seen), 2)   # one recovery, never a loop
+        self.assertIn('Open Annotate, then Margin Note.', out)
+        self.assertIn('Couldn’t show this on screen: Screen Recording is off for Atticus.', out)
+        self.assertNotIn('Done, it is on screen', out); self.assertNotIn('Steps are on screen', out)   # no success claimed without draw()'s receipt
+
+    def test_devin_and_pi_read_draws_receipt_from_their_ask_folder(self):
+        ask = self.root/'client-ask'; ask.mkdir()
+        self.assertEqual(atticus.shown_receipts(str(ask)), [])
+        (ask/'guide-shown').write_text('Guide shown (step 1 of 2). Leave it running.')
+        self.assertTrue(atticus.guide_shown(atticus.shown_receipts(str(ask))))
+        self.assertFalse(atticus.guide_shown([{'error': True, 'result': 'Guide shown (step 1 of 1).'}, {'error': False, 'result': 'I showed it.'}]))
+        self.assertIn('First output, before any tool or choice: [show] for UI where/how asks', atticus.DRAWING)
+        for body in ('[draft] Please type [text] here', '[draft] counts[text] += el[show]', 'Explain the literal [show] marker [complete]'):   # only the first output is a tag
+            self.assertEqual(atticus.untagged(body), body); self.assertEqual(atticus.declare(body), set())
+            self.assertEqual(atticus.untagged('[text] ' + body), body); self.assertEqual(atticus.declare('[text] ' + body), {'text'})
+        self.assertEqual(atticus.untagged('[text][draft] x'), '[draft] x'); self.assertEqual(atticus.untagged('[show]\n[complete] Done.'), 'Done.')
 
 
 @unittest.skipUnless(shutil.which('node'),'Node runs the box state check')
@@ -530,6 +802,69 @@ let invalid = try! JSONSerialization.data(withJSONObject:["steps":steps,"teachin
 precondition(!drawing.receive(invalid),"Native accepted invalid frame")
 precondition(!drawing.receive(data(steps)),"Stale screenshot geometry was shown")
 window.setFrameOrigin(CGPoint(x:window.frame.minX-30,y:window.frame.minY)); pump(0.1)
+// A live guide: the user's click on its last step asks for the next once the app settles; Esc, another ask or drawing drops that.
+let pid = ProcessInfo.processInfo.processIdentifier
+func live(_ step: [String:Any] = steps[1], teaching: Bool = false, guidePid: Int32 = pid) -> Data {
+ try! JSONSerialization.data(withJSONObject:["steps":[step],"teaching":teaching,"target":target,"state":"fixture",
+                                             "guide":["goal":"Set up the fixture","done":["Click the control."],"pid":guidePid]])
+}
+var asked: [DrawingGuide] = []; drawing.proceed = { asked.append($0) }
+var front = true; drawing.eligible = { $0 == pid && front }   // which app is in front, without touching the real one
+precondition(!drawing.session,"A static drawing or lesson started a guide session")
+precondition(drawing.receive(live()) && drawing.request?.guide != nil,refused(live()))
+let liveButtons = (drawing.calloutPanel?.contentView?.subviews ?? []).compactMap { ($0 as? NSButton)?.title }
+precondition(liveButtons.contains("Next") && !liveButtons.contains("Done"),"A live step has no Next for clicks Atticus cannot see: \(liveButtons)")
+precondition((drawing.panels + [drawing.calloutPanel!]).allSatisfy { $0.level.rawValue > NSWindow.Level.popUpMenu.rawValue },"Marks sit under the menu a click opened")
+drawing.ready = .distantPast
+drawing.clicked(CGPoint(x:x+800,y:y+500)); precondition(drawing.active && drawing.pending == nil,"An outside click continued the guide")
+drawing.clicked(CGPoint(x:x+450,y:y+365))
+precondition(!drawing.active && drawing.pending != nil && asked.isEmpty,"The guide asked before the app settled, or kept its stale marks")
+precondition(drawing.holds,"The box could close between the click and the next step")   // the user's click lands in this gap
+pump(1.2); precondition(asked.count == 1 && asked[0].done == ["Click the control."] && asked[0].pid == pid && drawing.pending == nil,"The click did not ask for the next step")
+precondition(drawing.holds && drawing.session,"The box let go of the guide while its next step was being asked")
+precondition(drawing.receive(live())); drawing.ready = .distantPast; drawing.clicked(CGPoint(x:x+450,y:y+365)); drawing.clear(); pump(1.2)
+precondition(asked.count == 1,"Esc after the click still asked for the next step")
+precondition(drawing.receive(live())); drawing.next(); precondition(drawing.pending != nil,"Next on a live step did not continue")
+drawing.dropPending(); pump(1.2); precondition(asked.count == 1,"A cancelled ask still continued the guide")
+precondition(drawing.receive(live())); drawing.next(); precondition(drawing.receive(data(steps)) && drawing.pending == nil,"A new drawing kept the old guide's next step")
+pump(1.2); precondition(asked.count == 1,"A stale continuation fired over a newer drawing")
+value = 0; precondition(drawing.receive(live(["target":"Exact control","wait":true,"shapes":[["kind":"rect"]]])))
+drawing.ready = .distantPast; value = 1; drawing.tick(); pump(1.2); precondition(asked.count == 2 && !drawing.active,"A value change did not continue the guide")
+// A follow-up ask (typed, or the shortcut held over the guide) or a cancel keeps the marks, but the old goal stops continuing on its own.
+precondition(drawing.receive(live())); drawing.hold(); drawing.ready = .distantPast; drawing.clicked(CGPoint(x:x+450,y:y+365)); pump(1.2)
+precondition(!drawing.active && drawing.pending == nil && asked.count == 2,"A click on the old target resumed its goal after another ask")
+precondition(drawing.receive(live())); drawing.detach(); precondition(drawing.active,"Cancel took the guide's marks")
+value = 0; precondition(drawing.receive(live(["target":"Exact control","wait":true,"shapes":[["kind":"rect"]]]))); drawing.detach()
+drawing.ready = .distantPast; value = 1; drawing.tick(); pump(1.2); precondition(!drawing.active && asked.count == 2,"A value change resumed a cancelled guide")
+precondition(drawing.receive(live())); drawing.hold(); drawing.next(); pump(1.2); precondition(asked.count == 3,"An explicit Next after a follow-up did not continue")
+precondition(drawing.receive(live()) && !drawing.detached,"A new guide kept the old one's detach")
+drawing.clear()
+precondition(drawing.holds,"Clearing a step's marks ended the guide the user is in")
+var changes = 0; drawing.changed = { changes += 1 }
+drawing.end(); precondition(!drawing.holds && changes == 1,"Closing did not release the guide, or the box was not told to go home")
+drawing.end(); drawing.changed = nil; precondition(changes == 1,"Ending nothing moved the box")
+// The user switched apps while the next step was being read: it never shows. Static drawings do not depend on the front app.
+front = false
+let receipt = NSTemporaryDirectory() + "live-receipt-\(UUID().uuidString)"
+var stale = try! JSONSerialization.jsonObject(with:live()) as! [String:Any]; stale["receipt"] = receipt
+precondition(!drawing.receive(try! JSONSerialization.data(withJSONObject:stale)) && !drawing.active,"A stale guide showed in an app the user left")
+precondition((try? String(contentsOfFile:receipt,encoding:.utf8))?.contains("no longer in front") == true,"A stale guide left its ask waiting"); try? FileManager.default.removeItem(atPath:receipt)
+precondition(drawing.receive(data(steps)),"A static drawing needed its app in front"); drawing.clear(); front = true
+// Clicks: the target app's windows at any layer; the system's menu bar only on the waiting target while the app is in front.
+func win(_ owner: Int32, _ layer: Int, _ r: CGRect) -> [String:Any] { [kCGWindowOwnerPID as String:NSNumber(value:owner),kCGWindowLayer as String:layer,kCGWindowBounds as String:r.dictionaryRepresentation] }
+let guided: Int32 = pid+1, other: Int32 = pid+2, bar = Int(CGWindowLevelForKey(.mainMenuWindow)), menuTitle = CGRect(x:200,y:0,width:50,height:24), onTitle = CGPoint(x:220,y:10)
+let menuBar = [win(other,bar,CGRect(x:0,y:0,width:3000,height:24)),win(other,-2147483623,CGRect(x:0,y:0,width:3000,height:2000))]
+precondition(ScreenDrawing.inApp(onTitle,menuBar,pid:guided,hit:menuTitle,front:true),"A click on the app's own menu-bar title was not seen")
+precondition(!ScreenDrawing.inApp(onTitle,menuBar,pid:guided,hit:menuTitle,front:false),"A menu-bar click counted for an app that is not in front")
+precondition(!ScreenDrawing.inApp(CGPoint(x:400,y:10),menuBar,pid:guided,hit:menuTitle,front:true) && !ScreenDrawing.inApp(onTitle,menuBar,pid:guided,hit:nil,front:true),"A menu-bar click off the waiting target counted")
+precondition(!ScreenDrawing.inApp(onTitle,[win(other,bar+1,menuTitle)] + menuBar,pid:guided,hit:menuTitle,front:true),"Another app's menu-bar item counted")
+precondition(!ScreenDrawing.inApp(onTitle,[win(other,0,menuTitle)],pid:guided,hit:menuTitle,front:true),"Another app's window counted")
+precondition(ScreenDrawing.inApp(onTitle,[win(guided,101,menuTitle)] + menuBar,pid:guided,hit:nil,front:false),"A click in the app's own menu was not seen")
+var still = steps[1]; still["wait"] = false   // "where is it": a ring that waits for nothing
+precondition(!drawing.receive(live(guidePid:pid+1)) && !drawing.receive(live(still)) && !drawing.receive(live(lesson[0],teaching:true)),"Native accepted a guide for another app, a step that waits for nothing, or a lesson")
+precondition(drawing.receive(data([still])),refused(data([still]))); drawing.next(); pump(1.2)
+precondition(!drawing.active && asked.count == 3,"Static pointing asked for more steps")
+drawing.proceed = nil
 precondition(drawing.receive(data(steps)))
 window.orderOut(nil); pump(0.1); drawing.tick(); precondition(!drawing.active,"Closed window did not clear")
 let outside = [["shapes":[["kind":"pointer","at":[99999,99999]]]]]
@@ -689,6 +1024,10 @@ click(buttons(last).first { $0.title == "Back" }!); click(buttons(last).first { 
 precondition(events == ["next","close","back","next"],"Controls did not reach the guide: \(events)")
 let single = callout("Click Share.",1,1)
 precondition(labels(single).isEmpty && buttons(single).map(\.title) == ["Done"],"A one-step guide shows step controls")
+let liveSize = DrawingCalloutView.size("Click Insert.",total:1)
+let liveStep = DrawingCalloutView(frame:CGRect(x:0,y:0,width:liveSize.width+24,height:liveSize.height+24),card:CGRect(x:12,y:12,width:liveSize.width,height:liveSize.height),
+                                  side:.minX,tip:40,text:"Click Insert.",step:1,total:1,more:true)
+precondition(buttons(liveStep).map(\.title) == ["Next"],"A live guide's step ends in Done instead of asking for the next")
 let long = callout(String(repeating:"A readable instruction needs enough words to wrap. ",count:20),2,4)
 let scroll = long.subviews.compactMap { $0 as? NSScrollView }.first!, body = scroll.documentView as! NSTextView
 body.layoutManager!.ensureLayout(for:body.textContainer!)
@@ -734,6 +1073,8 @@ precondition(ScreenDrawing.clearSpot(box,avoiding:[CGRect(x:600,y:300,width:100,
 let covering = CGRect(x:0,y:780,width:400,height:100), spot = ScreenDrawing.clearSpot(box,avoiding:[covering],in:[screenA,screenB])!
 let moved = CGRect(origin:spot,size:box.size)
 precondition(!moved.intersects(covering) && screenA.insetBy(dx:8,dy:8).contains(moved) && hypot(spot.x-box.minX,spot.y-box.minY) < 200,"The box did not take the nearest clear spot: \(spot)")
+let close = CGRect(x:box.maxX+20,y:800,width:100,height:100), roomy = ScreenDrawing.clearSpot(box,avoiding:[close],in:[screenA,screenB])!
+precondition(roomy != box.origin && !CGRect(origin:roomy,size:box.size).intersects(close.insetBy(dx:-31,dy:-31)),"The box sat within 32 points of a mark: \(roomy)")
 precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA],in:[screenA,screenB]).map { screenB.contains(CGRect(origin:$0,size:box.size)) } == true,"A covered display did not send the box to the other one")
 precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA,screenB],in:[screenA,screenB]) == nil,"With no room the box must stay")
 precondition(ScreenDrawing.clearSpot(box,avoiding:[screenA,screenB.insetBy(dx:0,dy:100)],in:[screenA,screenB]).map { covered in screenB.contains(CGRect(origin:covered,size:box.size)) } == true,"With no clear room the box must cover the least drawing")
@@ -748,3 +1089,49 @@ class GuideGeometryTests(unittest.TestCase):
         source = (ROOT/'Atticus.swift').read_text()
         drawing = source[source.index('// Screen drawings use Quartz'):source.index('// The box can take typing')]
         self.assertIn('Guide geometry',run_swift(self,GEOMETRY.replace('__DRAWING__',drawing),timeout=20))
+
+    def test_box_stays_clear_and_put_through_a_guide(self):
+        from tests import run_swift
+        source = (ROOT/'Atticus.swift').read_text()
+        spot = source[source.index('    static func clearSpot('):source.index('\n    }\n',source.index('    static func clearSpot('))+7]
+        avoid = source[source.index('    var boxHome: NSPoint?'):source.index('    func glide(')]
+        follow = source[source.index('    func followPointerScreen()'):source.index('    func startFollowingPointerScreen()')]
+        harness = 'import Cocoa\nenum ScreenDrawing {\n' + spot + '}\n' + r'''
+struct Panel { var isVisible = true, frame = NSRect.zero }
+final class Drawing { var active = false, session = false, pending = false, occupied: [CGRect] = []; var holds: Bool { active || pending || session } }
+var pointerScreen: NSRect?
+func pointerFollow(_ f: NSRect) -> NSRect? { pointerScreen }
+final class App {
+    var panel = Panel(), dragging = false, hovering = false, drawing = Drawing(), glides = 0
+    func glide(_ f: NSRect) { glides += 1; panel.frame = f }
+    func frame(_ f: NSRect) { panel.frame = f }
+    func hide(after s: Double) {}
+''' + avoid + follow + r'''}
+let app = App(), vf = NSScreen.screens[0].visibleFrame, top = NSScreen.screens[0].frame.maxY
+func drain() { RunLoop.main.run(until:Date().addingTimeInterval(0.05)) }
+func marks(_ r: NSRect) -> [CGRect] { [CGRect(x:r.minX,y:top-r.maxY,width:r.width,height:r.height)] }   // drawing.occupied is top-left
+app.panel.frame = NSRect(x:vf.minX+14,y:vf.maxY-130,width:340,height:120)
+let home = app.panel.frame
+app.drawing.active = true; app.drawing.session = true; app.drawing.occupied = marks(home); app.avoidDrawing()
+let away = app.panel.frame
+precondition(app.glides == 1 && away != home && app.boxHome == home.origin,"The box did not leave the guide's marks")
+app.drawing.active = false; app.drawing.occupied = []; app.avoidDrawing(); drain()
+precondition(app.panel.frame == away && app.boxHome == home.origin,"The box went home between guide steps")
+pointerScreen = NSRect(x:9000,y:0,width:340,height:120); app.followPointerScreen()
+precondition(app.panel.frame == away && app.boxHome == home.origin,"The pointer pulled the box off its guide spot")
+app.drawing.active = true; app.drawing.occupied = marks(home); app.avoidDrawing()
+precondition(app.glides == 1 && app.panel.frame == away,"The box moved for a next step that does not cover it")
+app.drawing.occupied = marks(away); app.avoidDrawing()
+precondition(app.glides == 2 && app.panel.frame != away && app.boxHome == home.origin,"The box stayed under the next step, or forgot its home")
+app.drawing.active = false; app.drawing.session = false; app.avoidDrawing(); app.drawing.pending = true; drain()
+precondition(app.glides == 2 && app.boxHome == home.origin,"A stale restore raced the guide's next step")
+app.drawing.pending = false; app.avoidDrawing(); drain()
+precondition(app.glides == 3 && app.panel.frame == home && app.boxHome == nil,"The box did not go home once the guide ended")
+app.followPointerScreen(); precondition(app.panel.frame == pointerScreen!,"The box stopped following the pointer after the guide")
+pointerScreen = nil; app.panel.frame = home
+app.drawing.active = true; app.drawing.occupied = marks(home); app.avoidDrawing(); app.boxHome = nil   // the user dragged it
+let placed = app.panel.frame; app.drawing.active = false; app.avoidDrawing(); drain()
+precondition(app.panel.frame == placed && app.glides == 4,"A drawing moved a box the user placed")
+print("Guide box placement")
+'''
+        self.assertIn('Guide box placement',run_swift(self,harness,timeout=20))

@@ -67,6 +67,8 @@ class StreamTests(unittest.TestCase):
         long = ANSWER + ' '
         self.assertEqual(atticus.streamed_answer(long), ANSWER)
         self.assertEqual(atticus.streamed_answer(ANSWER[:100]), '')   # could still be a 3-8 word note
+        self.assertEqual(atticus.streamed_answer('[text] ' + long), ANSWER)   # a text decision streams as before; [show] or a half tag never does
+        for held in ('[show] ' + long, '[tex', '[text][draft] ' + long): self.assertEqual(atticus.streamed_answer(held), '', held)
         for held in ('[draft] ' + long, '[insert] ' + long, '[replace] ' + long, '  \n[agent {\n  "title": "x",\n' + long,
                      '```json\n[agent ' + long, '[sonnet]', '[steer {"id":"a","text":"' + long, '[agent-profile {' + long):
             self.assertEqual(atticus.streamed_answer(held), '', held)

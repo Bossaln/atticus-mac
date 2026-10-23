@@ -671,15 +671,19 @@
     clockPaint();
     clockFrame = requestAnimationFrame(clockTick);
   };
-  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); clockStart = clockHeld = null; };
+  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); const ms = clockStart !== null ? performance.now() - clockStart : clockHeld; if (clock && ms !== null) clock.dataset.ms = ms; clockStart = clockHeld = null; };
   const clockHold = () => { if (clockStart === null) return; cancelAnimationFrame(clockFrame); clockPaint(); clockHeld = performance.now() - clockStart; clockStart = null; };
   const clockGo = () => { if (clockHeld === null) return; clockStart = performance.now() - clockHeld; clockHeld = null; clockTick(); };
   const clockBegin = () => {
     if (clockStart !== null || clockHeld !== null || !turn()) return;
-    clock = document.createElement('div'); clock.className = 'elapsed';
-    clock.title = 'Time Atticus spent working. Waiting for your pick or approval is not counted.';
-    clock.innerHTML = '<b></b>';
-    turn().append(clock); clockStart = performance.now(); clockTick();
+    if (clock?.closest('.turn') === turn()) clock.querySelector('.redo')?.remove();   // the same turn working again (a guide's next step): its one timer goes on from where it stopped
+    else {
+      clock = document.createElement('div'); clock.className = 'elapsed';
+      clock.title = 'Time Atticus spent working. Waiting for your pick or approval is not counted.';
+      clock.innerHTML = '<b></b>';
+      turn().append(clock);
+    }
+    clockStart = performance.now() - (+clock.dataset.ms || 0); clockTick();
   };
 
   // One line from Atticus beside the agent's own orb (the chip's hue), in place of this turn's answer.
