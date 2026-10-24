@@ -457,7 +457,7 @@ def models():
         try:
             ids = _models_at(url, key)
             if ids: return ids
-        except (OSError, ValueError, AttributeError):
+        except (OSError, ValueError, AttributeError, TypeError):   # a server's odd list ({"data": null}) is just no list
             continue
     return []
 

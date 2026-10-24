@@ -53,6 +53,8 @@ class BrainTests(unittest.TestCase):
         prefs = {'apiBase': f'http://127.0.0.1:{srv.server_port}/anthropic', 'apiKey': 'k'}
         with patch.object(atticus, 'pref', side_effect=lambda k, d: prefs.get(k, d)):
             self.assertEqual(atticus.models(), ['a', 'b'])
+            with patch.object(atticus, '_models_at', side_effect=TypeError):   # {"data": null} from a real server
+                self.assertEqual(atticus.models(), [])
             prefs['apiBase'] = 'http://127.0.0.1:1'   # nothing listening
             self.assertEqual(atticus.models(), [])
         self.assertEqual(atticus.models(), [])   # no address
