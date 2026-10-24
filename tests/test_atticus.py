@@ -487,6 +487,22 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
             atticus.tip('Done.', 'Learned: Procedure saved for next time.')
         self.assertIn('Learned: Procedure saved for next time.', out.getvalue())
 
+    def test_tip_jar_line_has_its_own_switch_and_clock(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(atticus, 'DIR', d), patch.dict(os.environ, {'ATTICUS_UI': '1'}):
+            def ask(prefs, reply='Done.'):
+                with patch.object(atticus, 'pref', side_effect=lambda k, v: prefs.get(k, v)), patch('sys.stdout', new_callable=io.StringIO) as out:
+                    atticus.tip(reply)
+                return out.getvalue()
+            self.assertEqual(ask({}), '')   # first ask: nothing
+            old = time.time() - 5 * 3600
+            os.utime(os.path.join(d, 'kofi'), (old, old)); os.utime(os.path.join(d, 'tip'), (old, old))
+            self.assertEqual(ask({'support': False}).count('Support: '), 0)
+            self.assertIn('Support: ', ask({'tips': False}))   # tips off, tip jar on
+            self.assertNotIn('Support: ', ask({}))   # 4 h clock restarted: the plain tip is next
+            os.utime(os.path.join(d, 'kofi'), (old, old))
+            with patch.object(atticus, 'failed_action_reply', return_value=True):
+                self.assertNotIn('Support: ', ask({}, 'Could not join Zoom.'))   # never right after a miss
+
     def test_domain_dots_and_url_case_survive(self):
         with patch.object(atticus, 'skills', return_value={}), \
              patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:

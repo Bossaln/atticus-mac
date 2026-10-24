@@ -3571,8 +3571,11 @@ TIPS = ['Say "remember …" and Atticus keeps it as a rule.',
         'Say "when I say study mode, open …" to make your own instant command.',
         'Ask "where do I click to …" and a ring marks the spot.',
         'Tap the shortcut to type instead of talk.',
-        'Sonnet gives better answers on hard tasks. Settings → Intelligence → Balanced uses it for real work.',
-        'Support: A small tip on Ko-fi keeps it free →']
+        'Sonnet gives better answers on hard tasks. Settings → Intelligence → Balanced uses it for real work.']
+SUPPORT = ['Enjoying Atticus? Leave a tip →',
+           'Atticus is free. A small tip keeps it that way →',
+           'Made by one person. A tip helps a lot →',
+           'Did that save you a minute? Tip the developer →']
 MISS = 'Saying the same thing more than once? Tell Atticus how you want it done. It remembers next time.'
 MODEL_OFFER = '\nModel: reply ONLY [sonnet] before tools for hard multi-step reasoning or research. Else finish; retry a failed tool once another way. Stopping short of a reachable goal: end [sonnet], never offer to continue.'
 
@@ -3622,17 +3625,24 @@ def message_blocks(event):
 
 def tip(reply, taught=''):
     """One small tip under the answer ("i <tip>"). After a miss or a redo: how to teach it (the AI's own words if it gave some),
-    every time; otherwise a general tip at most every 6 h. Off in Settings."""
-    learned = taught.startswith('Learned:')
-    if (not pref('tips', True) and not learned) or os.environ.get('ATTICUS_UI') != '1':
+    every time; otherwise a general tip at most every 6 h. Off in Settings. The tip-jar line ("Support: …") has its own
+    switch and clock: at most every 4 h, never after a miss."""
+    if os.environ.get('ATTICUS_UI') != '1':
         return
-    if taught or failed_action_reply(reply, getattr(run, 'work', False)):
+    tips, miss = pref('tips', True), taught or failed_action_reply(reply, getattr(run, 'work', False))
+    if taught.startswith('Learned:') or tips and miss:
         return say('i', taught or MISS)
-    stamp = os.path.join(DIR, 'tip')
-    if not os.path.exists(stamp):   # never on the very first ask
+    stamp, kofi = os.path.join(DIR, 'tip'), os.path.join(DIR, 'kofi')
+    if miss:
+        return
+    if not os.path.exists(stamp):   # never on the very first ask; the first tip-jar line waits 4 h too
+        Path(kofi).touch()
         return Path(stamp).write_text('0')
+    if pref('support', True) and time.time() - os.path.getmtime(kofi) > 4 * 3600:
+        Path(kofi).touch()
+        return say('i', 'Support: ' + SUPPORT[int(time.time()) % len(SUPPORT)])
     n = int(Path(stamp).read_text() or 0)
-    if time.time() - os.path.getmtime(stamp) < 6 * 3600:
+    if not tips or time.time() - os.path.getmtime(stamp) < 6 * 3600:
         return
     Path(stamp).write_text(str(n + 1))
     say('i', TIPS[n % len(TIPS)])

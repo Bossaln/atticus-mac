@@ -194,7 +194,7 @@ enum Prefs {
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "support": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
@@ -2161,7 +2161,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 }
                 try? i.write(toFile: askFile, atomically: true, encoding: .utf8); askFile = ""
             }   // an index, or "" = none; failure cards also use r/n
-            if b["off"] as? String == "tips" { Atticus.settings.apply("tips", false); Atticus.settings.push() }   // a tip's own "Turn off"; never safe mode
+            if let k = b["off"] as? String, ["tips", "support"].contains(k) { Atticus.settings.apply(k, false); Atticus.settings.push() }   // a tip's own "Turn off"; never safe mode
             if let v = b["improve"] as? Bool { Atticus.settings.apply("improve", v); Atticus.settings.push() }
             if let item = b["memory"] as? [String: Any] { Atticus.settings.reveal(item) }   // a receipt's item: Settings → Memory, at that item
             if let ok = b["allow"] as? Bool, !askFile.isEmpty { allow(ok) }
