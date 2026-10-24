@@ -8,6 +8,7 @@ IFS=. read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$VERSION"
 BUILD=$((VERSION_MAJOR * 1000000 + VERSION_MINOR * 1000 + VERSION_PATCH))
 [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ] || { echo "Atticus needs macOS 26 or later (it uses Apple's new on-device speech)."; exit 1; }
 xcode-select -p >/dev/null 2>&1 || { echo "Needs Apple's command line tools. Run: xcode-select --install   then run ./build.sh again."; exit 1; }
+command -v python3 >/dev/null || { echo "Atticus needs Python 3. Install it, then run ./build.sh again."; exit 1; }
 command -v claude >/dev/null || [ -x ~/.local/bin/claude ] || echo "Note: Claude Code is not installed yet. Atticus's setup window can install it, or you can pick Devin or Pi."
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
@@ -71,5 +72,8 @@ P
 launchctl bootout gui/$(id -u)/com.atticus.app 2>/dev/null || true
 pkill -f "$APP/Contents/MacOS/Atticus$" 2>/dev/null && sleep 1   # stop a copy opened by hand too
 # bootout can return before the job has finished unloading.
-launchctl bootstrap gui/$(id -u) "$AGENT" 2>/dev/null || { sleep 1; launchctl bootstrap gui/$(id -u) "$AGENT"; }
+launchctl bootstrap gui/$(id -u) "$AGENT" 2>/dev/null || { sleep 1; launchctl bootstrap gui/$(id -u) "$AGENT" 2>/dev/null || {
+  echo "Could not add Atticus to Login Items; opening it directly instead."
+  open "$APP"
+}; }
 echo "Atticus is running. Hold Control+Option+Space and talk."

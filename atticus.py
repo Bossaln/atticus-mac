@@ -26,8 +26,9 @@ import shlex
 import platform
 import fcntl
 import atexit, base64, difflib, hashlib, html, json, plistlib, shutil, threading, os, re, select, signal, stat, subprocess, sys, tempfile, time, urllib.parse, urllib.request
+import unicodedata
 import uuid
-from functools import wraps
+from functools import lru_cache, wraps
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +46,12 @@ BUY = 'https://3370759087892.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
 # Daily-user count: once a day, a random ID (no name, no asks) goes to PostHog. Off in Settings → Safety. Empty key = off.
 POSTHOG_KEY = os.environ.get('ATTICUS_POSTHOG_KEY', 'phc_mGpLLzJtYTToBF8uSkqkUxMMG9ANmQWKDBnpsRDmzy6P')   # public capture token; empty override disables
+try:
+    APP_VERSION = Path(ME).with_name('VERSION').read_text().strip()
+except OSError:
+    try:
+        with open(Path(ME).parents[1] / 'Info.plist', 'rb') as f: APP_VERSION = plistlib.load(f).get('CFBundleShortVersionString', 'unknown')
+    except (OSError, ValueError): APP_VERSION = 'unknown'
 
 
 # About the user. Only a short name/answer-style line is always sent; category facts are attached when their
@@ -499,6 +506,7 @@ Tools:
 - If text is missing or a task needs appearance/layout detail, {LOOK} prints fresh labelled pictures of all displays to Read; if text and picture disagree, trust the picture. Picture coordinates only for targets absent from accessible controls.
 - Web actions: {WEB} click <n> | fill <n> "<text>" | type-after "<exact anchor>" "<text>"; numbers come from the window read. Each returns changed page state; check it.
 - Native actions: {HANDS} see [app] | menu <app> "<path>" | click <target> [near <label>] [double] [right] | scroll down|up|left|right [pages|all] [target] | scroll-to "text" | press "cmd+t" [times] | drag <from> <to> | type <field> "text" [submit] [append] | type-after "<exact anchor>" "<text>" | wait [seconds]. Prefer labels. Returns changed state; use the window reader for document text.
+- App/site: always try; never blame sandbox/Terminal. Name the denied Settings switch.
 - System settings: shell, defaults or AppleScript first; else open the pane with --bg and use hands on its labelled control; verify. Don't renavigate an open pane.
 - Work behind: never activate/raise unless asked to open/show/switch/focus. {SHOW} --bg "<url|path|app>" opens behind, waits until ready. {SHOW} "<target>" respects Settings. {FRONT} "<app>" ["tab words"] pictures that window in place, even covered; raises only if asked. Helpers wait; never add sleep. Chain dependent commands with && and check each result.
 - Windows: {PLACE} "<process>" <left|right|full|fullscreen|center> <laptop|monitor|current|exact Context screen name> ["title words"]. full maximizes; fullscreen enters a Space. Combine moves with +. Get names from running apps/accessibility.
@@ -513,7 +521,7 @@ Tools:
 - Routines: {ROUTINE} add time HH:MM daily|weekdays "<ask>" [mode] | add interval SECONDS "<ask>" [mode] | list | remove listed-ID.
 Earlier supplies follow-ups. "this"/"here" = front window; "it" after a task = Last task window. Answer/draw from open content (video, page, doc) unless told not to.
 Memory: follow rules. Recall/forget X: --me find, then drop a fact or {FORGET} the exact rule. Save personal facts: {ABOUT} <category> "<kind>" "<exact words from now/Earlier>"; how-tos: {REMEMBER} "<rule>".
-Shortcuts: "when I say X, do Y": run and verify Y. Atticus saves the verified actions as X; do not write shortcuts yourself.
+Shortcuts: "when I say X, do Y" in any words: run and verify Y, then end with [shortcut X], X in the user's exact words. Atticus saves the verified actions; never write shortcuts yourself.
 Own settings: {SET} "<setting name>" on|off|<option>, never click in Settings. Show Settings: open -a Atticus.
 Corrections: fix the task, then save one short user preference, not app/site-specific workarounds.
 If Context has a Previous learned shortcut and the current request reports it failed, redo its task and include [unlearn]; else ignore it.
@@ -550,26 +558,15 @@ DRAW_HELP = f"""
 First run {LOOK} in this ask and Read its pictures (drawing refuses without it), then one {DRAW} '<JSON>' with every step.
 JSON (a locate step): {{"steps":[{{"id":"1","say":"short spoken instruction","target":"exact AX label or id from hands see","shapes":[{{"kind":"rect","rect":[x,y,w,h],"color":"red"}}],"wait":true}}]}}.
 1-12 steps. Pick the kind from the ask, not from what is on screen:
-- Locate (where is it, where/how do I do it in this app): marks on the target. Fit the mark to the thing: rect around buttons, fields, rows; circle on small icons; arrow + label for far or hidden ones. Tutorials (how do I do it): only the step(s) visible now, the last with target or hit + wait; after its click/value change (or Next) Atticus looks again and asks you for the next, so never describe or guess steps behind menus or dialogs not open yet. User clicks; never act for them.
+- Locate (where is it, where/how do I do it in this app): marks on the target. Fit the mark to the thing: rect around buttons, fields, rows; circle on small icons; arrow + label for far or hidden ones. Tutorials use target + wait for its click/value change (or "next"). User clicks; never act for them.
 - Explain (explain, teach, compare, how something works, draw something; any subject, math, code, a graph): draw the idea itself so it teaches without the speech: labeled parts, steps joined by arrows, a side-by-side comparison, or worked text lines. Put it in clear space (an empty area of the picture), not over the text it explains. Trace an on-screen figure when there is one; otherwise draw your own, using the page's labels and numbers (your own example only if none fits). One small mark may link it to the source; marks around on-screen words are not an explanation. Omit target and wait; every step needs say; parts draw on top of earlier steps and captions accumulate.
 Speech follows the voice-output setting. Drawn text is plain Unicode, no LaTeX. Target anchors rect/circle/label/pointer to fresh AX frames. Otherwise use Quartz top-left screen points, or put "screen":N on the step (never in a shape) for last --look pixels.
 Shape keys, no others: rect/circle "rect":[x,y,w,h] (circle may be an ellipse; add "fill":true for a translucent diagram part at those exact bounds); arrow/line "points":[[x,y],[x,y]] (exactly 2; path for more); path "points":[[x,y],...]; label "at":[x,y],"text" (short tag), optional "size":"s"|"m"|"l"; pointer "at"; text "text" (one large line; every step's text lines stack on one panel, whiteboard style: use them for practice problems and worked math, one step per line; "size":"s"|"m"|"l", default m; the first may set "at":[x,y], the panel's top-left in empty space); any shape "color": red/blue/green/yellow/white. Optional step "hit":[x,y,w,h] (screenshot area); "timeout" 5-120. Drawings stay through later asks until Close, Esc or your next draw, which replaces them. Don't repeat captions or claim it appeared unless this returns "Guide shown". Re-read after layout changes.
 """
 
 DRAWING = f"""
-First output, before any tool or choice: [show] for UI where/how asks, even if known (point, not tell), else [text] (also when written steps were asked). Draw/explain on screen: diagram the idea, not marks. After --look && --draw --help (one call), use {DRAW} once on Request screen unless user names another.
+UI where/how asks, even if known: point, not tell; draw/explain on screen: diagram the idea, not marks. After --look && --draw --help (one call), use {DRAW} once on Request screen unless user names another.
 """
-MODE = r'\[(show|text|complete)\]'   # how a main reply reaches the user (DRAWING, guide_context): protocol, never shown
-LEAD = r'\A(?:\s*' + MODE + r')+[ \t]*'   # only a message's first output is a tag; the same words in its body are text
-
-
-def untagged(text):
-    return re.sub(LEAD, '', text)
-
-
-def lead_modes(text):
-    m = re.match(LEAD, text)
-    return set(re.findall(MODE, m[0])) if m else set()
 
 # Full access: everything runs without asking, except these, which a misheard word must never trigger.
 DENIED = ('rm', 'rmdir', 'sudo', 'dd', 'diskutil', 'shutdown', 'reboot', 'halt', 'git push', 'srm')
@@ -580,8 +577,8 @@ def client():
     c = pref('client', 'claude')
     return c if c in ('claude', 'devin', 'pi') else 'claude'
 
-# Safe mode (Settings, on by default): Claude Code's sandbox lets the AI's commands write only in a throwaway folder.
-# App control can't work inside it (Apple Events, opening apps), so those run outside, and the gate below checks every command.
+# Safe mode (Settings, on by default): the gate checks every command; background agents also use Claude Code's sandbox.
+# Main asks do not advertise that sandbox to the model: their gated helpers must open apps and sites normally.
 # A chain runs outside only if every part is listed, so harmless read-only tools are too ("…; curl wttr.in", "| head").
 SAFE_OUT = [f'{c} *' for c in ('osascript', 'open', 'mdfind', 'curl', 'head', 'tail', 'grep', 'sort', 'wc', 'echo', 'sleep', 'date', ME)] + ['pbpaste', 'date'] + [f'orca terminal {c} *' for c in ('list', 'read', 'send')]
 # What the user must OK first. Matched per command, so `open "…?q=buy shoes"` or a search for "delete" never asks.
@@ -750,8 +747,6 @@ def gate():
         return
     if os.path.exists(os.path.join(os.environ.get('ATTICUS_ASK', DIR), 'handed-off')):
         decision(False, 'This request was handed off. Its tools belong to the background agent.'); return
-    if os.environ.get('ATTICUS_ASK') and any(os.path.exists(f(os.environ['ATTICUS_ASK'])) for f in (guide_file, show_file)) and not guide_tool(external_tool or event.get('tool_name'), inp.get('command', '')):
-        decision(False, 'A guide only looks, reads, picks and draws; the user does every click. Draw the step visible now, or [complete] if a live guide is done.'); return
     if event.get('tool_name') == 'WebFetch' and not agent_url_allowed(inp.get('url', '')):
         decision(False, agent_url_denial()); return
     # WebSearch takes 4-6 s and is billed per search; the free helper takes ~2 s. The prompt's "on failure" alone was ignored.
@@ -1164,14 +1159,20 @@ def place(proc, where='full', screen='current', title=''):
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')   # size first, then move, then size again
         osa(tell + f'set position of {win} to {{{bx}, {by}}}')
         osa(tell + f'set size of {win} to {{{bw}, {bh}}}')
-    try:   # check, never assume: a window in its own full screen Space or a refused move stays put
-        if app_mode: l, t, r, b = map(int, osa(f'tell application "{app_q}" to get bounds of {aw}').split(', '))
-        else:
-            l, t, r, b = map(int, osa(tell + f'tell {win} to return {{position, size}}').split(', '))
-            r, b = l + r, t + b
-    except ValueError:
+    def bounds(app_bounds=app_mode):
+        for attempt in range(6):   # Accessibility can disappear during a display/full-screen animation
+            try:
+                if app_bounds:
+                    return tuple(map(int, osa(f'tell application "{app_q}" to get bounds of {aw}').split(', ')))
+                l, t, r, b = map(int, osa(tell + f'tell {win} to return {{position, size}}').split(', '))
+                return l, t, l + r, t + b
+            except ValueError:
+                if attempt < 5: time.sleep(.2)
+        return None
+    landed = bounds()   # check, never assume: a window in its own full screen Space or a refused move stays put
+    if not landed and not native:
         return f'Moved {proc}, but could not check where its window is. Look at the screen before saying it worked.'
-    if not (x <= (l + r) // 2 < x + w and y - 25 <= (t + b) // 2 < y + h):
+    if landed and not (x <= (landed[0] + landed[2]) // 2 < x + w and y - 25 <= (landed[1] + landed[3]) // 2 < y + h):
         return f'NOT DONE: {proc} window did not move to {n} (it may be full screen in its own Space). Say so; do not report success.'
     if native:
         osa(tell + f'set value of attribute "AXFullScreen" of {win} to true')
@@ -1179,6 +1180,13 @@ def place(proc, where='full', screen='current', title=''):
             if osa(tell + f'get value of attribute "AXFullScreen" of {win}') == 'true': break
             time.sleep(.1)
         else: return f'NOT DONE: {proc} did not enter full screen on {n}.'
+        landed = bounds(False)
+        if not landed:
+            preview_app(proc, 'move', title)
+            return f'Moved {proc} into full screen, but could not check which display it used. Look at the screen before saying where it is.'
+        l, t, r, b = landed
+        if not (x <= (l + r) // 2 < x + w and y - 25 <= (t + b) // 2 < y + h):
+            return f'NOT DONE: {proc} entered full screen on the wrong display.'
     preview_app(proc, 'move', title)
     return f'{proc} window -> {"fullscreen" if native else where} of {n}'
 
@@ -1186,6 +1194,7 @@ def place(proc, where='full', screen='current', title=''):
 def place_many(args):
     from concurrent.futures import ThreadPoolExecutor
     moves = [m.split('\0') for m in '\0'.join(args).split('\0+\0') if m and m != '+']
+    if not moves: return 'no window found: no placement requested'
     screen = request_screen()
     def move(m):
         if len(m) < 3: m = m + ['full', 'current'][len(m) - 1:]
@@ -1193,6 +1202,14 @@ def place_many(args):
         return place(*m)
     with ThreadPoolExecutor(len(moves) or 1) as pool:
         return '\n'.join(pool.map(move, moves))
+
+
+def model_note(output):   # an instant reply is read by the user, not the model
+    return re.sub(r'\s*Look at the screen before saying[^.]*\.', '', output)
+
+
+def place_failed(output):
+    return any(line.startswith(('where must ', 'no window found', 'NOT DONE:')) for line in output.splitlines())
 
 
 def keep_behind(mine, app, wait=1.5):
@@ -1377,6 +1394,10 @@ def spotify_item(name, anything=True):
                     break
             url = m and f'https://open.spotify.com/{m[1]}/{m[2]}'
             p = m and (f'spotify:{m[1]}:{m[2]}', json.loads(get('https://open.spotify.com/oembed?url=' + url))['title'])
+            if p:
+                asked, found = norm(name), norm(re.split(r'\s+[-–|]\s+', p[1], maxsplit=1)[0])
+                if asked != found and not (len(asked) >= 5 and difflib.SequenceMatcher(None, asked, found).ratio() >= .9):
+                    p = None
         except Exception:
             p = None
     return p
@@ -1497,16 +1518,56 @@ LAST = os.path.join(DIR, 'last_app')
 WORKED = os.path.join(DIR, 'worked.json')   # the window the last task worked in (mini screen target)
 
 
+_APPS_CACHE = (0.0, set())
+
+
+def installed_apps():
+    global _APPS_CACHE
+    if _APPS_CACHE[0] and time.monotonic() - _APPS_CACHE[0] < 3600:
+        return _APPS_CACHE[1]
+    fallback = {f[:-4] for d in ('/Applications', '/System/Applications', '/System/Applications/Utilities', '/System/Library/CoreServices', HOME + '/Applications')
+                if os.path.isdir(d) for f in os.listdir(d) if f.endswith('.app')}
+    try:
+        search = subprocess.Popen(['mdfind', 'kMDItemContentType == "com.apple.application-bundle"'],
+                                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        found, _ = search.communicate(timeout=.08)
+        apps = {Path(path).stem for path in (found or '').splitlines() if path.rstrip('/').endswith('.app')} if not search.returncode else set()
+    except subprocess.TimeoutExpired:
+        search.kill(); search.communicate()
+        apps = set()
+    except OSError:
+        apps = set()
+    _APPS_CACHE = (time.monotonic() if apps else time.monotonic() - 3595, apps | fallback)
+    return _APPS_CACHE[1]
+
+
+def app_words(words):
+    """ "the Notes app" -> "notes" """
+    return re.sub(r'\s+(app|application)$', '', words.lower().strip(' .!?').removeprefix('the ').removeprefix('my '))
+
+
 def app_named(words):
     """Spoken name -> installed app name, or None. Whole-name matches only, so "chrome history" is not Chrome."""
-    w = re.sub(r'\s+(app|application)$', '', words.lower().strip(' .!?').removeprefix('the ').removeprefix('my '))
+    w = app_words(words)
     key = lambda n: re.sub(r'[^a-z0-9]', '', n.lower())   # "trading view" = "TradingView"
-    apps = {f[:-4] for d in ('/Applications', '/System/Applications', '/System/Applications/Utilities', '/System/Library/CoreServices', HOME + '/Applications')
-            if os.path.isdir(d) for f in os.listdir(d) if f.endswith('.app')}
+    apps = installed_apps()
     exact = [a for a in apps if key(a) == key(w)]
     if len(exact) == 1: return exact[0]
     matches = [a for a in apps if key(a.split()[-1]) == key(w) or key(''.join(p[0] for p in a.split()[:-1]) + a.split()[-1]) == key(w)]
     return matches[0] if len(matches) == 1 else None
+
+
+def app_heard(words):
+    """A misheard app name -> the one installed app spelled close to it with the same first sound ("Ascidian" -> Obsidian), or None.
+    Only for "open X": a near miss there opens an app, it never replays or quits one."""
+    words = app_words(words)
+    w = re.sub(r'[^a-z0-9]', '', words)
+    if len(w) < 3 or len(words.split()) > 3: return None
+    def score(app):   # its whole name or last word ("Google Chrome" -> chrome); "gmail" never opens Mail, "spotify web" is more than Spotify
+        names = {re.sub(r'[^a-z0-9]', '', n.lower()) for n in (app, app.split()[-1])}
+        return max((difflib.SequenceMatcher(None, w, n).ratio() for n in names if n and n not in w and dictate_sound(n)[:1] == dictate_sound(w)[:1]), default=0)
+    ranked = sorted(((score(a), a) for a in installed_apps()), reverse=True)
+    return ranked[0][1] if ranked and ranked[0][0] >= .75 and (len(ranked) < 2 or ranked[1][0] < ranked[0][0]) else None
 
 
 def proc_of(app):
@@ -1558,6 +1619,7 @@ def plain(text):
 # them after confirmation with no AI (free). Kept in a file, never sent to the AI, so they cost nothing as they grow.
 SKILLS = os.path.join(DIR, 'skills.json')
 DEICTIC = re.compile(r'\b(this|that|these|those|it|here|there|them|him|her)\b')   # "close this" depends on the moment: never learned
+INTERNAL_TASK_MARKERS = ('\nAlready completed:', '\nRemaining words:')
 
 
 # shortcut: a deny list, not proof of safety; shortcuts only ever come from the user's own ask
@@ -1569,19 +1631,42 @@ MORE = re.compile(r'\b(and|then|after that|also)\b', re.I)   # a second step aft
 FAILED = re.compile(r"\b(can't|cannot|couldn't|could not|unable|not able|failed|not done|not completed|didn't work)\b", re.I)   # the reply admits it did not work
 
 
+def failed_action_reply(reply, did_action):
+    """Failure wording counts only after an action; ordinary explanations use the same words."""
+    return bool(did_action and FAILED.search(reply))
+
+
 def named_shortcut(text):
     match = NAMED.search(text)
     return match if match and plain(text[:match.start()] + 'shortcut') == 'shortcut' else None
+
+
+TRIGGER = r'\s*\[shortcut ([^\]\n]{2,40})\]'   # the model names X of "when I say X, do Y"; never shown
+
+
+def shortcut_name(request, reply):
+    """The words a "when I say X, do Y" ask teaches: the code's own split, else the model's [shortcut X] if X is the user's own words
+    ("when I say deep work full screen Chrome" has no comma to split at)."""
+    named = named_shortcut(request.strip())
+    if named: return (named[1] or named[2]).strip()
+    tag = re.search(TRIGGER, reply)
+    words = lambda text: ' ' + ' '.join(re.findall(r'\w+', plain(text))) + ' '
+    return tag[1].strip() if tag and words(tag[1]).strip() and words(tag[1]) in words(request) and words(tag[1]) != words(request) else ''
 
 
 def skills():
     try:
         with open(SKILLS) as f: saved = json.load(f)
         if not isinstance(saved, dict): return {}
-        saved = {task: entry for task, entry in saved.items() if isinstance(entry, dict) and isinstance(entry.get('reply'), str) and isinstance(entry.get('cmds'), list) and all(isinstance(c, str) for c in entry['cmds'])}
+        clean = {task: entry for task, entry in saved.items() if not any(marker.casefold() in task.casefold() for marker in INTERNAL_TASK_MARKERS)
+                 and isinstance(entry, dict) and isinstance(entry.get('reply'), str) and isinstance(entry.get('cmds'), list) and all(isinstance(c, str) for c in entry['cmds'])}
+        pruned = len(clean) != len(saved)
+        saved = clean
         for task, entry in saved.items():
-            commands = shortcut_commands(task, entry['cmds'])
+            if not isinstance(entry.get('asked', ''), str): entry.pop('asked')
+            commands = shortcut_commands(entry.get('asked') or task, entry['cmds'])
             if commands is not None: entry['cmds'] = commands
+        if pruned: save_skills(saved)
         return saved
     except (OSError, ValueError):
         return {}
@@ -1681,13 +1766,14 @@ def save_skills(sk):
             if os.path.exists(f.name): os.unlink(f.name)
 
 
-def learn(task, cmds, reply):
-    """Save the commands if every one is a replayable action (no reading, searching, clicking by element ID)."""
+def learn(task, cmds, reply, asked=''):
+    """Save the commands if every one is a replayable action (no reading, searching, clicking by element ID).
+    asked: the words that asked for it when task is a shortcut's name, so "when I say study, open Notes" replays Notes in front."""
     k = plain(task)
     if any(x in c for c in cmds for x in (FORGET, SHORTCUT)):   # changing rules or shortcuts is not itself a shortcut
         return
     # looking around (screen, menus, web, saving a rule) is how the AI found the way; the replay needs only the actions
-    cmds = shortcut_commands(task, cmds, (cached_hands() or {}).get('app', ''))
+    cmds = shortcut_commands(asked or task, cmds, (cached_hands() or {}).get('app', ''))
     act = (SHOW, PLACE, PLAY, QUEUE, TYPE, HANDS, 'open ', 'osascript ')
     # 'make new': a reminder or note holds this moment's words ("make the task list" must not re-add old items)
     if not cmds or DEICTIC.search(k) or FAILED.search(reply) or not all(c.startswith(act) and hands_replayable(c) and 'PID:' not in c and 'make new' not in c and not risky(c) for c in cmds):
@@ -1698,7 +1784,7 @@ def learn(task, cmds, reply):
         if bid and app_running(bid): return   # a quit that did not quit is evidence against the reply
     sk = skills()
     new = sk.get(k, {}).get('cmds') != cmds
-    sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d')}
+    sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d'), **({'asked': asked} if asked else {})}
     save_skills(sk)
     return new   # True: a task it did not know yet (the box shows a green "Learned" tip)
 
@@ -1720,15 +1806,21 @@ def app_in(words):
 
 def like(g, sk):
     """A learned task said another way -> (its key, (old app, new app) or None): the same words in any order,
-    or the same words about another app ("put notes left" was learned, "put mail left" replays it for Mail)."""
-    same = next((k for k in sk if sorted(gist(k)) == sorted(g)), None)
+    or the same words about another app ("put notes left" was learned, "put mail left" replays it for Mail).
+    Words its commands use keep their order or come back to front ("on the left put notes"), so each app keeps its side:
+    "notes left, mail right" never replays "mail left, notes right"."""
+    def reordered(k, a, b):
+        used = set(re.findall(r'[a-z0-9]+', ' '.join(sk[k]['cmds']).lower()))
+        x, y = [w for w in a if w in used], [w for w in b if w in used]
+        return sorted(a) == sorted(b) and y in (x, x[::-1])
+    same = next((k for k in sk if reordered(k, gist(k), g)), None)
     if same: return same, None
     new = app_in(g)
     if new:
         for k in sk:
             words = gist(k)
             old = len(words) == len(g) and app_in(words)
-            if old and old[1] != new[1] and sorted(old[0]) == sorted(new[0]) and swapped(sk[k]['cmds'], old[1], new[1]):
+            if old and old[1] != new[1] and reordered(k, old[0], new[0]) and swapped(sk[k]['cmds'], old[1], new[1]):
                 return k, (old[1], new[1])
     return None, None
 
@@ -1757,21 +1849,24 @@ def replay_quit(tokens):
 def replay(k, swap=None):
     replay.ran = []
     replay.commands = []
+    replay.failed_at = None
     s = skills().get(k)
-    commands = shortcut_commands(k, swapped(s['cmds'], *swap) if swap else s['cmds']) if s else None
+    asked = s.get('asked') or k if s else k   # a named shortcut's own words say nothing about focus; the words that taught it do
+    commands = shortcut_commands(asked, swapped(s['cmds'], *swap) if swap else s['cmds']) if s else None
     if not commands:
         return None
     replay.commands = commands
     if pref('safe', True) and any(risky(c) for c in commands):
         return None   # the AI's tool gate can show the Allow card; direct replay cannot
-    if not wants_focus(k) and pref('workIn', 'back') != 'front' and any(focus_command(c) for c in commands): return None
-    for c in commands:   # any failure: hand it to the AI instead
+    if not wants_focus(asked) and pref('workIn', 'back') != 'front' and any(focus_command(c) for c in commands): return None
+    for index, c in enumerate(commands):   # any failure: hand it to the AI instead
+        replay.failed_at = index
         try:
             tokens = shlex.split(c)
-            with_request = os.environ.get('ATTICUS_REQUEST'); os.environ['ATTICUS_REQUEST'] = k
+            with_request = os.environ.get('ATTICUS_REQUEST'); os.environ['ATTICUS_REQUEST'] = asked
             try:
                 if tokens[:2] == [ME, '--show'] and (len(tokens) == 3 or len(tokens) == 4 and tokens[2] == '--bg'):
-                    reply = show(tokens[-1], '--bg' in tokens or not wants_focus(k))
+                    reply = show(tokens[-1], '--bg' in tokens)   # as the verified run did: the model chose front or --bg from the words in any language
                     replay.ran.append(f'{c[:200]}  => {reply[:200]}')
                     if reply.startswith(('could not', 'no app or file')): return None
                 elif tokens[:2] == [ME, '--hands']:
@@ -1782,7 +1877,7 @@ def replay(k, swap=None):
                     began = time.time()
                     out = place_many(tokens[2:])
                     replay.ran.append(f'{c[:200]}  => {out[:200]} ({time.time() - began:.1f}s)')
-                    if FAILED.search(out) or 'no window found' in out or 'could not check' in out: return None
+                    if place_failed(out): return None
                 elif (bid := replay_quit(tokens)) is not None:
                     if not bid: return None
                     began = time.time()
@@ -1792,7 +1887,7 @@ def replay(k, swap=None):
                 else:
                     if ARRANGE.search(c): free_focus()
                     began = time.time()
-                    r = subprocess.run(['/bin/zsh', '-c', c], capture_output=True, text=True, timeout=20, env={**os.environ, 'ATTICUS_REQUEST': k})
+                    r = subprocess.run(['/bin/zsh', '-c', c], capture_output=True, text=True, timeout=20, env={**os.environ, 'ATTICUS_REQUEST': asked})
                     replay.ran.append(f'{c[:200]}  => {(r.stdout.strip() or r.stderr.strip() or "exit " + str(r.returncode))[:200]} ({time.time() - began:.1f}s)')   # what each step said, and how long
                     if r.returncode or FAILED.search(r.stdout) or 'no window found' in r.stdout: return None   # a step that says it failed is a failure: the AI takes over
                     if tokens[0] == 'open' and len(tokens) in (3, 4) and tokens[1:-1] in (['-a'], ['-g', '-a']) and (bid := app_id(app_named(tokens[-1]) or tokens[-1])) and not app_up(bid):
@@ -1806,6 +1901,7 @@ def replay(k, swap=None):
             return None
     if s.get('used') != time.strftime('%Y-%m-%d'):   # used today: the 30-day clock starts again
         sk = skills(); sk[k]['used'] = time.strftime('%Y-%m-%d'); save_skills(sk)
+    replay.failed_at = None
     return outcome(s['reply'].replace(*swap) if swap else s['reply'])
 
 
@@ -1899,7 +1995,7 @@ def fast(text):
         name, action = (named[1] or named[2]).strip(), text[named.end():].strip(' ,:;')
         if hands_command(plain(action)) or named_shortcut(action): return None
         reply = action and fast(action)
-        if reply and learn(name, fast.cmds, reply) is not None:
+        if reply and learn(name, fast.cmds, reply, text) is not None:
             output = fast.shortcut['output'] if fast.shortcut else [reply]
             sk = skills(); sk[plain(name)]['mine'] = True; save_skills(sk)
             fast.shortcut = {'key': plain(name), 'commands': fast.cmds, 'output': output}
@@ -1943,7 +2039,7 @@ def fast(text):
             fast.shortcut = {'key': t if swap else k, 'commands': replay.commands, 'output': replay.ran}
             return r
         if replay.ran:   # it acted, then a step failed or its check contradicted: never another instant reply, the AI redoes it
-            fast.failed = {'key': t if swap else k, 'commands': replay.commands, 'output': replay.ran}
+            fast.failed = {'key': k, 'commands': replay.commands, 'output': replay.ran, 'failed_at': replay.failed_at}
             return None
     site = re.fullmatch(r'(?:search(?: up)?|google|look up) ([a-z0-9][\w.-]*) for (.+)', t)
     m = site or re.fullmatch(r'(?:search(?: up)?|google|look up)(?: for)? (.+)', t)
@@ -1995,7 +2091,7 @@ def fast(text):
                 return None
             fast.cmds = ['open ' + shlex.quote(site if site.startswith(('https://', 'http://')) else 'https://' + site)]
             return f'Opened {target}.'
-        app = app_named(target)
+        app = app_named(target) or app_heard(target)
         if not app:
             return None
         if pref('openOn', 'here') == 'other':
@@ -2019,7 +2115,8 @@ def fast(text):
             from concurrent.futures import ThreadPoolExecutor
             screen = request_screen()
             outs = list(ThreadPoolExecutor(len(moves)).map(lambda m: place(proc_of(m[0]), m[1], screen if m[2] == 'current' else m[2]), moves))   # all at once, like --place a + b
-            if any(o.startswith(('no window', 'NOT DONE')) or 'could not check' in o for o in outs): return None
+            if any(place_failed(o) for o in outs): return None
+            if any('could not check' in o for o in outs): return '\n'.join(model_note(o) for o in outs)
             fast.cmds = [PLACE + ' ' + ' + '.join(shlex.join([proc_of(a), w, sc]) for a, w, sc in moves)]
             Path(LAST).write_text(moves[-1][0])
             return ' '.join(f'{a}: {w.replace("fullscreen", "full screen")}' + (f' on {sc}' if sc != 'current' else '') + '.' for a, w, sc in moves)
@@ -2028,8 +2125,9 @@ def fast(text):
         return None
     app, where, screen = m
     out = place(proc_of(app), where, screen)
-    if out.startswith(('no window', 'NOT DONE')) or 'could not check' in out:
+    if place_failed(out):
         return None
+    if 'could not check' in out: return model_note(out)
     fast.cmds = [PLACE + ' ' + shlex.join([proc_of(app), where, screen])]
     Path(LAST).write_text(app)
     return f'{app}: {where.replace("fullscreen", "full screen")}' + (f' on {screen}' if screen != 'current' else '') + '.'
@@ -3246,7 +3344,7 @@ def posthog(event, props=None, stamp=()):
     if not os.path.exists(idf):
         os.makedirs(DIR, exist_ok=True)
         Path(idf).write_text(base64.b32encode(os.urandom(10)).decode())
-    body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': Path(idf).read_text(), 'properties': {'$process_person_profile': False, **(props or {})}})
+    body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': Path(idf).read_text(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION, **(props or {})}})
     subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/' + (' && printf %s "$2" > "$3"' if stamp else ''),
                       'atticus-ping', body, *stamp],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # its own process: never slows the answer
@@ -3268,6 +3366,8 @@ def clean(text):
     t = re.sub(r'[\w.+-]+@[\w-]+\.[\w.]+', '<email>', t)
     t = re.sub(r'(https?://[^\s"\'?#]+)[?#][^\s"\']*', r'\1', t)
     t = re.sub(r'~/[^\s"\']+', '~/<path>', t)
+    t = re.sub(r'(?<![:/])/(?:[^/\s"\']+/)+[^/\s"\']*', '<path>', t)
+    t = re.sub(r'(?<![:/.\w])(?:[\w.-]+/)+[\w.-]+', '<path>', t)
     t = re.sub(r'\b[A-Za-z0-9_-]{24,}\b', '<secret>', t)
     return re.sub(r'\d[\d\s().-]{4,}\d', '<number>', t)[:300]
 
@@ -3287,7 +3387,11 @@ def say(tag, text):   # one line per message; an answer's own line breaks (lists
             lines.append(line.rstrip() if fence and not line.lstrip().startswith('```') else ' '.join(line.split()))
             fence ^= line.lstrip().startswith('```')
         text = '\u2028'.join(lines)
-    print(f'{tag} {text}', flush=True)
+    try:
+        print(f'{tag} {text}', flush=True)
+    except BrokenPipeError:
+        sys.stdout = open(os.devnull, 'w')
+        stop_workers()
 
 
 TURN = {}
@@ -3416,7 +3520,7 @@ def tip(reply, taught=''):
     learned = taught.startswith('Learned:')
     if (not pref('tips', True) and not learned) or os.environ.get('ATTICUS_UI') != '1':
         return
-    if taught or FAILED.search(reply):
+    if taught or failed_action_reply(reply, getattr(run, 'work', False)):
         return say('i', taught or MISS)
     stamp = os.path.join(DIR, 'tip')
     if not os.path.exists(stamp):   # never on the very first ask
@@ -3649,7 +3753,7 @@ def without_handoff_line(text):
 
 def streamed_answer(text):
     """What of a main reply still arriving may show in the box: never a tag, a draft, a handoff or a Sources list."""
-    text = text.lstrip().removeprefix('[text]').lstrip()
+    text = text.lstrip()
     if text[:1] in ('[', '`'): return ''   # a tagged, handed-off or fenced reply shows only as the final reply
     tag = re.search(r'\[(?=[a-z])(?![^\]\[{\n]*\]\()', text)   # every control tag is [ + a lowercase word; [1] or a closed [link](…) is answer text
     text = re.split(r'\n\s*Sources?:', text[:tag.start()] if tag else text, maxsplit=1, flags=re.I)[0]
@@ -4351,7 +4455,7 @@ class Agents:
         if status == 'done':
             match = re.search(r'.*\[agent-result\s+(?=\{)', result, re.S)   # the last one
             data = (tag_json(result, match.end()) if match else None) or {}
-            answer = agent_visible_text(result)
+            answer = re.sub(TRIGGER, '', agent_visible_text(result))
             row.update(summary=str(data.get('summary') or answer or 'Done')[:2000], changes=str(data.get('changes', ''))[:2000],
                        links=[str(link) for link in data.get('links', []) if isinstance(link, str)][:20] if isinstance(data.get('links', []), list) else [],
                        missingConnector=str(data.get('missingConnector', ''))[:160], meetingEvent=data.get('meetingEvent', {}) if isinstance(data.get('meetingEvent', {}), dict) else {},
@@ -4364,9 +4468,9 @@ class Agents:
                 try: request = Path(request_file(row['directory'])).read_text()
                 except OSError: request = ''   # never learn a generated brief in place of the user's words
                 commands = agent_commands(row, request) if request else []
-                named = named_shortcut(request.strip())
-                key = plain(named[1] or named[2]) if named else plain(request)
-                if key and commands and all(replayable(c) for c in commands) and learn(key, commands, answer or row['summary']) is not None:
+                named = shortcut_name(request, result)
+                key = plain(named or request)
+                if key and commands and all(replayable(c) for c in commands) and learn(key, commands, answer or row['summary'], request if named else '') is not None:
                     if named:
                         sk = skills(); sk[key]['mine'] = True; save_skills(sk)
                     row['learned'] = key
@@ -4739,10 +4843,9 @@ def start_claude(model=None, agent=None):
     settings = {}
     ask = agent['directory'] if agent else os.environ.get('ATTICUS_ASK') or tempfile.mkdtemp(prefix='atticus-ask-')   # keep helpers and focus restoration on the same ask
     if not agent: atexit.register(shutil.rmtree, ask, True)
-    if pref('safe', True):
+    if agent and pref('safe', True):
         settings['sandbox'] = {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': True, 'excludedCommands': SAFE_OUT}
-        settings['sandbox']['filesystem'] = {'denyWrite': [os.path.join(DIR, 'answers')]}   # Allow cards and their answers
-        if agent: settings['sandbox']['filesystem'] = {'denyRead': [os.path.join(DIR, 'agent-gates')], 'denyWrite': [os.path.join(DIR, 'agent-gates'), os.path.join(DIR, 'answers')]}
+        settings['sandbox']['filesystem'] = {'denyRead': [os.path.join(DIR, 'agent-gates')], 'denyWrite': [os.path.join(DIR, 'agent-gates'), os.path.join(DIR, 'answers')]}
     if agent and agent.get('connectors'):
         try:
             with open(os.path.join(DIR, 'agent-connectors.json')) as f: connectors = json.load(f)
@@ -4856,7 +4959,6 @@ class MainMove:
         self.trace = c.get('trace', {}); self.elapsed = c.get('elapsed', 0); self.last = time.monotonic()
         self.ready = self.moved = self.closed = False
         self.local_delivery = c.get('local_delivery', False)
-        self.declared = not pref('draw', True)   # until [text], the ask may still be a guide ([show]), so it never moves by itself
         self.lock = threading.RLock(); self.done = threading.Event(); self.thread = None
 
     def record(self, event):
@@ -4867,10 +4969,6 @@ class MainMove:
                     continue
                 if block.get('type') == 'text' and isinstance(block.get('text'), str) and re.search(r'\[(?:draft|insert|replace|point)\b', block['text']):
                     self.local_delivery = True
-                if block.get('type') == 'text' and isinstance(block.get('text'), str):
-                    said = lead_modes(block['text'])
-                    self.local_delivery = self.local_delivery or 'show' in said
-                    self.declared = self.declared or 'text' in said
                 if block.get('type') == 'tool_use' and re.search(r'--draw\b|--point\b', str(block.get('input', {}))):
                     self.local_delivery = True
                 identifier = block.get('id') if block.get('type') == 'tool_use' else block.get('tool_use_id')
@@ -4901,7 +4999,7 @@ class MainMove:
             except OSError: answer = ''
             steps = sum(' --offset ' not in s['input'] for s in self.trace.values())   # the next page of a window continues the same read
             # Writing-only replies reveal their draft mode only when the answer arrives.
-            if answer != 'go' and (waiting or not self.declared or not self.trace or steps < 3 and self.elapsed < 15): return
+            if answer != 'go' and (waiting or not self.trace or steps < 3 and self.elapsed < 15): return
             try:
                 self.pending = self.handoff()
                 persist_handoff(self.pending, self.p.pid)
@@ -4946,7 +5044,6 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     run.handoff, run.handoffs = None, []
     run.observed = []
     run.work = False
-    run.modes = set()   # each message's leading MODE tags; [show]: the user does this on screen now, so it never leaves the main window
     p = p or start_claude()
     if not p:
         say('!', 'setup')   # Atticus.app opens its setup window
@@ -5011,7 +5108,6 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                     if shown: say('…', ''); shown = ''
                 elif delta.get('type') == 'text_delta' and isinstance(delta.get('text'), str) and live is not None:
                     live += delta['text']
-                    run.modes |= declare(live, getattr(p, 'ask', ''))   # streamed before its first tool call ends, so the gate holds that call too
                     commit = os.environ.get('ATTICUS_COMMIT')
                     text = streamed_answer(live) if streams and not drew and (not commit or os.path.exists(commit)) else ''
                     if text != shown: say('…', text); shown = text
@@ -5021,18 +5117,15 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 if j.get('type') == 'assistant': move.poll()
             if j.get('type') == 'assistant':
                 blocks = message_blocks(j)
-                said = ''.join(b.get('text', '') for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str))
-                run.modes |= declare(said, getattr(p, 'ask', ''))
-                directives = parse_handoffs(untagged(said).lstrip())
+                directives = parse_handoffs(''.join(b.get('text', '') for b in blocks if b.get('type') == 'text' and isinstance(b.get('text'), str)))
                 directive = directives[0] if directives else None
                 if directive and not any(b.get('type') == 'tool_use' for b in blocks) and os.environ.get('ATTICUS_UI') == '1':
-                    if (main_only or 'show' in run.modes) and any(not (d.get('steer') or d.get('namedAction')) for d in directives):
+                    if main_only and any(not (d.get('steer') or d.get('namedAction')) for d in directives):
                         stop_claude(p)
                         if not routing_retry:
-                            model, modes = getattr(p, 'atticus_model', None), run.modes
+                            model = getattr(p, 'atticus_model', None)
                             reply, _, retry_steps = run(task, start_claude(model if isinstance(model, str) else None), shots,
                                                         request=request, main_only=True, routing_retry=True)
-                            run.modes |= modes
                             return reply, None, retry_steps   # interrupted attempt has no terminal usage receipt
                         run.error = 'The model tried to hand off a request that needs the main window.'
                         return 'Could not finish this in the main window. Please try again.', 0, []
@@ -5062,7 +5155,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                     continue   # drain the result for actual plan usage; the native box is already free
                 if any(b.get('type') == 'tool_use' for b in blocks):   # notes before a tool call; the final text comes as result
                     for b in blocks:
-                        text = untagged(without_handoff_line(b.get('text'))) if isinstance(b.get('text'), str) else ''
+                        text = without_handoff_line(b.get('text')) if isinstance(b.get('text'), str) else ''
                         if b.get('type') == 'text' and text.strip():
                             say('·', text)
                         elif b.get('type') == 'tool_use':
@@ -5163,8 +5256,12 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                      'Claude could not connect. Check your internet connection and try again.')
         elif re.search(r'overload|unavailable|service error|\b5\d\d\b', detail, re.I):
             reply = ('Your custom server' if custom else 'Claude') + ' is temporarily unavailable. Please try again.'
+        elif re.search(r'sandbox', detail, re.I):
+            reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
         else:
-            reply = ('Your custom server' if custom else 'Claude') + ' stopped before answering. Please try again.'
+            say('!', 'setup')
+            reason = ' '.join(clean(detail).split()) or f'exit code {p.returncode}'
+            reply = f'{"Your custom server" if custom else "Claude"} stopped: {reason}. Atticus setup is open; choose Set Up, then try again.'
     if auto_work and reply.endswith('[done]'):   # accepted from older warmed prompts during an update
         reply = reply[:-6].rstrip()
     # a step that failed and was then done another way is dropped, so the way that worked can still be learned
@@ -5178,6 +5275,12 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         reply = f'{claim} — but I couldn’t confirm the result.' if claim else 'I tried the requested action, but I couldn’t confirm the result.'
     if not reply and last_failed and not result_error and not p.returncode:
         reply = 'The last tool failed, so I could not verify that the request was completed. Please try again.'
+    if not reply:
+        if completed:
+            reply = 'Claude returned an empty answer. Please try again.'
+        else:
+            say('!', 'setup')
+            reply = 'Claude’s helper exited without returning a result. Atticus setup is open; choose Set Up, then try again.'
     blocked = re.search(r'\b(block(?:ed)?|denied|not allowed|permission)\b|hook', run.error, re.I) or re.search(r'\btool\b.{0,30}\bblocked\b', reply, re.I)
     if last_failed and blocked and run.error.casefold() not in reply.casefold():
         reply = (reply.rstrip() + ' Tool reported: ' + run.error).strip()
@@ -5185,7 +5288,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         p.stdout.close()
     if callable(getattr(getattr(p, 'errors', None), 'close', None)):
         p.errors.close()
-    return reply or 'No answer came back. Please try again.', cost, steps
+    return reply, cost, steps
 
 
 def continuation_context(previous, observed):
@@ -5199,10 +5302,9 @@ def continuation_context(previous, observed):
 
 def run_devin(task, shots=(), request=None):
     """One confirmed request through `devin -p`; its project config gates tools and forbids direct writes."""
-    run.cmds = run.ran = run.observed = []
+    run.cmds = run.ran = []
     run.error = ''
     run.ok = False
-    run.modes = set()
     if not shutil.which('devin'):
         say('!', 'setup')   # Atticus.app opens its setup window
         return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
@@ -5211,7 +5313,6 @@ def run_devin(task, shots=(), request=None):
     ask = tempfile.mkdtemp(prefix='atticus-ask-')   # the choices card (and hands events) talk through it
     atexit.register(shutil.rmtree, ask, True)   # however this run ends
     save_request(ask, main_ask(task, request)[0])
-    inherit_guide(ask)
     prompt = system_prompt(ASK_FIRST if pref('safe', True) else NEVER)
     if shots:
         prompt += '\nScreen pictures (read them if your tools can view images): ' + ', '.join(path for path, _ in shots)
@@ -5245,13 +5346,11 @@ def run_devin(task, shots=(), request=None):
         reply = 'Devin timed out before finishing. Please try again.'
         run.error = reply
     reply = without_handoff_line(reply)
-    run.modes = declare(reply, os.environ.get('ATTICUS_ASK'))   # Devin streams nothing: later turns of this ask are held, this one is checked after
     p.relay_thread.join(.3)
     deleted = delete_devin_session(ask)
     rows = read_rows(os.path.join(ask, 'devin-tools.jsonl'))
     steps = [row.get('step', '') for row in rows if row.get('step')]
     run.ran = [row['input']['command'] for row in rows if row.get('tool') == 'exec' and row.get('input', {}).get('command')]
-    run.observed = shown_receipts(ask)
     if p.returncode and not timed_out:
         c = plan()   # the usual cause: not installed or signed out
         if not c['ok']:
@@ -5259,7 +5358,11 @@ def run_devin(task, shots=(), request=None):
         p.errors.seek(0)
         detail = p.errors.read(200).strip() or reply[:200]
         run.error = clean(detail)
-        reply = c['text'] + ' Atticus setup is open to fix it.' if not c['ok'] else 'Devin stopped before answering. Please try again.'
+        if not c['ok']:
+            reply = c['text'] + ' Atticus setup is open to fix it.'
+        else:
+            say('!', 'setup')
+            reply = f'Devin stopped: {clean(detail) or f"exit code {p.returncode}"}. Atticus setup is open; choose Set Up, then try again.'
     success = bool(reply and not p.returncode and not timed_out)
     if not deleted:
         warning = 'Atticus could not delete Devin’s saved session. Remove it in Devin before continuing.'
@@ -5268,15 +5371,14 @@ def run_devin(task, shots=(), request=None):
     if p.stdout:
         p.stdout.close()
     errors.close()
-    return reply or 'No answer came back. Please try again.', 0, steps
+    return reply or 'Devin returned an empty answer. Please try again.', 0, steps
 
 
 def run_pi(task, shots=(), request=None):
     """One confirmed request through Pi's selected provider/model; an explicit extension sends every tool through Atticus's gate."""
-    run.cmds = run.ran = run.observed = []
+    run.cmds = run.ran = []
     run.error = ''
     run.ok = False
-    run.modes = set()
     pi = shutil.which('pi')
     if not pi:
         say('!', 'setup')
@@ -5286,7 +5388,6 @@ def run_pi(task, shots=(), request=None):
     ask = tempfile.mkdtemp(prefix='atticus-ask-')
     atexit.register(shutil.rmtree, ask, True)
     save_request(ask, main_ask(task, request)[0])
-    inherit_guide(ask)
     extension = os.path.join(ask, 'atticus-gate.ts')
     with open(extension, 'w') as f:
         f.write(PI_GATE)
@@ -5320,12 +5421,10 @@ def run_pi(task, shots=(), request=None):
                 failed = bool(event.get('isError'))
             else:
                 message = event.get('message')
-                if event.get('type') not in ('message_update', 'message_end') or not isinstance(message, dict) or message.get('role') != 'assistant': continue
+                if event.get('type') != 'message_end' or not isinstance(message, dict) or message.get('role') != 'assistant': continue
                 content = message.get('content', [])
-                text = content if isinstance(content, str) else ''.join(block.get('text', '') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)) if isinstance(content, list) else ''
-                run.modes |= declare(text, ask, os.environ.get('ATTICUS_ASK'))   # as it streams, before its tool call runs; a note before a tool may hold it
-                if event.get('type') != 'message_end': continue
-                if isinstance(content, (str, list)): reply = without_handoff_line(text)
+                if isinstance(content, str): reply = without_handoff_line(content)
+                elif isinstance(content, list): reply = without_handoff_line(''.join(block.get('text', '') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)))
                 usage = message.get('usage') if isinstance(message.get('usage'), dict) else {}
                 costs = usage.get('cost') if isinstance(usage.get('cost'), dict) else {}
                 if type(costs.get('total')) in (int, float): cost += costs['total']
@@ -5337,7 +5436,7 @@ def run_pi(task, shots=(), request=None):
     rows = read_rows(os.path.join(ask, 'pi-tools.jsonl'))
     steps = [row.get('step', '') for row in rows if row.get('step')]
     cmds = [row['input']['command'] for row in rows if row.get('tool') == 'exec' and row.get('input', {}).get('command')]
-    run.ran, run.observed = cmds, shown_receipts(ask)
+    run.ran = cmds
     run.cmds = [] if failed or p.returncode or timed_out[0] or not reply else cmds
     run.ok = bool(reply and not failed and not p.returncode and not timed_out[0])
     if timed_out[0]:
@@ -5345,14 +5444,18 @@ def run_pi(task, shots=(), request=None):
     elif p.returncode:
         errors.seek(0); detail = errors.read(500).strip()
         run.error = clean(detail)
-        reply = ('Pi needs a provider and model. Open Pi and run /login.' if re.search(r'auth|credential|model|provider|login', detail, re.I)
-                 else 'Pi stopped before answering. Please try again.')
+        if re.search(r'auth|credential|model|provider|login', detail, re.I):
+            say('!', 'setup')
+            reply = 'Pi needs a provider and model. Atticus setup is open to fix it.'
+        else:
+            say('!', 'setup')
+            reply = f'Pi stopped: {clean(detail) or f"exit code {p.returncode}"}. Atticus setup is open; choose Set Up, then try again.'
     elif not reply and failed:
         reply = 'The last Pi tool failed, so I could not verify that the request was completed. Please try again.'
     if p.stdout:
         p.stdout.close()
     errors.close()
-    return reply or 'No answer came back. Please try again.', cost, steps
+    return reply or 'Pi returned an empty answer. Please try again.', cost, steps
 
 
 def selection_context():
@@ -5741,19 +5844,6 @@ def draw(data):
         value['target'] = {k: anchor[k] for k in ('pid','windowID','windowFrame')}
     else:
         value['target'] = snapshot.get('target') if any('screen' in s for s in data['steps']) else draw_target()
-    try:
-        with open(guide_file(ask)) as f: guide = live_guide(json.load(f))
-    except (OSError, ValueError): guide = None
-    pid = value['target'].get('pid') if isinstance(value['target'], dict) else None
-    if guide and pid != guide['pid']: raise ValueError('The guide’s app is no longer the one on screen, so the guide stopped. Say so in one line')
-    goal = guide['goal'] if guide else ''
-    if not guide:
-        try:
-            with open(request_file(ask)) as f: goal = f.read()[:2000]
-        except OSError: pass
-    done = (guide['done'] if guide else []) + [s.get('say') or s.get('target') or 'a step' for s in value['steps']]
-    if goal and type(pid) is int and not value['teaching'] and value['steps'][-1].get('wait') and len(done) < GUIDE_STEPS:   # its click asks for the next step
-        value['guide'] = {'goal': goal, 'done': done, 'pid': pid}
     value['state'] = hands_state()
     receipt = os.path.join(ask, 'draw-result-' + uuid.uuid4().hex)
     value['receipt'] = receipt
@@ -5763,115 +5853,16 @@ def draw(data):
             if os.path.exists(receipt):
                 with open(receipt) as f: result = f.read()
                 if result != 'shown': raise ValueError(result)
-                shown = f'Guide shown (step 1 of {len(value["steps"])}). Leave it running.'
-                Path(ask, 'guide-shown').write_text(shown)
-                return shown
+                return f'Guide shown (step 1 of {len(value["steps"])}). Leave it running.'
             time.sleep(.1)
         raise ValueError('Drawing overlay did not respond')
     finally:
         if os.path.exists(receipt): os.unlink(receipt)
 
 
-GUIDE_STEPS = 24   # a live guide's steps in all, so its continuations end
-
-
-def guide_file(ask):
-    return request_file(ask) + '.guide'   # beside the user's words: no sandboxed command can remove it
-
-
-def show_file(ask):
-    return request_file(ask) + '.show'   # the ask said [show]: from then on it is a guide the gate holds to guide_tool
-
-
-def guard_show(ask):
-    path = show_file(ask)
-    if os.path.exists(path): return
-    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-    private_json(path, True)
-    atexit.register(lambda: os.path.exists(path) and os.remove(path))
-
-
-def declare(text, *asks):
-    """The leading MODE tags of a message's text; [show] holds each of these ask folders to guide_tool from now on."""
-    found = lead_modes(text)
-    if 'show' in found:
-        for ask in filter(None, asks): guard_show(ask)
-    return found
-
-
-def inherit_guide(ask):
-    """Devin and Pi run each turn in a fresh ask folder: it gets this ask's live guide and [show], for its gate and draw()."""
-    parent = os.environ.get('ATTICUS_ASK')
-    if not parent or parent == ask: return
-    try: guide = json.loads(Path(guide_file(parent)).read_text())
-    except (OSError, ValueError): guide = None
-    if guide is not None:
-        path = guide_file(ask); private_json(path, guide)
-        atexit.register(lambda: os.path.exists(path) and os.remove(path))
-    if os.path.exists(show_file(parent)): guard_show(ask)
-
-
-def live_guide(value):
-    """A live guide's continuation from Atticus.app (its goal, the steps the user did, the app it runs in); anything else is None."""
-    if not isinstance(value, dict) or set(value) != {'goal', 'done', 'pid'}: return None
-    goal, done, pid = value['goal'], value['done'], value['pid']
-    if not isinstance(goal, str) or not 1 <= len(goal) <= 2000 or type(pid) is not int or pid <= 0: return None
-    if not isinstance(done, list) or not 1 <= len(done) <= GUIDE_STEPS or not all(isinstance(s, str) and len(s) <= 1000 for s in done): return None
-    return {'goal': goal, 'done': done, 'pid': pid}
-
-
-def guide_context(guide):
-    return (f'Live guide (data): the user is doing {json.dumps(guide["goal"], ensure_ascii=False)} and just did {json.dumps(guide["done"][-1], ensure_ascii=False)}'
-            f' (earlier: {json.dumps(guide["done"][:-1], ensure_ascii=False)}). The screen changed: --look again. Goal done there: [complete] + one short line. '
-            'Else --draw only the next step visible now, as the help says. Only look, read and draw; the user clicks.\n')
-
-
-def guide_tool(tool, cmd):
-    """A guide only looks, reads, asks a choice and draws: the user does every click (no hands action, no other shell)."""
-    if tool in ('Read', 'read'): return True
-    if tool not in ('Bash', 'exec') or '$(' in cmd or '`' in cmd: return False
-    try: tokens = shell_tokens(cmd)
-    except ValueError: return False
-    parts = [[]]
-    for t in tokens:
-        if t in (';', '&&'): parts.append([])
-        elif set(t) <= set('();<>|&\n'): return False   # redirects, pipes, subshells, background jobs
-        else: parts[-1].append(t)
-    parts = [p for p in parts if p]
-    return bool(parts) and all(p[0] == ME and (p[1:2] in (['--look'], ['--window'], ['--draw'], ['--pick']) or p[1:3] == ['--hands', 'see'])
-                               or p[0] == 'sleep' and len(p) == 2 for p in parts)
-
-
-def guide_shown(observations):
-    """draw()'s own receipt in this run's tool results: the model saying it showed something is not one."""
-    return any(not row.get('error') and str(row.get('result', '')).startswith('Guide shown (') for row in observations)
-
-
-def reply_modes(reply):
-    modes = getattr(run, 'modes', None)
-    return (modes if isinstance(modes, set) else set()) | lead_modes(reply)
-
-
-def undelivered(reply, guide=None, visual=False):
-    """How a main reply broke DRAWING's contract: 'show' = steps for the screen came back as text, 'mode' = no [show]/[text] decision.
-    None = delivered: draw()'s receipt, a live guide's [complete] after --look, [text], a draft, or a real action."""
-    modes, ran, observed = reply_modes(reply), getattr(run, 'ran', None), getattr(run, 'observed', None)
-    ran = [c for c in ran if isinstance(c, str)] if isinstance(ran, list) else []
-    if guide_shown(observed if isinstance(observed, list) else []): return None
-    if guide: return None if 'complete' in modes and any(' --look' in c for c in ran) else 'show'
-    if visual or 'show' in modes: return 'show'
-    if 'text' in modes or re.match(r'\[(?:replace|draft|insert)\]', untagged(reply).strip()): return None
-    return None if any(not c.startswith('<') and not agent_read_command(c) and not guide_tool('Bash', c) for c in ran) else 'mode'
-
-
 def guide_reply(observations, reply):
-    return 'Done. Steps are on screen.' if guide_shown(observations) else reply
-
-
-def shown_receipts(ask):
-    """Devin and Pi report no tool results: draw() leaves its receipt in their ask folder instead."""
-    try: return [{'action': DRAW, 'error': False, 'result': Path(ask, 'guide-shown').read_text()}]
-    except OSError: return []
+    return 'Done. Steps are on screen.' if any(
+        not row.get('error') and str(row.get('result', '')).startswith('Guide shown (') for row in observations) else reply
 
 
 def point(reply):
@@ -6287,11 +6278,78 @@ DICTATE_FILLER = re.compile(r'(?i)\b(?:um+|uh+|ah+|eh+|erm+|euh+)\b\s*,?\s*')
 DICTATE_DISCOURSE = re.compile(r'(?i)(?:,\s*(?:like|you know)\s*)+,\s*')
 
 
-def dictate_spellings(text):
-    # Keep 1.3.1's free-form saved spelling rules alongside the explicit dictionary.
+def dictate_words():
     words = pref('dictateWords', [])
-    words = [w for w in words if isinstance(w, str) and 0 < len(w) <= 80 and not any(ord(c) < 32 for c in w)] if isinstance(words, list) else []
-    return ('Dictionary spellings (data): ' + json.dumps(words[:500], ensure_ascii=False) + '\n' if words else '') + relevant_rules(text)[:1000]
+    return [w for w in words if isinstance(w, str) and 0 < len(w) <= 80 and not any(ord(c) < 32 for c in w)][:500] if isinstance(words, list) else []
+
+
+DICTATE_MERGE = str.maketrans('dbfvngcqzx', 'tpppmkkkss')
+
+
+@lru_cache(maxsize=4096)
+def dictate_sound(text):
+    """How a word sounds, roughly (same rule as DictationData.sound): "Saarth", "Sarda", "sort" → "srt"."""
+    s = ''.join(c for c in unicodedata.normalize('NFKD', text.lower()) if c.isalpha())
+    for a, b in (('ph', 'f'), ('th', 't'), ('ck', 'k'), ('sh', 's'), ('qu', 'k')):
+        s = s.replace(a, b)
+    out = ''
+    for i, c in enumerate(s):
+        k = ('a' if i == 0 else '') if c in 'aeiouyhw' else c.translate(DICTATE_MERGE)
+        if k and not out.endswith(k):
+            out += k
+    return out
+
+
+def dictate_distance(a, b):
+    row = list(range(len(b) + 1))
+    for i, c in enumerate(a, 1):
+        nxt = [i]
+        for j, d in enumerate(b, 1):
+            nxt.append(min(nxt[j - 1] + 1, row[j] + 1, row[j - 1] + (c != d)))
+        row = nxt
+    return row[-1]
+
+
+def dictate_sounds(a, b):
+    x, y = dictate_sound(a), dictate_sound(b)
+    return len(x) >= 2 and x[:1] == y[:1] and (x == y or min(len(x), len(y)) >= 3 and abs(len(x) - len(y)) <= 1 and dictate_distance(x, y) <= 1)
+
+
+def dictate_hints(text, words):
+    """Heard words that may be a dictionary word: learned heard forms, else sound-alikes. The model decides from context."""
+    fixes = pref('dictateFixes', {})
+    fixes = {k: v for k, v in fixes.items() if isinstance(k, str) and v in words} if isinstance(fixes, dict) else {}
+    heard = DICTATE_WORD.findall(text)
+    spans = heard + [f'{a} {b}' for a, b in zip(heard, heard[1:])] + [f'{a} {b} {c}' for a, b, c in zip(heard, heard[1:], heard[2:])]
+    present = {s.casefold() for s in spans}
+    sounds = {w: dictate_sound(w) for w in words}
+    by_sound = {}   # first sound → words not already said right
+    for w in words:
+        if w.casefold() not in present and ' ' not in w:
+            by_sound.setdefault(sounds[w][:1], []).append(w)
+    hints, matches = {}, {}
+    for span in spans:
+        if len(hints) >= 20:
+            break
+        sound = dictate_sound(span)
+        near = (lambda w: sound == sounds[w]) if ' ' in span else (lambda w: len(sound) >= 2 and sound[:1] == sounds[w][:1] and
+                (sound == sounds[w] or min(len(sound), len(sounds[w])) >= 3 and abs(len(sound) - len(sounds[w])) <= 1 and
+                 dictate_distance(sound, sounds[w]) <= 1))   # several words: only an exact sound or a learned fix
+        key = sound, ' ' in span
+        if key not in matches: matches[key] = next((w for w in by_sound.get(sound[:1], []) if near(w)), None)
+        word = fixes.get(span.casefold()) or matches[key]
+        if word and word.casefold() not in present:
+            hints.setdefault(span, word)
+    return hints
+
+
+def dictate_spellings(text, hints=None):
+    # Keep 1.3.1's free-form saved spelling rules alongside the explicit dictionary.
+    words = dictate_words()
+    hints = dictate_hints(text, words) if hints is None and words else hints or {}
+    return (('Dictionary spellings (data): ' + json.dumps(words, ensure_ascii=False) + '\n' if words else '') +
+            ('May be a misheard dictionary word (data; heard → word; use it only where it fits the sentence, as a name or term would): ' +
+             json.dumps(hints, ensure_ascii=False) + '\n' if hints else '') + relevant_rules(text)[:1000])
 
 
 def dictate_request(text, corrections=None):
@@ -6321,7 +6379,7 @@ def dictate_chunks(text, limit=6000):
     return chunks
 
 
-def dictate_result(text, output, corrections=''):
+def dictate_result(text, output, hints=None):
     match = re.fullmatch(r'\s*<cleaned>(.*)</cleaned>\s*', output, re.DOTALL)
     if not match:
         return dictate_fallback(text)
@@ -6332,7 +6390,7 @@ def dictate_result(text, output, corrections=''):
     comparable = re.sub(r'(?m)^\s*(?:[-*•]|\d+[.)])\s+', '', cleaned)
     output_words = DICTATE_WORD.findall(comparable.casefold().replace('’', "'"))
     heard = set(source_words) | {a + b for a, b in zip(source_words, source_words[1:])}   # "for get" → "forget"
-    correction_words = set(DICTATE_WORD.findall(corrections.casefold()))
+    dictionary = set(DICTATE_WORD.findall(' '.join((hints or {}).values()).casefold()))   # only this chunk's heard → dictionary hints
     consonants = lambda w: re.sub(r'[aeiouy]', '', w)
     negations = lambda words, no=True: sum(w in ('not', 'never', 'cannot') or w.endswith("n't") or no and w == 'no' for w in words)
     cut = len(output_words) * 2 <= len(source_words)   # dropping half is a scratch-that or repair: it reuses heard words as they were
@@ -6349,8 +6407,9 @@ def dictate_result(text, output, corrections=''):
         stem, _, tail = word.partition("'")
         if word in heard or tail not in ('', 't') and stem in heard: return True   # "it'" → "it'll"
         if re.fullmatch(r'\d+(?:\.\d+)?', word): return True   # spoken numbers in any language become digits: "cinco dólares" → "$5"
+        if word in dictionary: return True   # "start to" → "Saarth": a name the recognizer never spells
         if cut: return False
-        threshold = .6 if word in correction_words else .65
+        threshold = .65
         # Misheard words sound alike: "get bad" → "GitHub" keeps its consonants.
         return len(word) >= 3 and any(difflib.SequenceMatcher(None, word, old).ratio() >= threshold or len(consonants(word)) >= 3 and
                                       difflib.SequenceMatcher(None, consonants(word), consonants(old)).ratio() >= .75 for old in heard)
@@ -6379,17 +6438,18 @@ def dictate_cleanup(text):
         return ''.join(dictate_fallback(chunk) + separator for chunk, separator in chunks).rstrip()
     cleaned = []
     for chunk, separator in chunks:
-        corrections = dictate_spellings(chunk)
+        hints = dictate_hints(chunk, dictate_words())
+        corrections = dictate_spellings(chunk, hints)
         try:
             output, _ = meeting_call(DICTATE_SYSTEM, dictate_request(chunk, corrections),
                                      model='haiku', label='Dictation cleanup')
-            cleaned.append((dictate_result(chunk, output, corrections), separator))
+            cleaned.append((dictate_result(chunk, output, hints), separator))
         except Exception:
             cleaned.append((dictate_fallback(chunk), separator))
     return ''.join(value + separator for value, separator in cleaned).rstrip()
 
 
-def dictate_warmed(p, text, corrections):
+def dictate_warmed(p, text, corrections, hints=None):
     p.stdin.write(meeting_payload(dictate_request(text, corrections)))
     p.stdin.close()
     full = ''
@@ -6408,12 +6468,12 @@ def dictate_warmed(p, text, corrections):
             if isinstance(text_delta, str):
                 full += text_delta
             if '</cleaned>' in full:
-                return dictate_result(text, full, corrections)
+                return dictate_result(text, full, hints)
         if row.get('type') == 'result':
             if row.get('is_error'):
                 raise RuntimeError('Could not clean up')
             if isinstance(row.get('result'), str):
-                return dictate_result(text, row['result'], corrections)
+                return dictate_result(text, row['result'], hints)
     raise RuntimeError('Could not clean up')
 
 
@@ -6427,7 +6487,10 @@ def dictate_cleanup_wait():
         return print(dictate_fallback(sys.stdin.read().rpartition('\0')[2]), flush=True)
     atexit.register(stop_claude, p)
     signal.signal(signal.SIGTERM, lambda *_: (stop_claude(p), sys.exit(0)))
-    deadline = None
+    deadline, expired = None, threading.Event()
+    def expire():
+        expired.set()
+        stop_claude(p)
     try:
         before, _, text = sys.stdin.read().rpartition('\0')
         chunks = dictate_chunks(text)
@@ -6435,14 +6498,24 @@ def dictate_cleanup_wait():
             return print(''.join(dictate_fallback(chunk) + separator for chunk, separator in chunks).rstrip(), flush=True)
         first, first_separator = chunks[0]
         before = before[-600:].strip()
-        corrections = dictate_spellings(first) + ('Text before the cursor: ' + json.dumps(before, ensure_ascii=False) + '\n' if before else '')
-        deadline = threading.Timer(45, stop_claude, args=(p,))
+        deadline = threading.Timer(45, expire)
         deadline.daemon = True
         deadline.start()
+        hints = dictate_hints(first, dictate_words())
+        if expired.is_set():
+            return print(''.join(dictate_fallback(chunk) + separator for chunk, separator in chunks).rstrip(), flush=True)
+        corrections = dictate_spellings(first, hints) + ('Text before the cursor: ' + json.dumps(before, ensure_ascii=False) + '\n' if before else '')
         try:
-            cleaned = [(dictate_warmed(p, first, corrections), first_separator)]
+            cleaned = [(dictate_warmed(p, first, corrections, hints), first_separator)]
         except Exception:
             cleaned = [(dictate_fallback(first), first_separator)]
+        if len(chunks) == 1:   # Atticus inserts at end of output: close it before stopping Claude
+            print(cleaned[0][0], flush=True)
+            try:
+                os.close(sys.stdout.fileno())
+            except OSError:   # not a real file (tests)
+                pass
+            return
     finally:
         if deadline:
             deadline.cancel()
@@ -6904,7 +6977,11 @@ def main():
     if args[:1] == ['--agent-show'] and len(args) == 2:
         return print(agent_show(args[1]))
     if args[:1] == ['--place']:   # several moves joined with +: all at once
-        return print(place_many(args[1:]))
+        out = place_many(args[1:])
+        print(out)
+        if place_failed(out):
+            raise SystemExit(1)
+        return
     if args == ['--look']:
         return print('\n'.join(f'{label}: {path}' for path, label in look(cleanup=False)) or 'no screenshot: ' + need('screen', 'To see your screen for this task.'))
     if args[:1] == ['--front'] and len(args) > 1:   # "show me where" on an app or tab the user isn't looking at
@@ -7107,14 +7184,13 @@ def main():
         reading_started = True
     displays = threading.Thread(target=lambda: displays.screens.extend(screens()), daemon=True)   # key-down too: off the path to the model
     displays.screens = []; displays.start()
-    remaining, done, marks, drawn, card, guide = None, [], None, None, '', None
+    remaining, done, marks, drawn, card = None, [], None, None, ''
     if args == ['--wait']:   # "<app the user is in now>\t<request>", even if Claude could not start
         line = sys.stdin.readline().strip()
         if line.startswith('{'):
             request = json.loads(line)
             front_now, task = request['front'], request['task']
             remaining, done, marks, drawn = request.get('remaining'), request.get('done', []), request.get('point'), request.get('drawing')
-            guide = live_guide(request.get('guide'))
             card = str(request.get('agentCard') or '')
         else: front_now, _, task = line.rpartition('\t')
         os.environ['ATTICUS_FRONT'] = front_now or os.environ.get('ATTICUS_FRONT', '')
@@ -7147,9 +7223,6 @@ def main():
         return say('✓', f'Atticus is $5, once. Buy a key on the page that just opened, then type: key <your key>')
     os.environ['ATTICUS_RELAY_OWNER'] = str(os.getpid())
     save_request(os.environ['ATTICUS_ASK'], task)
-    if guide:   # before the model gets tools: the gate lets this ask only look, read and draw
-        guide_path = guide_file(os.environ['ATTICUS_ASK']); private_json(guide_path, guide)
-        atexit.register(lambda: os.path.exists(guide_path) and os.remove(guide_path))
     if warm: warm.relaying = True
     thread = threading.Thread(target=relay, args=(warm, os.environ['ATTICUS_ASK']), daemon=True)
     if warm: warm.relay_thread = thread
@@ -7161,7 +7234,7 @@ def main():
     allow_focus(task)
     if pref('instant', True) and hands_command(plain(task)):
         if not wait_commit(): return
-    quick = not marked and not guide and (not commit or os.path.exists(commit)) and pref('instant', True) and fast(remaining if remaining is not None else task)
+    quick = not marked and (not commit or os.path.exists(commit)) and pref('instant', True) and fast(remaining if remaining is not None else task)
     if quick:
         if reading_started: reading.join()   # the summary cannot recreate its scratch file after a fast exit
         if snap.started: atexit.register(snap.join, .3)
@@ -7173,7 +7246,7 @@ def main():
         return say('!' if quick.startswith('The user said no.') else '✓', quick)
     failed_replay = None if quick or not isinstance(getattr(fast, 'failed', None), dict) else fast.failed
     if failed_replay: say('▸', 'The shortcut did not work. Redoing it')
-    if done: task += '\nAlready completed: ' + ' '.join(done) + '\nRemaining words: ' + (remaining or '') + '\nDo only the remaining goal; check before repeating completed actions.'
+    if done: task += INTERNAL_TASK_MARKERS[0] + ' ' + ' '.join(done) + INTERNAL_TASK_MARKERS[1] + ' ' + (remaining or '') + '\nDo only the remaining goal; check before repeating completed actions.'
     if reading_started: atexit.register(reading.join, .3)
     app = os.environ.get('ATTICUS_FRONT') or front()[0]   # before anything else takes focus, so "this window" still means the user's window
     m = re.fullmatch(r'(.*), (-?\d+), (-?\d+)', osa(f'tell application "System Events" to tell process "{app}" to get {{name, position}} of front window'), re.S) if app else None
@@ -7224,14 +7297,12 @@ def main():
     prompt = (f'Context: {ctx}\n' + agent_context(task, card, turns) + (f'Earlier:\n{earlier}' if earlier else '') +
               (f'Previous learned shortcut (data):\n{json.dumps(previous_shortcut, ensure_ascii=False)}\n' if previous_shortcut else '') +
               ('It just ran for the current request and failed (see its output): redo the request.\n' if failed_replay else '') +
-              (f'Memory:\n{mem}\n' if mem else '') + help_ + (f'Saved workflow (historical guidance):\n{procedure}\n' if procedure else '') + selected + drawing_context(drawn) + (guide_context(guide) if guide else '') + marked)
+              (f'Memory:\n{mem}\n' if mem else '') + help_ + (f'Saved workflow (historical guidance):\n{procedure}\n' if procedure else '') + selected + drawing_context(drawn) + marked)
     if task != confirmed_task: prompt += '\nCompleted work and remaining goal (data):\n' + task
-    main_only = main_delivery_required() or bool(marked or drawn or guide)
+    main_only = main_delivery_required() or bool(marked or drawn)
     model = main_model()
     offer_model = routing_mode() == 'balanced' and model == 'haiku' and client() == 'claude' and not server()
     reply, cost, steps = run(prompt + MODEL_OFFER if offer_model else prompt, warm, images or (), offer_model, request=confirmed_task, main_only=main_only)
-    visual = 'show' in reply_modes(reply)   # durable for this ask: its continuation, retry and recovery stay here
-    main_only = main_only or visual
     attempt_usd, escalated, escalate_why = ([] if cost is None else [cost]), False, None
     if TURN: TURN.update(model=model, attempt_usd=attempt_usd)
     def handed_off():
@@ -7278,32 +7349,11 @@ def main():
             run.ran = previous + run.ran
             reply, cost, steps = again or reply, None if cost is None or more is None else cost + more, steps + extra
             if handed_off(): return
-    visual = visual or 'show' in reply_modes(reply)
-    miss = run.ok is True and pref('draw', True) and undelivered(reply, guide, visual)
-    if miss:   # one more turn; the marker makes the gate allow only guide_tool
-        if miss == 'show': say('▸', 'Showing it on screen')
-        guard_show(os.environ['ATTICUS_ASK'])
-        before, told = run.ran[:], reply
-        rule = ('\nYour text answer was not shown; the user does these steps on screen now. --look && --draw --help, Read, then draw the step visible now. If drawing fails, say why in one line.'
-                + (' If --look shows the goal done: [complete] + one short line.' if guide else '') if miss == 'show' else
-                '\nYour answer (data) began with neither [show] nor [text]: ' + json.dumps(untagged(told).strip()[:1000], ensure_ascii=False) +
-                '\nIf the user does these steps on screen now: [show], --look && --draw --help, Read, then draw the step visible now. Else reply [text] alone and that answer stands.')
-        again, more, extra = run(prompt + rule + continuation_context(before, getattr(run, 'observed', [])), start_ai(model), images or (), request=confirmed_task, main_only=True)
-        if more is not None: attempt_usd.append(more)
-        if TURN: TURN['attempt_usd'] = attempt_usd
-        run.ran = previous = before + run.ran   # recovery commands alone cannot replay the ask
-        cost, steps = None if cost is None or more is None else cost + more, steps + extra
-        if not undelivered(again, guide, miss == 'show'): reply = untagged(again).strip() or told
-        elif miss == 'show' or 'show' in reply_modes(again):
-            run.ok = True   # the written steps still answer; the reason says why they are not on screen
-            reason = untagged(run.error or again or '').strip()[:200]
-            reply = f'{told}\n\nCouldn’t show this on screen' + (f': {reason}' if reason else '.')
-        else:   # undecided twice: it ends here, never as an answer that looks finished
-            run.ok, run.error = False, 'The reply never said whether to show it on screen or write it.'
-            reply = 'I couldn’t tell whether to show this on screen or write it out. Please ask again and say which.'
     if previous: run.cmds = []   # continuation commands alone cannot replay the whole goal
-    failed_shortcut = previous_shortcut if previous_shortcut and '[unlearn]' in reply else None
-    reply = untagged(reply.replace('[unlearn]', '').replace('[sonnet]', '')).strip()
+    failed_shortcut = failed_replay or (previous_shortcut if previous_shortcut and '[unlearn]' in reply else None)   # a replay that failed its own check goes, tag or not
+    retry_key = failed_shortcut['key'] if failed_shortcut and failed_replay and failed_shortcut.get('failed_at') == 0 else ''
+    name = shortcut_name(task, reply)
+    reply = re.sub(TRIGGER, '', reply).replace('[unlearn]', '').replace('[sonnet]', '').strip()
     if failed_shortcut:
         unlearn(failed_shortcut['key'])
     replacement, reply = replacement_reply(reply, bool(selected))
@@ -7311,32 +7361,33 @@ def main():
         reply = point(re.sub(r'\s*\n\s*Sources?:.*\Z', '', reply, flags=re.S | re.I))
     taught = None if replacement else re.search(r'\[tip ([^\]]+)\]', reply)
     reply = (reply[:taught.start()] + reply[taught.end():]).strip() if taught else reply
-    fix = not guide and turns and re.match(r"(no|nope|not that|wrong|that's wrong|i meant|i said)\b", plain(task))
+    fix = turns and re.match(r"(no|nope|not that|wrong|that's wrong|i meant|i said)\b", plain(task))
     if fix and not failed_shortcut:
         unlearn(turns[-1]['q'])   # a learned shortcut that did the wrong thing goes
     if procedure and not run.ok:
         workflows(task, None)
     workflow = False
     if not replacement:
-        reply, workflow = remember_workflow(task, reply, run.ok and not failed_shortcut and not guide, run.cmds)
-    named, shortcut, learned_key = named_shortcut(task.strip()), '', ''
-    named_commands = [c for c in (shortcut_commands(task, run.cmds) or []) if not c.startswith(SHORTCUT)] if named else []
-    if named and run.ok and learn(named[1] or named[2], named_commands, reply) is not None:
-        sk = skills(); sk[plain(named[1] or named[2])]['mine'] = True; save_skills(sk); workflow = True; shortcut = (named[1] or named[2]).strip(); learned_key = plain(shortcut)
-    if pref('learn', True) and not failed_shortcut and not guide and task == confirmed_task:   # after a live action, run.cmds did only the rest of the ask
-        learned = learn(task, run.cmds, reply)
+        reply, workflow = remember_workflow(task, reply, run.ok and not failed_shortcut, run.cmds)
+    shortcut, learned_key, learned_say = '', '', ''
+    named_commands = [c for c in (shortcut_commands(task, run.cmds) or []) if not c.startswith(SHORTCUT)] if name else []
+    if name and run.ok and learn(name, named_commands, reply, confirmed_task) is not None:
+        sk = skills(); sk[plain(name)]['mine'] = True; save_skills(sk); workflow = True; shortcut = name; learned_key = plain(shortcut)
+    if not name and pref('learn', True) and run.ok and (not failed_shortcut or retry_key) and task == confirmed_task:   # after a live action, run.cmds did only the rest of the ask; a teaching sentence is not itself a shortcut
+        learned_task = retry_key or (turns[-1]['q'] if fix else task)
+        learned = learn(learned_task, run.cmds, reply)
         workflow = learned or workflow
-        if learned is True: learned_key = plain(task)
-        if fix:
-            learn(turns[-1]['q'], run.cmds, reply)   # and the fix becomes the shortcut for the original words
+        if learned is True: learned_key, learned_say = plain(learned_task), learned_task
     if (fix or failed_shortcut and not failed_replay) and turns: report(turns[-1]['q'], '', (), 0, 'the user said it was wrong')   # the answer is the user's own content (screen, mail, files), not why it failed
-    if not run.ok or FAILED.search(reply): report(task, reply, run.ran, time.time() - t, 'error' if not run.ok else 'could not do it')
+    failed = failed_action_reply(reply, run.work)
+    final_ran = list(failed_replay.get('output', ())) + run.ran if failed_replay else run.ran
+    if not run.ok or failed: report(task, reply, final_ran, time.time() - t, 'error' if not run.ok else 'could not do it')
     learned_entry = skills().get(learned_key) if learned_key else None
     learned_turn = {'key': learned_key, 'commands': learned_entry['cmds'],
                     'output': [f'{o.get("action", "")} => {str(o.get("result", ""))[:400]}' for o in run.observed] or [reply[:400]]} if learned_entry else None
     remember_turn(task, reply, learned_turn)
     if not run.ok: end_turn('failed')
-    log_turn(TURN.get('task', task), reply, t, cost, steps, run.ran, len(images or ()),
+    log_turn(TURN.get('task', task), reply, t, cost, steps, final_ran, len(images or ()),
              model=model, escalated=escalated, escalate_why=escalate_why, attempt_usd=attempt_usd)
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
     restore_focus(app, task, run.ran)
@@ -7347,10 +7398,10 @@ def main():
     if receipt and os.environ.get('ATTICUS_UI') == '1':
         print('✎ ' + json.dumps(receipt, ensure_ascii=False), flush=True)
     # "When I say focus mode, …" saved: a green Learned pill
-    said = shortcut or (task.strip() if learned_key else '')   # a new shortcut, named or learned from these words
+    said = shortcut or learned_say   # a new shortcut, named or learned from these words
     tip(reply, f'Learned: Say “{said}” any time.' if said else 'Learned: Procedure saved for next time.' if workflow else taught[1].strip() if taught else '')
     asked = os.path.join(DIR, 'improve-asked')   # people who updated never saw setup's question: ask once a day after a task that worked, until they answer
-    if run.ok and not FAILED.search(reply) and POSTHOG_KEY and not pref('improveAsked', False) and os.environ.get('ATTICUS_UI') == '1' \
+    if run.ok and not failed and POSTHOG_KEY and not pref('improveAsked', False) and os.environ.get('ATTICUS_UI') == '1' \
             and not (os.path.exists(asked) and Path(asked).read_text() == time.strftime('%Y-%m-%d')):
         Path(asked).write_text(time.strftime('%Y-%m-%d')); say('!', 'improve')
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification

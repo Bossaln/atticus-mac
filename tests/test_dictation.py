@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 from unittest.mock import patch
 
@@ -54,6 +55,14 @@ class DictationCleanupTests(unittest.TestCase):
         with patch.object(atticus, 'relevant_rules', return_value='Spell my name Saarth.'), \
              patch.object(atticus, 'meeting_call', return_value=('<cleaned>My name is Saarth.</cleaned>', {})):
             self.assertEqual(atticus.dictate_cleanup('My name is Sarth.'), 'My name is Saarth.')
+
+    def test_hint_scan_is_bounded_at_the_largest_dictionary(self):
+        import atticus
+        words = ['s' + ''.join(chr(98 + i // 26 % 20) + chr(98 + i % 20) for _ in range(4)) for i in range(500)]
+        text = ' '.join(f'sapphire{i}' for i in range(400))
+        started = time.monotonic()
+        atticus.dictate_hints(text, words)
+        self.assertLess(time.monotonic() - started, .25)
 
     def test_cleanup_rejects_scattered_extracts_but_keeps_one_restart(self):
         import atticus
@@ -109,9 +118,10 @@ class DictationCleanupTests(unittest.TestCase):
              patch('sys.stdin', io.StringIO('Notes from Saarth\0tell sarth hi')), patch('sys.stdout', new_callable=io.StringIO) as out:
             atticus.dictate_cleanup_wait()
         self.assertEqual(out.getvalue(), 'Tell Saarth hi.\n')
-        _, text, corrections = warmed.call_args.args
+        _, text, corrections, hints = warmed.call_args.args
         self.assertEqual(text, 'tell sarth hi')
         self.assertIn('Text before the cursor: "Notes from Saarth"', corrections)
+        self.assertEqual(hints, {})
 
     def test_cleanup_start_failure_still_returns_local_cleanup(self):
         import atticus
@@ -121,6 +131,24 @@ class DictationCleanupTests(unittest.TestCase):
              patch('sys.stdout', new_callable=io.StringIO) as out:
             atticus.dictate_cleanup_wait()
         self.assertEqual(out.getvalue(), 'I need every word.\n')
+
+    def test_warmed_cleanup_deadline_starts_before_hint_work(self):
+        import atticus
+        started = []
+        class Timer:
+            daemon = False
+            def __init__(self, *args, **kwargs): pass
+            def start(self): started.append(True)
+            def cancel(self): pass
+        def hints(*_):
+            self.assertTrue(started)
+            return {}
+        with patch.object(atticus, 'client', return_value='claude'), patch.object(atticus, 'meeting_process'), \
+             patch.object(atticus, 'stop_claude'), patch.object(atticus.threading, 'Timer', Timer), \
+             patch.object(atticus, 'dictate_hints', side_effect=hints), patch.object(atticus, 'dictate_warmed', return_value='Keep every word.'), \
+             patch('sys.stdin', io.StringIO('keep every word')), patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.dictate_cleanup_wait()
+        self.assertEqual(out.getvalue(), 'Keep every word.\n')
 
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS Swift regression')
@@ -147,12 +175,13 @@ print("dictation stitching ok")
         self.assertIn('if dictateCleanup { warmDictationCleanup() }', start)
         method = source[source.index('    func stopDictationCleanup()'):source.index('    func dictationDeliveryFailed(')]
         swift = r'''import Foundation
-var processCalls = 0
+var processCalls = 0, hang = false, workers: [Process] = []
 func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     precondition(args == ["--dictate-cleanup-wait"])
     processCalls += 1
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/sh")
-    p.arguments = ["-c", "tr '\\000' '\\n' | tail -n 1"]   // the transcript after the cursor text's NUL
+    p.arguments = ["-c", hang ? "sleep 30" : "tr '\\000' '\\n' | tail -n 1"]   // the transcript after the cursor text's NUL; or a cleanup that never answers
+    workers.append(p)
     return p
 }
 struct Selection { let text: String }
@@ -178,9 +207,25 @@ precondition(clean.inserted == ["Exact words."] && processCalls == 1, "cleanup d
 let cancelled = Harness(); cancelled.dictateCleanup = true
 cancelled.warmDictationCleanup(); cancelled.finishDictation(); cancelled.dictateID += 1; cancelled.dictateProcess?.terminate(); pump(0.5)
 precondition(cancelled.inserted.isEmpty && processCalls == 2, "cancelled cleanup inserted late output")
+let early = Harness(); early.dictateCleanup = true; early.text = "Ship it by Friday."
+early.warmDictationCleanup(); early.startDictateAhead(); pump(0.3)
+early.text = "ship it, by Friday"; early.finishDictation(); pump(0.3)
+precondition(early.inserted == ["Ship it by Friday."] && processCalls == 4 && early.dictateProcess == nil, "matching words did not reuse the early cleanup or left the spare running")
+let changed = Harness(); changed.dictateCleanup = true; changed.text = "Ship it by Friday"
+changed.warmDictationCleanup(); changed.startDictateAhead()
+changed.text = "Ship it by Friday morning"; changed.finishDictation(); pump(0.5)
+precondition(changed.inserted == ["Ship it by Friday morning"] && processCalls == 6, "changed words used the stale early cleanup")
+hang = true
+let hung = Harness(); hung.dictateCleanup = true; hung.text = "keep these heard words"
+hung.warmDictationCleanup(); hung.finishDictation(); pump(1)
+precondition(hung.inserted.isEmpty, "gave up on a cleanup still inside its time")
+pump(7.5)
+precondition(hung.inserted == ["keep these heard words"] && hung.dictateRun == nil, "a cleanup that never answered held the heard words back")
+pump(0.2)
+precondition(workers.allSatisfy { !$0.isRunning }, "a cleanup worker was left running")
 print("dictation routing ok")
 '''
-        self.assertIn('dictation routing ok', run_swift(self, swift))
+        self.assertIn('dictation routing ok', run_swift(self, swift, timeout=30))   # the hung-cleanup case waits out the 8 s fallback
 
     def test_selection_is_replaced_only_while_original_app_stays_front(self):
         source = (ROOT / 'Atticus.swift').read_text()
@@ -422,10 +467,9 @@ final class Target {
         if deferred { pending = work } else { work() }
     }
 }
-final class DrawingStub { func detach() {} }
 final class Harness {
     var dictateSelection: Target?, busy = false, dictating = true, dictateID = 1, dictateCleanup = false
-    var dictationAppName = "App", lastDictation: String?; let drawing = DrawingStub()
+    var dictationAppName = "App", lastDictation: String?
     func saveDictation(_ value: String, appName: String) -> Bool { if saves { saved.append(value) }; return saves }
     var log: [String] = [], hides: [Double] = [], words: [String] = []
     func cue(_ value: String) {}
@@ -477,7 +521,7 @@ print("dictation states ok")
         swift = r'''import Foundation
 final class Ctx { var duration = 0.0 }
 enum NSAnimationContext { static func runAnimationGroup(_ a: (Ctx) -> Void, completionHandler: (() -> Void)?) { a(Ctx()); completionHandler?() } }
-final class Panel { var faded: (() -> Void)?; var alphaValue = 1.0 { didSet { if alphaValue == 0 { faded?() } } }; func animator() -> Panel { self } }
+final class Panel { var alphaValue = 1.0; func animator() -> Panel { self } }
 final class Flag { var active = false, hasInput = false, holds = false, isRunning = false }
 final class Harness {
     var gen = 1, busy = false, hovering = false, pinned = false, stuck = false, composing = false, pillOn = true, dictating = false
@@ -489,7 +533,7 @@ final class Harness {
 func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
 let pinned = Harness(); pinned.pinned = true; pinned.hide(after: 0); settle()
 precondition(pinned.log == ["pill false"], "a pinned box kept the pill: \(pinned.log)")
-let drawn = Harness(); drawn.drawing.holds = true; drawn.hide(after: 0); settle()
+let drawn = Harness(); drawn.drawing.active = true; drawn.hide(after: 0); settle()
 precondition(drawn.log == ["pill false"], "a drawing kept the pill: \(drawn.log)")
 let plain = Harness(); plain.hide(after: 0); settle()
 precondition(plain.log == ["gone"], "a free pill did not fade: \(plain.log)")
@@ -497,10 +541,6 @@ let hover = Harness(); hover.pinned = true; hover.hovering = true; hover.hide(af
 precondition(hover.log.isEmpty, "a hovered pill changed: \(hover.log)")
 let box = Harness(); box.pillOn = false; box.pinned = true; box.hide(after: 0); settle()
 precondition(box.log.isEmpty, "a pinned box changed: \(box.log)")
-for (name, during) in [("a guide step", { (h: Harness) in h.drawing.holds = true }), ("a drag", { (h: Harness) in h.stuck = true })] {
-    let raced = Harness(); raced.pillOn = false; raced.panel.faded = { during(raced) }; raced.hide(after: 0); settle()
-    precondition(raced.log.isEmpty && raced.panel.alphaValue == 1, "\(name) during the fade still hid the box: \(raced.log)")
-}
 print("pill gives the box back")
 '''
         self.assertIn('pill gives the box back', run_swift(self, swift))
@@ -600,7 +640,9 @@ if (!answer.classList.contains('old')) process.exit(console.error('a real ask no
         pill = source[source.index('    func pill(_ on: Bool)'):source.index('    func allow(_ ok: Bool)')]
         self.assertIn('pillOn = on', pill)
         self.assertNotIn('280', pill)
-        self.assertIn('if dictating { return }', source[source.index('    func heard(_ now: String)'):])
+        heard = source[source.index('    func heard(_ now: String)'):]
+        self.assertIn('if dictating { return }', heard)
+        self.assertNotIn('scheduleDictateAhead', heard)
         insert = source[source.index('    func insertDictation('):source.index('    func typed(')]
         self.assertIn('cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.8)', insert)
 

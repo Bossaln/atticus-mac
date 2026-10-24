@@ -116,7 +116,7 @@ final class NSAnimationContext {
     }
 }
 final class Panel { var alphaValue = 1.0; func animator() -> Panel { self } }
-final class Drawing { func clear() {}; func end() {} }
+final class Drawing { func clear() {} }
 func unpoint() {}
 final class Harness {
     var replacement: String? = "draft", selection: Int? = 7, lastDone = Date()

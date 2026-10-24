@@ -35,13 +35,16 @@ class RepoFixTests(unittest.TestCase):
 
     def test_release_metadata_has_one_version_source(self):
         version = (ROOT / 'VERSION').read_text().strip()
-        self.assertEqual(version, '1.4.0')
+        self.assertEqual(version, '1.5.0')
         major, minor, patch_version = map(int, version.split('.'))
-        self.assertEqual(major * 1_000_000 + minor * 1_000 + patch_version, 1_004_000)
+        self.assertEqual(major * 1_000_000 + minor * 1_000 + patch_version, 1_005_000)
         build = (ROOT / 'build.sh').read_text()
         self.assertIn('VERSION=$(tr -d', build)
         self.assertIn('<string>$BUILD</string>', build)
         self.assertIn('<string>$VERSION</string>', build)
+        self.assertIn('command -v python3', build)
+        self.assertIn('Could not add Atticus to Login Items; opening it directly instead.', build)
+        self.assertIn('open "$APP"', build)
 
     def test_nix_installs_its_packaged_source(self):
         source = (ROOT / 'flake.nix').read_text()

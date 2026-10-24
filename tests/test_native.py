@@ -527,7 +527,7 @@ final class Analyzer { func cancelAndFinishNow() async {} }
 final class SpeechInputs { var finished=false; func finishAll() {finished=true} }
 final class QuietAudio { func end(immediate: Bool = false) {} }
 final class Panel { var isVisible = true; func makeKey() {}; func makeFirstResponder(_ value: Int) {} }
-final class DrawingStub { var active = false, hasInput = false, pending: Int?; var holds: Bool { active || pending != nil }; func clear() { hasInput = false }; func end() { clear() }; func clearInput() { hasInput = false } }
+final class DrawingStub { var active = false, hasInput = false; func clear() { hasInput = false }; func clearInput() { hasInput = false } }
 final class Harness {
     static var keysUp = Date(); func gone() {}; func unwarm() {}
     var drawingReply = false; let drawing = DrawingStub()

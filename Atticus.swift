@@ -87,18 +87,21 @@ enum DictationData {
     // Heard spelling (lowercased) → the user's spelling, swapped in whole words before dictation is inserted.
     static var fixes: [String: String] { Prefs.d["dictateFixes"] as? [String: String] ?? [:] }
     static func known(_ word: String) -> Bool { NSSpellChecker.shared.checkSpelling(of: word, startingAt: 0).location == NSNotFound }
-    // A heard word that is itself a real word ("cash" for "cache") is never swapped: the dictionary only hints it.
+    // Every heard form is kept: cleanup gets it as a hint, and one that is no real word is also swapped here.
     @discardableResult static func fix(_ heard: String, _ word: String) -> Bool {
         let key = heard.lowercased()
-        guard key != word, !known(heard), words.contains(word), fixes.count < 500 else { return false }
+        guard key != word, words.contains(word), fixes.count < 500 else { return false }
         var list = fixes; list[key] = word
         return Prefs.set("dictateFixes", list)
     }
+    // A heard form that is itself real words ("cash" for "cache", "start" for a name) is never swapped blindly: only cleanup, with context, may.
     static func fixed(_ text: String) -> String {
         fixes.reduce(text) { text, fix in
             guard let re = try? NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: fix.key) + "(?![\\p{L}\\p{N}])", options: .caseInsensitive) else { return text }
             let out = NSMutableString(string: text)
-            for m in re.matches(in: text, range: NSRange(location: 0, length: out.length)).reversed() {
+            let matches = re.matches(in: text, range: NSRange(location: 0, length: out.length))
+            if matches.isEmpty || known(fix.key) { return text }
+            for m in matches.reversed() {
                 let found = out.substring(with: m.range), value = fix.value
                 // A sentence-start capital stays when the learned spelling is lowercase.
                 out.replaceCharacters(in: m.range, with: found.first?.isUppercase == true && value.first?.isLowercase == true ? value.prefix(1).uppercased() + value.dropFirst() : value)
@@ -106,26 +109,75 @@ enum DictationData {
             return out as String
         }
     }
-    // Only an isolated word replacement inside the dictated span counts as a spelling correction; an everyday lowercase word is no name to learn.
-    static func correction(_ original: String, _ edited: String) -> (heard: String, word: String)? {
-        let a = original.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let b = edited.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        guard a.count == b.count else { return nil }
-        let changes = zip(a, b).filter { $0 != $1 }
-        guard changes.count == 1, let pair = changes.first else { return nil }
-        let trim = CharacterSet.punctuationCharacters
-        let old = pair.0.trimmingCharacters(in: trim), new = pair.1.trimmingCharacters(in: trim)
-        guard old != new, (2...64).contains(new.count), new.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) || $0 == "'" || $0 == "-" }) else { return nil }
-        // shortcut: conservative character similarity skips major respellings; add these manually in Dictionary.
-        let x = Array(old.lowercased()), y = Array(new.lowercased())
+    static func distance(_ a: String, _ b: String) -> Int {
+        let x = Array(a), y = Array(b)
         var row = Array(0...y.count)
         for (i, c) in x.enumerated() {
             var next = [i + 1]
             for (j, d) in y.enumerated() { next.append(min(next[j] + 1, row[j + 1] + 1, row[j] + (c == d ? 0 : 1))) }
             row = next
         }
-        guard row[y.count] <= max(1, max(x.count, y.count) / 3), !(new == new.lowercased() && known(new)) else { return nil }
+        return row[y.count]
+    }
+    // How a word sounds, roughly: vowels drop and Soundex-like classes merge (t/d, lips b/p/f/v, nasals m/n),
+    // so "Saarth", "Sarda" and "sort" become "srt", and "somebody" sits one sound from "some of you".
+    // Same rule as dictate_sound in atticus.py.
+    static func sound(_ text: String) -> String {
+        var s = String(text.lowercased().folding(options: .diacriticInsensitive, locale: nil).filter { $0.isLetter })
+        for (a, b) in [("ph", "f"), ("th", "t"), ("ck", "k"), ("sh", "s"), ("qu", "k")] { s = s.replacingOccurrences(of: a, with: b) }
+        let merge: [Character: Character] = ["d": "t", "b": "p", "f": "p", "v": "p", "n": "m", "g": "k", "c": "k", "q": "k", "z": "s", "x": "s"]
+        var out = ""
+        for (i, c) in s.enumerated() {
+            let k: Character? = "aeiouyhw".contains(c) ? (i == 0 ? "a" : nil) : merge[c] ?? c
+            if let k, out.last != k { out.append(k) }
+        }
+        return out
+    }
+    static func sounds(_ a: String, _ b: String) -> Bool {
+        let x = sound(a), y = sound(b)
+        return x.count >= 2 && x.first == y.first && (x == y || min(x.count, y.count) >= 3 && distance(x, y) <= 1)
+    }
+    // A fix is one to three dictated words retyped as one word that is spelled or sounds alike ("Sarda", "start to" → "Saarth", "some of you" → "Semva"); a new idea is neither.
+    // An everyday lowercase word is no name to learn.
+    static func correction(_ original: String, _ edited: String) -> (heard: String, word: String)? {
+        var a = original.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        var b = edited.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        while let x = a.first, x == b.first { a.removeFirst(); b.removeFirst() }
+        while let x = a.last, x == b.last { a.removeLast(); b.removeLast() }
+        guard (1...3).contains(a.count), b.count == 1 else { return nil }
+        let trim = CharacterSet.punctuationCharacters
+        let old = a.joined(separator: " ").trimmingCharacters(in: trim), new = b[0].trimmingCharacters(in: trim)
+        guard old != new, (2...64).contains(new.count), new.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) || $0 == "'" || $0 == "-" }) else { return nil }
+        let near = a.count == 1 && distance(old.lowercased(), new.lowercased()) <= max(1, max(old.count, new.count) / 3)   // several heard words must sound like it
+        guard near || sounds(old, new), !(new == new.lowercased() && known(new)) else { return nil }
         return (old, new)
+    }
+    // The user's keys replayed over inserted words where the field can't be read back (terminals, some Electron apps).
+    // key returns false once a key's effect on the text is unknown (Return, a shortcut, leaving the dictated words).
+    struct Replay {
+        var chars: [Character], at: Int
+        init(_ text: String) { chars = Array(text); at = chars.count }
+        var text: String { String(chars) }
+        func wordStart() -> Int { var i = at; while i > 0, chars[i - 1].isWhitespace { i -= 1 }; while i > 0, !chars[i - 1].isWhitespace { i -= 1 }; return i }
+        func wordEnd() -> Int { var i = at; while i < chars.count, chars[i].isWhitespace { i += 1 }; while i < chars.count, !chars[i].isWhitespace { i += 1 }; return i }
+        mutating func key(_ code: Int, _ typed: String, option: Bool, control: Bool, command: Bool) -> Bool {
+            if command { return false }
+            switch (code, option, control) {
+            case (51, false, false), (4, false, true):   // delete, ⌃H
+                guard at > 0 else { return false }; at -= 1; chars.remove(at: at)
+            case (51, true, false), (13, false, true):   // ⌥delete, ⌃W
+                let start = wordStart(); guard start < at else { return false }; chars.removeSubrange(start..<at); at = start
+            case (117, false, false): guard at < chars.count else { return false }; chars.remove(at: at)
+            case (123, false, false): guard at > 0 else { return false }; at -= 1
+            case (124, false, false): guard at < chars.count else { return false }; at += 1
+            case (123, true, false): at = wordStart()
+            case (124, true, false): at = wordEnd()
+            default:   // arrows up/down, function keys, Return, Tab and Escape type control or private-use characters
+                guard !control, !typed.isEmpty, !typed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || (0xF700...0xF8FF).contains($0.value) }) else { return false }
+                chars.insert(contentsOf: typed, at: at); at += typed.count
+            }
+            return true
+        }
     }
 }
 
@@ -734,9 +786,8 @@ struct DrawingStep: Codable {
 }
 struct DrawingRequest: Decodable {
     let steps: [DrawingStep], teaching: Bool, target: DrawingWindow, state: String
-    let receipt: String?, guide: DrawingGuide?
+    let receipt: String?
 }
-struct DrawingGuide: Codable { let goal: String, done: [String], pid: Int32 }   // live: after the last step, the next is asked for from the fresh screen
 struct DrawingWindow: Decodable {
     let pid: Int32, windowID: String, windowFrame: [Double]
     var bounds: CGRect { CGRect(x:windowFrame[0], y:windowFrame[1], width:windowFrame[2], height:windowFrame[3]) }
@@ -897,7 +948,7 @@ final class DrawingCalloutView: NSView {
         p.addArc(tangent1End:pt(card.minX,card.minY),tangent2End:pt(card.maxX,card.minY),radius:r)
         p.closeSubpath(); return p
     }
-    init(frame: CGRect, card: CGRect, side: NSRectEdge?, tip: CGFloat, text: String, step: Int, total: Int, more: Bool = false) {
+    init(frame: CGRect, card: CGRect, side: NSRectEdge?, tip: CGFloat, text: String, step: Int, total: Int) {
         super.init(frame: frame)
         wantsLayer = true
         let shape = CAShapeLayer(), path = Self.bubble(card,side:side,tip:tip)
@@ -929,7 +980,7 @@ final class DrawingCalloutView: NSView {
             scroll.documentView = body; addSubview(scroll)
             y += height + 12
         }
-        let last = step >= total && !more
+        let last = step >= total
         let next = NSButton(title:last ? "Done" : "Next",target:self,action:#selector(nextStep))
         next.bezelStyle = .rounded; next.bezelColor = .systemBlue; next.frame = CGRect(x:card.maxX-16-68,y:y,width:68,height:26)
         next.setAccessibilityLabel(last ? "Done" : "Next step"); addSubview(next)
@@ -968,14 +1019,9 @@ final class ScreenDrawing {
         return AXUIElementCopyAttributeValue(e,kAXValueAttribute as CFString,&value) == .success ? value : nil
     }
     var cleanup: (() -> Void)?
-    var proceed: ((DrawingGuide) -> Void)?, pending: DispatchWorkItem?   // a live guide's next ask, waiting for the app to settle
-    var detached = false   // the user asked something else or cancelled: the guide's own click only finishes it; Next still continues
-    var eligible: (Int32) -> Bool = { NSWorkspace.shared.frontmostApplication?.processIdentifier == $0 }   // a live guide shows and continues only while its app is in front
     var status: ((String) -> Void)?
     var speechEnabled: () -> Bool = { false }
     var active: Bool { request != nil }
-    var session = false   // a live guide holds the box from its first step through every wait, settle and next ask until the user ends it
-    var holds: Bool { active || pending != nil || session }
     var hasInput: Bool { inputMode || !inputPath.isEmpty }
     var summary: [String:Any]? {   // what is on screen, for the next ask to build on
         guard let r = request, let data = try? JSONEncoder().encode(r.steps), let steps = try? JSONSerialization.jsonObject(with:data) else { return nil }
@@ -1104,7 +1150,6 @@ final class ScreenDrawing {
         guard r.target.valid, (1...12).contains(r.steps.count) else { return false }
         let teaching = r.steps.allSatisfy { $0.wait != true && $0.target == nil && $0.hit == nil }
         guard r.teaching == teaching, !teaching || r.steps.allSatisfy({ $0.say?.isEmpty == false }) else { return false }
-        guard r.guide.map({ !teaching && r.steps.last?.wait == true && $0.pid == r.target.pid && (1...2000).contains($0.goal.count) && (1...24).contains($0.done.count) }) ?? true else { return false }
         return r.steps.allSatisfy { step in
             guard (1...40).contains(step.shapes.count), (5...120).contains(step.timeout ?? 60), (step.say?.count ?? 0) <= 1000,
                   step.hit.map(validRect) ?? true, step.wait != true || step.target != nil || step.hit != nil else { return false }
@@ -1136,17 +1181,20 @@ final class ScreenDrawing {
     }
     @discardableResult func receive(_ data: Data) -> Bool {
         guard let r = try? JSONDecoder().decode(DrawingRequest.self,from:data), Self.valid(r), Self.onDisplays(r) else { return false }
-        if let guide = r.guide, !eligible(guide.pid) {   // the user went to another app while this step was being read
-            if let path = r.receipt { try? "The guide’s app is no longer in front, so the guide stopped. Say so in one line".write(toFile:path,atomically:true,encoding:.utf8) }
-            return false
-        }
-        clear(); request = r; index = 0; session = session || r.guide != nil
+        clear(); request = r; index = 0
         board = Self.board(r.steps,near:shapeBounds(r.steps.flatMap { $0.shapes.filter { $0.kind != "text" } }) ?? r.target.bounds)
         let click: (NSEvent) -> Void = { [weak self] event in
             guard let self, event.window !== calloutPanel, !panels.contains(where: { $0 === event.window }), let point = event.cgEvent?.location else { return }   // a click on a mark selects it, never the app under it
-            guard let r = request, !r.teaching, let target else { return }
+            if request?.teaching == true { return }
+            guard let target else { return }
             let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []
-            guard Self.inApp(point,windows,pid:target.pid,hit:r.steps[index].wait == true ? hit : nil,front:eligible(target.pid)) else { return }
+            let clickedWindow = windows.first { info in
+                guard (info[kCGWindowLayer as String] as? Int) == 0,
+                      let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                      let frame = CGRect(dictionaryRepresentation:bounds) else { return false }
+                return frame.contains(point)
+            }
+            guard (clickedWindow?[kCGWindowNumber as String] as? NSNumber)?.stringValue == target.windowID else { return }
             clicked(point)
         }
         if let m = NSEvent.addGlobalMonitorForEvents(matching:.leftMouseDown,handler:click) { monitors.append(m) }
@@ -1159,24 +1207,22 @@ final class ScreenDrawing {
     }
     func clear() {
         let wasActive = active
-        dropPending()
         timer?.invalidate(); timer = nil; monitors.forEach(NSEvent.removeMonitor); monitors.removeAll()
         stopVoice(); panels.forEach { $0.close() }; panels.removeAll(); calloutPanel?.close(); calloutPanel = nil
         request = nil; target = nil; hit = nil; element = nil; originalValue = nil; previousPointer = nil; focus = nil
-        advanceAt = .distantPast; manual = false; detached = false; board = nil; selected = nil; occupied = []
+        advanceAt = .distantPast; manual = false; board = nil; selected = nil; occupied = []
         if overMark { overMark = false; NSCursor.arrow.set() }
         clearInput()
         cleanup?()
         if wasActive { changed?() }
     }
-    func end() { let held = holds && !active; session = false; clear(); if held { changed?() } }   // the user closed it: ✕, close, a new spoken ask
     func clearInput() {   // the user's own mark only; a guide stays
         let hadInput = hasInput
         inputPanels.forEach { $0.close() }; inputPanels.removeAll()
         inputPath = []; inputMode = false; inputDone = nil
         if hadInput { NSCursor.arrow.set(); inputCleared?() }
     }
-    func hold() { stopVoice(); manual = true; detach() }   // the user is asking about it: no more talking, stepping on or continuing by itself
+    func hold() { stopVoice(); manual = true }   // the user is asking about it: no more talking or stepping on
     func pick(_ point: CGPoint) {
         guard let r = request, let m = panels.lazy.compactMap({ ($0.contentView as? DrawingView)?.mark(at:point) }).first,
               r.steps.indices.contains(m.step), r.steps[m.step].shapes.indices.contains(m.shape) else { return }
@@ -1258,8 +1304,7 @@ final class ScreenDrawing {
         }
         return result.isNull ? nil : result
     }
-    static let level = NSWindow.Level(rawValue:NSWindow.Level.popUpMenu.rawValue + 1)   // above the menu a step's click opened, so the next step's marks show on it
-    func showCallout(_ text: String, step: Int, total: Int, marks: CGRect, avoid: [CGRect], more: Bool = false) {
+    func showCallout(_ text: String, step: Int, total: Int, marks: CGRect, avoid: [CGRect]) {
         calloutPanel?.close(); calloutPanel = nil
         let screens = NSScreen.screens, top = screens.first?.frame.maxY ?? 0
         func display(_ s: NSScreen) -> CGRect { CGDisplayBounds(s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? CGMainDisplayID()) }
@@ -1273,10 +1318,10 @@ final class ScreenDrawing {
         let panel = DrawingPanel(contentRect:CGRect(x:frame.minX,y:top-frame.maxY,width:frame.width,height:frame.height),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
         panel.isReleasedWhenClosed = false; panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
         panel.appearance = NSAppearance(named:.darkAqua)
-        panel.ignoresMouseEvents = false; panel.hidesOnDeactivate = false; panel.level = Self.level
+        panel.ignoresMouseEvents = false; panel.hidesOnDeactivate = false; panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]; applySharing(panel)
-        let callout = DrawingCalloutView(frame:CGRect(origin:.zero,size:frame.size),card:local,side:side,tip:tip,text:text,step:step,total:total,more:more)
-        callout.onClose = { [weak self] in self?.end() }
+        let callout = DrawingCalloutView(frame:CGRect(origin:.zero,size:frame.size),card:local,side:side,tip:tip,text:text,step:step,total:total)
+        callout.onClose = { [weak self] in self?.clear() }
         callout.onNext = { [weak self] in self?.next() }
         callout.onBack = { [weak self] in self?.back() }
         panel.contentView = callout; calloutPanel = panel
@@ -1313,7 +1358,7 @@ final class ScreenDrawing {
                 let panel = DrawingPanel(contentRect:screen.frame,styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
                 panel.isReleasedWhenClosed = false
                 panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false; panel.ignoresMouseEvents = true
-                panel.hidesOnDeactivate = false; panel.level = Self.level; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
+                panel.hidesOnDeactivate = false; panel.level = .statusBar; panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.ignoresCycle]
                 applySharing(panel)
                 let view = DrawingView(frame:CGRect(origin:.zero,size:screen.frame.size)); view.origin = CGDisplayBounds(displayID).origin
                 view.pick = { [weak self] in self?.pick($0) }
@@ -1340,8 +1385,8 @@ final class ScreenDrawing {
         let now = Date(); deadline = r.teaching ? .distantFuture : now.addingTimeInterval(step.timeout ?? 60); ready = now.addingTimeInterval(0.35)
         let words = step.say ?? ""
         advanceAt = now.addingTimeInterval(max(3,min(12,1.5+Double(words.split(separator:" ").count)/3.5)))   // long enough to read the callout
-        if !words.isEmpty || r.steps.count > 1 || r.guide != nil {   // a live guide always has its Next, for clicks Atticus cannot see
-            showCallout(words,step:index+1,total:r.steps.count,marks:marks.isNull ? shapeBounds(shapes) ?? target.bounds : marks,avoid:earlier + (hit.map { [$0] } ?? []),more:r.guide != nil)
+        if !words.isEmpty || r.steps.count > 1 {
+            showCallout(words,step:index+1,total:r.steps.count,marks:marks.isNull ? shapeBounds(shapes) ?? target.bounds : marks,avoid:earlier + (hit.map { [$0] } ?? []))
         }
         if !words.isEmpty, speechEnabled() {
             let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/say"); p.arguments = ["--",words]
@@ -1354,25 +1399,12 @@ final class ScreenDrawing {
     }
     func advance() {
         guard let r = request else { return }
-        if index+1 < r.steps.count { index += 1; showStep() } else if !r.teaching, detached || !proceedGuide() { clear() }
+        if index+1 < r.steps.count { index += 1; showStep() } else if !r.teaching { clear() }
     }
     func next() {   // the user's Next ("next" by voice or typing too); on the last step it is Done
         guard let r = request else { return }
         manual = true
-        if index+1 < r.steps.count { index += 1; showStep() } else if !proceedGuide() { clear() }
-    }
-    func dropPending() { pending?.cancel(); pending = nil }
-    func detach() { dropPending(); detached = true }   // a new ask or cancel; its marks stay for the follow-up
-    // Dropped by clear() and cancel: Esc, close, a new ask or drawing.
-    func later(_ seconds: Double, _ work: @escaping () -> Void) {
-        let item = DispatchWorkItem { [weak self] in self?.pending = nil; work() }
-        pending = item; DispatchQueue.main.asyncAfter(deadline:.now() + seconds, execute:item)
-    }
-    // A live guide's last step done: its marks go, and once the app settles the next step is asked for. The user did the click; Atticus never does.
-    func proceedGuide() -> Bool {
-        guard let guide = request?.guide, let proceed else { return false }
-        clear(); later(0.8) { proceed(guide) }
-        return true
+        if index+1 < r.steps.count { index += 1; showStep() } else { clear() }
     }
     func back() {
         guard request != nil, index > 0 else { return }
@@ -1383,18 +1415,6 @@ final class ScreenDrawing {
         let step = r.steps[index]
         guard step.wait != true || hit?.contains(point) == true else { return }
         advance()
-    }
-    // A click belongs to the target's app in any of its windows at any layer (its menus, popovers and sheets), or on the
-    // menu bar, which the system owns and which shows the front app's menus: there only on the waiting step's own target.
-    static func inApp(_ point: CGPoint, _ windows: [[String:Any]], pid: Int32, hit: CGRect?, front: Bool) -> Bool {
-        let owner = { (info: [String:Any]) in (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value }
-        let under = windows.filter { info in
-            guard owner(info) != getpid(), let bounds = info[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation:bounds) else { return false }
-            return frame.contains(point)
-        }
-        if let w = under.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 || owner($0) == pid }), owner(w) == pid { return true }
-        return front && hit?.contains(point) == true && (under.first?[kCGWindowLayer as String] as? Int) == Int(CGWindowLevelForKey(.mainMenuWindow))
     }
     static func current(_ target: DrawingWindow) -> Bool {
         let infos = CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]] ?? []
@@ -1679,24 +1699,27 @@ final class App: NSObject, WKScriptMessageHandler {
     var speechText: [Int: (base: String, done: String, live: String)] = [:]
     var nextFeed: AsyncStream<AnalyzerInput>.Continuation?, nextAnalyzer: SpeechAnalyzer?, nextReading: Task<Void, Never>?
     var nextSpeechInputID: UUID?, nextSpeechSegment = 0, nextSpeechRollover = 50.0
-    var speechFormat: AVAudioFormat?   // what the model wants (found at launch and when the model changes)
+    var speechFormat: AVAudioFormat?, preparingSpeech = false   // what the model wants (found at launch and when the model changes)
     // Settings → Speech model: Apple's newer SpeechTranscriber, or the Dictation model the keyboard mic uses.
     // Dictation drops fastResults / frequentFinalization (Apple: faster but less accurate); asks keep them for live commands.
     func speechModule(dictate: Bool = false) -> any SpeechModule {
-        let en = Locale(identifier: "en-US")
+        let en = Locale(identifier: "en-US"), current = Locale.current, locales = SFSpeechRecognizer.supportedLocales()
+        let locale = locales.contains(current) ? current : locales.first { $0.language.languageCode == current.language.languageCode } ?? en
         if Prefs.str("speechModel") == "dictation" {
             return dictate ? DictationTranscriber(locale: en, contentHints: [.shortForm], transcriptionOptions: [.punctuation], reportingOptions: [.volatileResults], attributeOptions: [])
-                : DictationTranscriber(locale: en, preset: .progressiveShortDictation)
+                : DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
         }
         return dictate ? SpeechTranscriber(locale: en, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
-            : SpeechTranscriber(locale: en, preset: .progressiveTranscription)
+            : SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
     }
     func prepareSpeech() {   // make sure the speech model is installed, and learn its audio format
+        guard !preparingSpeech else { return }
+        preparingSpeech = true
         let m = speechModule()
         Task { [weak self] in
             if let r = try? await AssetInventory.assetInstallationRequest(supporting: [m]) { try? await r.downloadAndInstall() }
             let f = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [m])
-            await MainActor.run { self?.speechFormat = f }
+            await MainActor.run { self?.speechFormat = f; self?.preparingSpeech = false }
         }
     }
     var text = "", answer = "", busy = false, speechFailed = false, gen = 0
@@ -1813,14 +1836,14 @@ final class App: NSObject, WKScriptMessageHandler {
         if let path = pointContext?["image"] as? String { try? FileManager.default.removeItem(atPath:path) }
         pointContext = nil; drawing.deselect(); js("point", false)
     }
-    // While a drawing is up, the box glides to the nearest spot clear of its marks, and back home once the drawing or guide ends.
+    // While a drawing is up, the box glides to the nearest spot clear of its marks, and back home when it goes.
     var boxHome: NSPoint?   // where the box was before a drawing moved it; nil once the user drags it
     func avoidDrawing() {
         guard panel.isVisible, !dragging else { return }
         guard drawing.active else {
             DispatchQueue.main.async { [self] in   // a replaced drawing clears, then draws again at once
                 guard !drawing.active else { return }
-                if !drawing.holds, let home = boxHome { boxHome = nil; var f = panel.frame; f.origin = home; glide(f) }   // between guide steps it stays put
+                if let home = boxHome { boxHome = nil; var f = panel.frame; f.origin = home; glide(f) }
                 hide(after: 3)
             }
             return
@@ -1837,7 +1860,7 @@ final class App: NSObject, WKScriptMessageHandler {
                                              completionHandler: { [weak self] in guard let self else { return }; if !dragging { frame(panel.frame) }; done?() })   // keeps it on a display and updates its height limit
     }
     func followPointerScreen() {   // the box, typing box, answer and dictation pill alike
-        guard panel.isVisible, !dragging, !hovering, let f = pointerFollow(panel.frame), !drawing.holds else { return }   // a guide places its box
+        guard panel.isVisible, !dragging, !hovering, let f = pointerFollow(panel.frame) else { return }
         boxHome = nil; frame(f)
     }
     func startFollowingPointerScreen() {
@@ -1917,7 +1940,6 @@ final class App: NSObject, WKScriptMessageHandler {
         drawing.inputAway = { [weak self] in self?.finishPointing() }
         drawing.picked = { [weak self] r, words in self?.finishPoint([CGPoint(x:r.minX,y:r.minY),CGPoint(x:r.maxX,y:r.maxY)],mark:words) }
         drawing.changed = { [weak self] in self?.avoidDrawing() }
-        drawing.proceed = { [weak self] in self?.continueGuide($0) }
         cfg.userContentController.add(self, name: "h")
         cfg.userContentController.add(self, name: "c")
         web.setValue(false, forKey: "drawsBackground")
@@ -1956,7 +1978,7 @@ final class App: NSObject, WKScriptMessageHandler {
         loadPage(web, "ui.html")
         // Click anywhere else closes the box once the answer is up; on the box: ✕ closes, elsewhere copies the answer.
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, panel.isVisible, !busy, !engine.isRunning, !stuck, !drawing.holds, !drawing.hasInput else { return }
+            guard let self, panel.isVisible, !busy, !engine.isRunning, !stuck, !drawing.active, !drawing.hasInput else { return }
             close(clear: false)
         }
         var grab: (mouse: NSPoint, origin: NSPoint)?, moved = false
@@ -2179,15 +2201,14 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func hide(after s: Double) {
         let g = gen
-        let kept = { [self] in pinned || stuck || composing || mini.holds || drawing.holds || drawing.hasInput || ringGone != nil || voice?.isRunning == true }
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { [self] in
             guard g == gen, !busy, !engine.isRunning, !hovering else { return }
-            guard !kept() else {   // moved or drawn on, or a guide between steps: only ✕ (Esc for a drawing); an answer's ring keeps its text up
+            guard !pinned, !stuck, !composing, !mini.holds, !drawing.active, !drawing.hasInput, ringGone == nil, voice?.isRunning != true else {   // moved or drawn on: only ✕ (Esc for a drawing); an answer's ring keeps its text up
                 if pillOn && !dictating { pill(false) }   // the box stays up for its answer or drawing: give it back, not a pill stuck on its check
                 return
             }
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; panel.animator().alphaValue = 0 },
-                                                 completionHandler: { [self] in guard g == gen else { return }; if kept() { panel.alphaValue = 1 } else { gone() } })   // a drawing or grab during the fade keeps it
+                                                 completionHandler: { [self] in if g == gen { gone() } })
         }
     }
 
@@ -2275,7 +2296,7 @@ final class App: NSObject, WKScriptMessageHandler {
             js("agentEscape")
         } else if busy {
             cancel()
-        } else if drawing.active || drawing.pending != nil {
+        } else if drawing.active {
             drawing.clear()
         } else if panel.isVisible {
             close(clear: false)
@@ -2322,14 +2343,14 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func cancel() {
         if dictating { cue("soundStop"); return close(clear: false) }   // listening or finishing: fade out, nothing inserted
-        hush(); shush(); drawing.detach()
+        hush(); shush()
         cue("soundStop"); js("stopped", "Answer stopped"); hide(after: 1.5)
     }
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
     func close(clear: Bool) {
         let pending = clear || replacement == nil ? nil : (replacement, selection)
-        shush(); hush(); drawing.end(); unpoint()   // gone means quiet: no mic, no voice, no answer, no drawing or ring
+        shush(); hush(); drawing.clear(); unpoint()   // gone means quiet: no mic, no voice, no answer, no drawing or ring
         if let pending { replacement = pending.0; selection = pending.1 }   // a hidden Insert/Replace keeps its validated target
         if clear { try? FileManager.default.removeItem(atPath: recent); lastDone = .distantPast }
         gen += 1
@@ -2365,7 +2386,7 @@ final class App: NSObject, WKScriptMessageHandler {
         dictateTap?.cancel(); dictateTap = nil
         let transient = engine.isRunning || dictating || drawing.active || drawing.hasInput
         if engine.isRunning || dictating { hush() }
-        if drawing.holds || drawing.hasInput { drawing.end() }
+        if drawing.active || drawing.hasInput { drawing.clear() }
         quietAudio.end(immediate: true)
         if transient { gone() }
     }
@@ -2533,7 +2554,7 @@ final class App: NSObject, WKScriptMessageHandler {
         drawingReply = !dictate && drawing.active
         let replying = drawingReply || retryOffer && !askFile.isEmpty
         replyAgent = dictate || (retryOffer && !askFile.isEmpty) ? "" : agentCard
-        if !replying { if !dictate && !drawing.hasInput && !busy { drawing.end() }; mini.reset(); try? FileManager.default.removeItem(atPath: focusFile) }   // a new ask: "show it" from the last one no longer counts
+        if !replying { if !dictate && !drawing.hasInput { drawing.clear() }; mini.reset(); try? FileManager.default.removeItem(atPath: focusFile) }   // a new ask: "show it" from the last one no longer counts
         guard !Prefs.bool("paused") else { dictating = false; return }
         dictating = dictate
         unpoint(false)   // a new ask replaces the held answer; do not schedule that old answer's delayed hide
@@ -2566,21 +2587,24 @@ final class App: NSObject, WKScriptMessageHandler {
         toggleTalk = !clickTalk && !dictate && Prefs.str("talkMode") == "toggle"   // dictation locks with a double tap instead
         cue("soundStart")
         if !dictate && (!replying || drawingReply) { unwarm(); warm = spawn() }
-        onboarding.tried()
         hovering = false
         if replying && !drawingReply { js("draft", "") } else { js("listen"); if !dictate, let s = selection { js("selected", s.text) } }   // talking about a drawing still shows the listening orb
         show()
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
         }
+        guard dictate || SFSpeechRecognizer.authorizationStatus() == .authorized else {
+            if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Speech Recognition."); hide(after: 6); return
+        }
+        guard let device = listenMic().flatMap({ AVCaptureDevice(uniqueID: $0.uid) }) ?? AVCaptureDevice.default(for: .audio) else {
+            if replying { stopOfferInput() } else { hush() }; js("msg", "No microphone is available. Connect one and try again."); hide(after: 6); return
+        }
+        onboarding.tried()
         quietAudio.begin(Prefs.bool("quietAudio"), level: Float32(Prefs.num("quietLevel")))
         listenID += 1; let listeningID = listenID; began = Date()   // key-down until the mic is ready; a release in that gap is a tap
         speechInputs = SpeechInputs(); speechText = [:]; speechSegment = 0; nextSpeechRollover = 50
         let first = beginSpeechSegment("", listeningID: listeningID)
         feed = first.feed; speechInputID = first.inputID; analyzer = first.analyzer; reading = first.reading; activeSpeechSegment = first.segment
-        guard let device = listenMic().flatMap({ AVCaptureDevice(uniqueID: $0.uid) }) ?? AVCaptureDevice.default(for: .audio) else {
-            if replying { stopOfferInput() } else { hush() }; js("msg", "No microphone is available. Connect one and try again."); hide(after: 6); return
-        }
         let want = speechFormat ?? AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
         var conv: AVAudioConverter?, convFrom: AVAudioFormat?
         var n = 0
@@ -2621,7 +2645,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func heard(_ now: String) {
         guard engine.isRunning || busy else { return }
         text = now
-        if dictating { return }   // the pill shows only the wave, never the words
+        if dictating { return }   // cleanup starts only after key-up; cancelled partial words never leave the Mac
         if offerText != nil {
             js(drawingReply ? "words" : "draft", now)
             if clickTalk { quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q; DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q) }
@@ -2702,7 +2726,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func stop() {
         guard engine.isRunning, !clickTalk || text.isEmpty == false else { return }
         let inputs = speechInputs
-        if dictating { dictateSeconds = Date().timeIntervalSince(began) }
+        if dictating { dictateSeconds = Date().timeIntervalSince(began); dictateReleased = Date(); startDictateAhead() }   // cleanup runs while the last words finalize
         engine.stop { inputs?.finishAll() }
         quietAudio.end()
         clickTalk = false; toggleTalk = false; quiet?.cancel()
@@ -2771,14 +2795,17 @@ final class App: NSObject, WKScriptMessageHandler {
             guard let self else { return }
             lastDictation = value
             saveDictation(value, appName: target.app.localizedName ?? "App")
-            correctionTimer?.invalidate()
-            guard Prefs.bool("dictateLearn"), let before, let range,
-                  range.location >= 0, range.length >= 0, range.location + range.length <= (before as NSString).length else { return }
-            let prefix = (before as NSString).substring(to: range.location)
-            let suffix = (before as NSString).substring(from: range.location + range.length)
-            let deadline = Date().addingTimeInterval(20), id = dictateID
-            guard axAttribute(target.element, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole,
-                  target.value == prefix + value + suffix else { return }
+            stopReplay()
+            guard Prefs.bool("dictateLearn"), axAttribute(target.element, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole else { return }
+            let readable = before.flatMap { before -> (String, String)? in
+                guard let range, range.location >= 0, range.length >= 0, range.location + range.length <= (before as NSString).length else { return nil }
+                let prefix = (before as NSString).substring(to: range.location)
+                let suffix = (before as NSString).substring(from: range.location + range.length)
+                return target.value == prefix + value + suffix ? (prefix, suffix) : nil
+            }
+            guard let readable else { NSLog("Dictation learning: field unreadable, watching keys"); return replayEdits(value, app: target.app) }
+            NSLog("Dictation learning: watching the field")
+            let (prefix, suffix) = readable, deadline = Date().addingTimeInterval(20), id = dictateID
             var last = value, changed = Date()
             correctionTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] timer in
                 guard let self, Date() < deadline, dictateID == id, !engine.isRunning, !busy,
@@ -2790,15 +2817,53 @@ final class App: NSObject, WKScriptMessageHandler {
                       current.hasPrefix(prefix), current.hasSuffix(suffix), current.count >= prefix.count + suffix.count else { timer.invalidate(); return }
                 let span = String(current.dropFirst(prefix.count).dropLast(suffix.count))
                 if span != last { last = span; changed = Date(); return }
-                guard Date().timeIntervalSince(changed) > 1, let fix = DictationData.correction(value, span), !DictationData.words.contains(fix.word) else { return }
+                guard Date().timeIntervalSince(changed) > 2, learnFix(value, span) else { return }
                 timer.invalidate()
-                let word = fix.word
-                guard DictationData.word(word) else { return }
-                DictationData.fix(fix.heard, word)
-                learnedWord = word; pill(true); show(); js("learned", word); hide(after: 6)
-                Atticus.settings.send("dictation", DictationData.state())
             }
         }
+    }
+    @discardableResult func learnFix(_ value: String, _ edited: String) -> Bool {
+        guard let fix = DictationData.correction(value, edited), !DictationData.words.contains(fix.word) else { return false }
+        let word = fix.word
+        guard DictationData.word(word) else { return false }
+        DictationData.fix(fix.heard, word)
+        learnedWord = word; pill(true); show(); js("learned", word); hide(after: 6)
+        Atticus.settings.send("dictation", DictationData.state())
+        return true
+    }
+    // No readable field: the next keys in that app, held in memory only, for 20 s; a click, secure input or another app ends it.
+    var editKeys: Any?, replayIdle: Timer?
+    func replayEdits(_ value: String, app: NSRunningApplication) {
+        var replay = DictationData.Replay(value), keys = 0, learned = false
+        let id = dictateID
+        let check = { [weak self] in
+            guard let self, !learned, replay.text != value, learnFix(value, replay.text) else { return }
+            learned = true; NSLog("Dictation learning (keys): learned after %d keys", keys); stopReplay()
+        }
+        // Why learning ended, never the words: app.err, for "nothing was learned".
+        let end = { [weak self] (why: String) in
+            check()
+            if !learned { NSLog("Dictation learning (keys): %@ after %d keys, %@", why, keys, replay.text == value ? "no edit" : "not a spelling fix") }
+            self?.stopReplay()
+        }
+        correctionTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { _ in end("20 s passed") }
+        editKeys = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] e in
+            guard let self else { return }
+            let f = e.modifierFlags
+            let why = dictateID != id ? "next dictation" : engine.isRunning || busy ? "Atticus busy" : !Prefs.bool("dictateLearn") || Prefs.bool("paused") ? "off" :
+                NSWorkspace.shared.frontmostApplication != app ? "app changed" : IsSecureEventInputEnabled() ? "secure input" : e.type != .keyDown ? "click" : nil
+            guard why == nil, replay.key(Int(e.keyCode), e.characters ?? "", option: f.contains(.option), control: f.contains(.control), command: f.contains(.command)) else {
+                return end(why ?? "key \(e.keyCode)")   // Return after a fix still learns it
+            }
+            keys += 1
+            replayIdle?.invalidate()
+            replayIdle = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { _ in check() }   // a shorter pause can land mid-word: "Saart"
+        }
+    }
+    func stopReplay() {
+        correctionTimer?.invalidate(); replayIdle?.invalidate()
+        if let editKeys { NSEvent.removeMonitor(editKeys) }
+        editKeys = nil
     }
 
     // ⌃⌘V, like Willow Voice: the last dictation goes in at the cursor wherever it is now; the user's clipboard comes back after.
@@ -2819,13 +2884,59 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func stopDictationCleanup() {
+        stopDictationWorker()
+        dictateRun?.process.terminate(); dictateRun = nil
+    }
+
+    // One transcript handed to a cleanup worker. key is its words only, so final words that match reuse a run started early.
+    final class DictationCleanup {
+        let key: String, process: Process
+        var result: String??, done: ((String?) -> Void)?
+        init(_ key: String, _ process: Process) { self.key = key; self.process = process }
+        func finish(_ value: String?) { result = .some(value); done?(value) }
+        func then(_ f: @escaping (String?) -> Void) { if let result { f(result) } else { done = f } }
+    }
+    var dictateRun: DictationCleanup?, dictateReleased = Date()
+    static func dictationKey(_ s: String) -> String {
+        s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    func stopDictationWorker() {
         try? dictateInput?.close()
         dictateProcess?.terminate()
         dictateProcess = nil; dictateInput = nil; dictateOutput = nil
     }
 
+    // The warm worker takes one transcript; nil when none could start.
+    func sendDictationCleanup(_ source: String) -> DictationCleanup? {
+        if dictateProcess?.isRunning != true { warmDictationCleanup() }
+        guard let p = dictateProcess, let input = dictateInput, let output = dictateOutput else { return nil }
+        dictateProcess = nil; dictateInput = nil; dictateOutput = nil
+        do {
+            try input.write(contentsOf: Data((dictateBefore + "\u{0}" + source).utf8))
+            try input.close()
+        } catch { p.terminate(); return nil }
+        let run = DictationCleanup(Self.dictationKey(source), p)
+        DispatchQueue.global().async {
+            // The worker closes its output before it stops Claude, so this returns without waiting for the exit.
+            let cleaned = String(data: output.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            DispatchQueue.main.async { run.finish(cleaned.isEmpty ? nil : cleaned) }
+        }
+        return run
+    }
+
+    // Cleanup starts at key-up while the last words finalize; a spare worker waits in case they change.
+    func startDictateAhead() {
+        let source = text.trimmingCharacters(in: .whitespacesAndNewlines), key = Self.dictationKey(source)
+        guard dictating, dictateCleanup, !dictateSelectionPending, key.split(separator: " ").count >= 3, key != dictateRun?.key,
+              let run = sendDictationCleanup(source) else { return }
+        dictateRun?.process.terminate()
+        dictateRun = run
+        warmDictationCleanup()
+    }
+
     func warmDictationCleanup() {
-        stopDictationCleanup()
+        stopDictationWorker()
         let p = py(["--dictate-cleanup-wait"]), input = Pipe(), output = Pipe()
         p.standardInput = input; p.standardOutput = output
         fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
@@ -2835,7 +2946,7 @@ final class App: NSObject, WKScriptMessageHandler {
             dictateInput = input.fileHandleForWriting
             dictateOutput = output.fileHandleForReading
         } catch {
-            stopDictationCleanup()
+            stopDictationWorker()
         }
     }
 
@@ -2855,26 +2966,24 @@ final class App: NSObject, WKScriptMessageHandler {
             return
         }
         if !dictateCleanup { return insertDictation(source) }
-        if dictateProcess?.isRunning != true { warmDictationCleanup() }
-        guard let p = dictateProcess, let input = dictateInput, let output = dictateOutput else {
-            return insertDictation(source)   // cleanup could not start: the heard words still go in
-        }
+        let early = dictateRun?.key == Self.dictationKey(source)
+        if !early { dictateRun?.process.terminate(); dictateRun = sendDictationCleanup(source) }
+        stopDictationWorker()
+        guard let run = dictateRun else { return insertDictation(source) }   // cleanup could not start: the heard words still go in
         let id = dictateID
-        do {
-            try input.write(contentsOf: Data((dictateBefore + "\u{0}" + source).utf8))
-            try input.close()
-            dictateInput = nil
-        } catch {
-            stopDictationCleanup(); return insertDictation(source)
+        run.then { [weak self] cleaned in
+            guard let self, dictateID == id, dictateRun === run else { return }
+            dictateRun = nil
+            NSLog("Dictation cleanup: %.2f s after key-up%@", Date().timeIntervalSince(dictateReleased), early ? " (started early)" : "")
+            insertDictation(cleaned ?? source)
         }
-        DispatchQueue.global().async { [weak self] in
-            let data = output.readDataToEndOfFile(); p.waitUntilExit()
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.dictateID == id, self.dictateProcess === p else { return }
-                self.dictateProcess = nil; self.dictateOutput = nil
-                let cleaned = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                self.insertDictation(p.terminationStatus == 0 && !cleaned.isEmpty ? cleaned : source)
-            }
+        // A cleanup that hangs (offline, Claude retrying) never holds the words: 8 s (a cold worker can take 3-5 s) plus time for long text, then the heard words go in.
+        let limit = 8 + Double(source.split(separator: " ").count) / 50
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit) { [weak self] in
+            guard let self, dictateID == id, dictateRun === run else { return }
+            NSLog("Dictation cleanup: no answer in %.1f s, inserting the heard words", limit)
+            dictateRun = nil; run.process.terminate()
+            insertDictation(source)
         }
     }
 
@@ -2929,15 +3038,6 @@ final class App: NSObject, WKScriptMessageHandler {
         text = t; replacement = nil
         if !heard { replyAgent = agentCard }   // a spoken drawing reply keeps the done card captured at key-down
         if !heard { js("listen", keep); if let s = selection { js("selected", s.text) } }; show(); js("words", t); run(t)
-    }
-
-    // A live guide's step is done: the same goal is asked again from the fresh screen, in the app it started in. Never an action: the user clicks.
-    func continueGuide(_ guide: DrawingGuide, wait: Int = 20) {
-        if engine.isRunning || dictating { return }   // the user started something else
-        if busy { if wait > 0 { drawing.later(0.5) { [weak self] in self?.continueGuide(guide, wait: wait - 1) } }; return }   // the ask that drew it is still finishing its line
-        guard !Prefs.bool("paused"), Prefs.bool("draw"), drawing.eligible(guide.pid) else { return }
-        text = guide.goal; replacement = nil; selection = nil; replyAgent = ""
-        show(); run(guide.goal, guide: guide)
     }
 
     func finish() {
@@ -3050,7 +3150,7 @@ final class App: NSObject, WKScriptMessageHandler {
                     }
                     if line.hasPrefix("✓") {
                         let result = self.replacement.flatMap { $0.isEmpty ? nil : $0 } ?? line.dropFirst(2).replacingOccurrences(of: "\u{2028}", with: "\n")
-                        let finish = self.drawing.request?.guide != nil ? "Your next step is on screen." : self.drawing.request?.steps.count == 1 ? "Done. It’s on your screen." : "Done. Steps are on screen."
+                        let finish = self.drawing.request?.steps.count == 1 ? "Done. It’s on your screen." : "Done. Steps are on screen."
                         self.mini.finish(); self.answer = "✓ " + (guided ? finish : result); self.deliver(guided ? finish : result, aloud: !guided)   // a guide's steps speak for themselves
                         self.js("line", self.answer); continue
                     }
@@ -3081,8 +3181,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func unwarm() { warm?.p.terminate(); warm = nil }
 
-    func run(_ t: String, speculative: Bool = false, remaining: String? = nil, guide: DrawingGuide? = nil) {
-        if guide == nil { drawing.detach() }   // another ask: a shown guide or one waiting for its next step no longer continues by itself
+    func run(_ t: String, speculative: Bool = false, remaining: String? = nil) {
         let point = pointContext, drawn = drawing.summary
         pointContext = nil; unpoint(false)
         drawing.clearInput(); drawing.deselect(); mini.reset(); if !busy && !engine.isRunning { noteHidden() }; busy = true; agentMoveFile = ""; answer = ""; showAgent = ""; try? FileManager.default.removeItem(atPath: focusFile)
@@ -3105,7 +3204,6 @@ final class App: NSObject, WKScriptMessageHandler {
             if let remaining { request["remaining"] = remaining; request["done"] = did }
             if let point { request["point"] = point }
             if let drawn { request["drawing"] = drawn }
-            if let guide { request["guide"] = ["goal":guide.goal, "done":guide.done, "pid":guide.pid] }
             if !replyAgent.isEmpty { request["agentCard"] = replyAgent }
             var data = try JSONSerialization.data(withJSONObject:request); data.append(10)
             try w.input.write(contentsOf:data); try w.input.close()
@@ -3659,6 +3757,7 @@ final class RoutineWake {
 // Shows until finished once; to see it again: defaults delete com.atticus.app onboarded, then restart the app.
 final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     var win: NSWindow?, web: WKWebView?, timer: Timer?
+    var checkingPlan = false
     var screenInitiallyGranted = false, screenGrantedDuringSetup = false
     let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 
@@ -3723,7 +3822,10 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     }
 
     func checkPlan() {
+        guard !checkingPlan else { return }
+        checkingPlan = true
         Onboarding.plan { [weak self] c in
+            self?.checkingPlan = false
             self?.call("ob.plan", c)
         }
     }
@@ -4081,7 +4183,7 @@ func relaunchSoon() {
 enum Updater {
     static let src = Bundle.main.object(forInfoDictionaryKey: "AtticusSource") as? String ?? ""
     static let managedByNix = src.hasPrefix("/nix/store/")
-    static var status = ""
+    static var status = "", checking = false
     static func sh(_ script: String) -> (code: Int32, out: String) {
         let p = Process(), o = Pipe()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh"); p.arguments = ["-c", script, src]; p.standardOutput = o; p.standardError = o
@@ -4097,6 +4199,8 @@ enum Updater {
     static func check(_ done: @escaping () -> Void = {}) {
         if managedByNix { status = "Run nix profile upgrade or nix run again."; done(); return }
         if src.isEmpty || ProcessInfo.processInfo.environment["ATTICUS_DIR"] != nil { status = "Preview build"; done(); return }
+        guard !checking else { done(); return }
+        checking = true
         status = "Checking…"; done()
         DispatchQueue.global().async {
             let r = sh(#"""
@@ -4109,6 +4213,7 @@ enum Updater {
                 exit 10
                 """#)
             DispatchQueue.main.async {
+                checking = false
                 status = [0: "Up to date", 3: "Source folder not found (reinstall with build.sh)", 4: "Couldn’t reach GitHub",
                           5: "Skipped: the source folder has local changes", 6: "Update downloaded, but the build failed",
                           10: "Updated. Restarting when you’re not using it…"][r.code] ?? "Update failed"
@@ -4521,7 +4626,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             return
         }
         guard Prefs.set(k, v) else { push(); send("notice", ["text": "Couldn’t save that change, so the old setting is back."]); return }
-        if k == "draw", v as? Bool == false { app.drawing.end(); app.unwarm() }
+        if k == "draw", v as? Bool == false { app.drawing.clear(); app.unwarm() }
         if k == "meetingSave" { meeting.savingChanged(v as? Bool == true) }
         if k == "meeting", v as? Bool == false { meeting.stop() }
         if k == "meetingNudge", v as? Bool == true, EKEventStore.authorizationStatus(for: .event) != .fullAccess {

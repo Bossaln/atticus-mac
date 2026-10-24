@@ -82,14 +82,6 @@ try {
   const completedTime = elapsed.textContent;
   await new Promise(resolve => setTimeout(resolve, 65));
   assert(elapsed.textContent === completedTime, 'Completion freezes the elapsed time');
-  await new Promise(resolve => setTimeout(resolve, 400));   // the user doing a guide's step: not Atticus's time
-  ui.think();   // the guide's next step reuses this turn
-  assert(d.querySelectorAll('.turn:last-child .elapsed').length === 1 && !d.querySelector('.turn:last-child .elapsed .redo'), 'A guide step keeps one timer row, without Try again while it works');
-  await new Promise(resolve => setTimeout(resolve, 40));
-  ui.line('✓ Notes is open.');
-  const resumed = parseFloat(elapsed.textContent) - parseFloat(completedTime);
-  assert(resumed > 0.02 && resumed < 0.3, 'The next step adds its own work, not the wait between steps: +' + resumed.toFixed(2) + ' s');
-  assert(d.querySelectorAll('.turn:last-child .elapsed').length === 1 && d.querySelectorAll('.turn:last-child .redo').length === 1, 'The finished step offers Try again once');
   ui.rewrite(['A polished draft.', 'replace', true]);
   assert(w.getComputedStyle(d.querySelector('.a')).whiteSpace === 'pre-wrap', 'Rewrite previews preserve line breaks');
   const bar = d.querySelector('.rewrite');

@@ -243,7 +243,7 @@ func axWindowNumber(_ element: AXUIElement) -> NSNumber? { NSNumber(value:42) }
         starter='''enum Prefs { static func bool(_ name:String)->Bool { false }; static func str(_ name:String)->String { "back" } }
 final class EngineStub { var isRunning=false }
 final class PanelStub { var isVisible=false }
-final class DrawingStub { var active=false,hasInput=false,clears=0;func clear() {clears += 1;active=false;hasInput=false};func end() {clear()};func stopVoice() {} }
+final class DrawingStub { var active=false,hasInput=false,clears=0;func clear() {clears += 1;active=false;hasInput=false};func stopVoice() {} }
 final class Starter {
  let drawing=DrawingStub();var drawingReply=false
  let mini=MiniScreen(),engine=EngineStub(),panel=PanelStub();var busy=false,fresh=false,retryOffer=false,askFile="",agentCard="",replyAgent="",focusFile=NSTemporaryDirectory()+"atticus-focus-fixture"

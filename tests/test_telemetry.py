@@ -23,7 +23,7 @@ class TelemetryTests(unittest.TestCase):
                 payload = json.loads(args[4])
                 self.assertEqual(payload['event'], 'used')
                 self.assertEqual(payload['api_key'], 'fixture-token')
-                self.assertEqual(payload['properties'], {'$process_person_profile': False})
+                self.assertEqual(payload['properties'], {'$process_person_profile': False, 'version': atticus.APP_VERSION})
                 self.assertEqual(set(payload), {'api_key', 'event', 'distinct_id', 'properties'})
                 worker = spawn(args, **kwargs)
                 worker.wait(timeout=5)
@@ -41,6 +41,17 @@ class TelemetryTests(unittest.TestCase):
                 atticus.ping()
                 self.assertEqual(send.call_count, 2)
                 self.assertEqual((root / 'id').read_text(), identity)
+
+    def test_failure_and_used_events_include_the_same_app_version_field(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
+             patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), \
+             patch.object(atticus, 'pref', side_effect=lambda k, d: {'improve': True}.get(k, d)), \
+             patch.object(atticus.subprocess, 'Popen') as send:
+            atticus.report('Open the fixture', 'Could not open it', (), 1, 'error')
+        payload = json.loads(send.call_args.args[0][4])
+        self.assertEqual(payload['event'], 'task_failed')
+        self.assertEqual(payload['properties']['version'], atticus.APP_VERSION)
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'task', 'reply', 'steps', 'why', 'secs', 'model', 'client', 'macos'})
 
     def test_failure_reports_drop_text_applescript_types_or_writes(self):
         steps = ['osascript -e \'tell application "System Events" to keystroke "hunter2"\'',

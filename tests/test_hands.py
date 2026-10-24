@@ -203,21 +203,25 @@ precondition(try! String(contentsOfFile:path, encoding:.utf8) == "y")
         self.assertEqual(denied['permissionDecision'],'deny')
         self.assertIn('helper directly',denied['permissionDecisionReason'])
 
-    def test_full_access_keeps_the_native_bypass_hook(self):
+    def test_main_asks_use_the_native_gate_without_telling_claude_it_is_sandboxed(self):
         previous = signal.getsignal(signal.SIGTERM)
-        process = Mock(pid=2147483647)
         try:
-            with patch.object(atticus.shutil,'which',return_value='/fake/claude'), \
-                 patch.object(atticus,'pref',side_effect=lambda k,d:False if k=='safe' else d), \
-                 patch.dict(os.environ,{'ATTICUS_COMMIT':''}), \
-                 patch.object(atticus.subprocess,'Popen',return_value=process) as spawn:
-                atticus.start_claude()
-            args = spawn.call_args.args[0]
-            settings = json.loads(args[args.index('--settings')+1])
-            self.assertIn('PreToolUse',settings['hooks'])
-            self.assertNotIn('sandbox',settings)
+            for safe in (True, False):
+                process = Mock(pid=2147483647)
+                with self.subTest(safe=safe), patch.object(atticus.shutil,'which',return_value='/fake/claude'), \
+                     patch.object(atticus,'pref',side_effect=lambda k,d:safe if k=='safe' else d), \
+                     patch.dict(os.environ,{'ATTICUS_COMMIT':''}), \
+                     patch.object(atticus.subprocess,'Popen',return_value=process) as spawn:
+                    atticus.start_claude()
+                args = spawn.call_args.args[0]
+                settings = json.loads(args[args.index('--settings')+1])
+                self.assertIn('PreToolUse',settings['hooks'])
+                self.assertNotIn('sandbox',settings)
+                process.errors.close()
+            self.assertIn('App/site: always try; never blame sandbox/Terminal', atticus.SYSTEM)
+            self.assertIn('Name the denied Settings switch', atticus.SYSTEM)
         finally:
-            signal.signal(signal.SIGTERM,previous); process.errors.close()
+            signal.signal(signal.SIGTERM,previous)
 
     def test_label_learning_and_menu_procedures_never_store_ids_or_coordinates(self):
         for args in ['click 12','click 3:640,212','drag Export 12','type 13 hello','see Notes','click Export --yes']:

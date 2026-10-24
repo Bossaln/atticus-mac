@@ -55,6 +55,7 @@ const ui={''' + dictate + '''};ui.dictate(true);if(bars.some(b=>b.style.height)|
         self.assertIn("classList.toggle('hearing', listening)", source)
         self.assertIn("for (let i = 0; i < 9; i++) $('dictwave').append", source)
         self.assertIn('if dictating { return }', native)
+        self.assertNotIn('scheduleDictateAhead', native)
 
     def test_onboarding_finish_names_missing_voice_requirements(self):
         source = (Path(__file__).resolve().parents[1] / 'ui' / 'onboarding.html').read_text()

@@ -77,6 +77,28 @@ precondition(saarth?.heard == "Sarth" && saarth?.word == "Saarth")
 precondition(DictationData.correction("open atticus", "open Atticus")?.word == "Atticus")
 precondition(DictationData.correction("Hi Andree", "Hi André")?.word == "André")
 precondition(DictationData.correction("I went their", "I went there") == nil)   // an everyday word is no name to learn
+let sarda = DictationData.correction("Can you make sure Sarda does that?", "Can you make sure Saarth does that?")
+precondition(sarda?.heard == "Sarda" && sarda?.word == "Saarth", "sound-alike fix")
+let two = DictationData.correction("You make sure start to does that.", "You make sure Saarth does that.")
+precondition(two?.heard == "start to" && two?.word == "Saarth", "two heard words, one name")
+let three = DictationData.correction("Can you ask some of you to do that?", "Can you ask Semva to do that?")
+precondition(three?.heard == "some of you" && three?.word == "Semva", "three heard words, one name")
+precondition(DictationData.correction("ask some of b to", "ask Semva to")?.word == "Semva", "garbled three words")
+precondition(DictationData.correction("Can you ask somebody to do that?", "Can you ask Semva to do that?")?.heard == "somebody", "a real word that sounds like the name")
+precondition(DictationData.correction("send it to the team", "send it Tuesday") == nil, "several words that don't sound alike")
+precondition(DictationData.correction("Ship it Friday.", "Ship it Monday.") == nil, "a new idea")
+precondition(DictationData.correction("ask Sarda now", "ask Saarth there now") == nil, "one word became two")
+precondition(DictationData.sound("Saarth") == "srt" && DictationData.sound("start to") == "strt" && DictationData.sound("André") == "amtr")
+var keys = DictationData.Replay("make sure start to does")
+for (code, typed, option) in [(123, "", true), (51, "", true), (51, "", true)] { precondition(keys.key(code, typed, option: option, control: false, command: false)) }
+for c in "Saarth " { precondition(keys.key(0, String(c), option: false, control: false, command: false)) }
+precondition(keys.text == "make sure Saarth does", keys.text)
+precondition(DictationData.correction("make sure start to does", keys.text)?.heard == "start to", "replayed fix")
+var ends = DictationData.Replay("hi")
+precondition(!ends.key(36, "\r", option: false, control: false, command: false), "Return")
+precondition(!ends.key(9, "v", option: false, control: false, command: true), "⌘V")
+precondition(!ends.key(126, "\u{F700}", option: false, control: false, command: false), "up arrow")
+precondition(ends.key(51, "", option: false, control: false, command: false) && ends.key(4, "h", option: false, control: true, command: false) && !ends.key(51, "", option: false, control: false, command: false), "deleting past the dictated words")
 for text in ["Hello", "Hello Sarth. again", "Changed everything.", "Hello 123.", "Hello Sarth.", "Hi Saarth."] {
     precondition(DictationData.correction("Hello Sarth.", text) == nil, text)
 }
@@ -97,8 +119,8 @@ struct Prefs {
 ''' + store + r'''
 precondition(DictationData.word("Saarth") && DictationData.fix("Sarth", "Saarth"), "saved fix")
 precondition(DictationData.fixed("sarth met Sarth's friend, not Sarthak.") == "Saarth met Saarth's friend, not Sarthak.", "whole-word swap")
-precondition(DictationData.word("cache") && !DictationData.fix("cash", "cache"), "real heard word")   // a real heard word stays: only a hint
-precondition(DictationData.fixed("cash it") == "cash it", "real word swapped")
+precondition(DictationData.word("cache") && DictationData.fix("cash", "cache"), "real heard word kept for hints")
+precondition(DictationData.fixed("cash it") == "cash it", "real word swapped")   // only cleanup, with context, may change it
 precondition(!DictationData.fix("Bob", "Robert"), "non-dictionary fix")   // only a dictionary word gets a fix
 precondition(DictationData.word("vexlar") && DictationData.fix("vexlor", "vexlar"), "lowercase fix")
 precondition(DictationData.fixed("Vexlor then vexlor.") == "Vexlar then vexlar.", "capital kept")
@@ -120,7 +142,29 @@ print("learned fixes ok")
             self.assertIn('["Saarth", "Atticus"]', request)
             self.assertIn('Spell my name Saarth.', request)
             self.assertNotIn('bad', request)
-            self.assertEqual(atticus.dictate_result('say Sarth', '<cleaned>Say Saarth.</cleaned>', request), 'Say Saarth.')
+            self.assertEqual(atticus.dictate_result('say Sarth', '<cleaned>Say Saarth.</cleaned>', {'Sarth': 'Saarth'}), 'Say Saarth.')
+
+    def test_cleanup_gets_sound_alike_hints_and_may_write_the_name(self):
+        import atticus
+        prefs = {'dictateWords': ['Saarth'], 'dictateFixes': {'some veto': 'Saarth', 'old': 'Gone'}}
+        with patch.object(atticus, 'pref', side_effect=lambda k, d=None: prefs.get(k, d)), \
+             patch.object(atticus, 'relevant_rules', return_value=''):
+            self.assertEqual(atticus.dictate_hints('Can you make sure Sarda does that?', ['Saarth']), {'Sarda': 'Saarth'})
+            self.assertEqual(atticus.dictate_hints('You make sure some veto that.', ['Saarth']), {'some veto': 'Saarth'})   # a learned heard form
+            self.assertEqual(atticus.dictate_hints('Saarth sorted it', ['Saarth']), {})   # already said right
+            self.assertEqual(atticus.dictate_hints('Hi there', ['Saarth']), {})
+            self.assertEqual(atticus.dictate_hints('Can you ask some of you to do that?', ['Semva']).get('some of you'), 'Semva')
+            text = 'You make sure start to does that.'
+            request = atticus.dictate_spellings(text)
+            self.assertIn('"start": "Saarth"', request)
+            hints = atticus.dictate_hints(text, ['Saarth'])
+            self.assertEqual(atticus.dictate_result(text, '<cleaned>You make sure Saarth does that.</cleaned>', hints), 'You make sure Saarth does that.')
+            ordinary = 'Send the update to him this afternoon please.'
+            changed = '<cleaned>Send the update to Saarth this afternoon please.</cleaned>'
+            self.assertEqual(atticus.dictate_result(ordinary, changed, {}), ordinary)
+            self.assertEqual(atticus.dictate_result(ordinary, changed, {'him': 'Saarth'}),
+                             'Send the update to Saarth this afternoon please.')
+        self.assertEqual((atticus.dictate_sound('Saarth'), atticus.dictate_sound('start to'), atticus.dictate_sound('André')), ('srt', 'strt', 'amtr'))   # same as DictationData.sound
 
     def test_correction_window_is_scoped_and_secure_before_read(self):
         source = (ROOT / 'Atticus.swift').read_text()
@@ -132,7 +176,13 @@ print("learned fixes ok")
         self.assertLess(monitor.index('kAXSecureTextFieldSubrole'), monitor.index('target.value'))
         poll = monitor[monitor.index('Timer.scheduledTimer'):]
         self.assertLess(poll.index('kAXSecureTextFieldSubrole'), poll.index('target.value'))
-        self.assertNotIn('addGlobalMonitor', monitor)
+        # Keys are read only where the field can't be: in the dictated app, never under secure input, for 20 s, then the monitor goes.
+        self.assertLess(monitor.index('kAXSecureTextFieldSubrole'), monitor.index('replayEdits(value'))
+        replay = source[source.index('    func replayEdits('):source.index('    func stopReplay()')]
+        for guard in ['dictateID != id', 'frontmostApplication != app', 'IsSecureEventInputEnabled() ? "secure input"', 'guard why == nil',
+                      'withTimeInterval: 20', 'stopReplay()']:
+            self.assertIn(guard, replay)
+        self.assertIn('NSEvent.removeMonitor(editKeys)', source[source.index('    func stopReplay()'):])
         capture = source[source.index('    static func capture('):source.index('    var caret:')]
         self.assertLess(capture.index('kAXSecureTextFieldSubrole'), capture.index('kAXValueAttribute'))
         session = source[source.index('    func captureDictationSelection()'):source.index('    func start()')]

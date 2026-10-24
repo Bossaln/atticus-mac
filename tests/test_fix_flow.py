@@ -54,7 +54,7 @@ class FlowTests(unittest.TestCase):
         move = atticus.MainMove('WAIT preserve the task', p)
         self.addCleanup(move.close)
         move.elapsed = 16
-        move.record({'message': {'content': [{'type': 'text', 'text': '[text] Reading'}, {'type': 'tool_use', 'id': 'read', 'name': 'Read', 'input': {}}]}})
+        move.record({'message': {'content': [{'type': 'tool_use', 'id': 'read', 'name': 'Read', 'input': {}}]}})
         def stopped(_):
             files = list((Path(self.root.name)/'pending-handoffs').glob('*.json'))
             self.assertEqual(len(files), 1)
@@ -65,7 +65,7 @@ class FlowTests(unittest.TestCase):
         other = atticus.MainMove('Keep working', p)
         self.addCleanup(other.close)
         other.elapsed = 16
-        other.record({'message': {'content': [{'type': 'text', 'text': '[text] Reading'}, {'type': 'tool_use', 'id': 'read', 'name': 'Read', 'input': {}}]}})
+        other.record({'message': {'content': [{'type': 'tool_use', 'id': 'read', 'name': 'Read', 'input': {}}]}})
         with patch.object(atticus, 'persist_handoff', side_effect=OSError('disk full')), patch.object(atticus, 'stop_claude') as stop, contextlib.redirect_stdout(io.StringIO()):
             other.poll()
         self.assertFalse(other.moved)
@@ -255,7 +255,7 @@ class FlowTests(unittest.TestCase):
         self.assertIn('THE CURRENT USER REQUEST', second.stdin.write.call_args.args[0])
 
     def test_draft_insert_replace_point_and_guide_protocols_disable_even_manual_move(self):
-        for block in [{'type': 'text', 'text': marker} for marker in ('[draft] text', '[insert] text', '[replace] text', '[point 0 1 2]', '[show] Finding the control')] + [
+        for block in [{'type': 'text', 'text': marker} for marker in ('[draft] text', '[insert] text', '[replace] text', '[point 0 1 2]')] + [
                 {'type': 'tool_use', 'id': 'draw', 'name': 'Bash', 'input': {'command': atticus.DRAW + ' --help'}}]:
             with self.subTest(block=block):
                 p = Mock(ask=self.root.name, waiting=threading.Event())
@@ -268,67 +268,6 @@ class FlowTests(unittest.TestCase):
                     move.poll()
                 self.assertFalse(move.moved)
                 stop.assert_not_called()
-
-    def walkthrough_run(self, note, final):
-        pick = atticus.PICK + ' "Which ledger?" "Q3 ledger" "Q4 ledger"'
-        held = []
-        def stream():
-            yield json.dumps({'type': 'stream_event', 'event': {'type': 'content_block_delta', 'delta': {'type': 'text_delta', 'text': note}}})
-            held.append(os.path.exists(atticus.show_file(self.root.name)))   # before the tool call even arrives, as the CLI's hook may run first
-            yield json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': note}, {'type': 'tool_use', 'id': 'c', 'name': 'Bash', 'input': {'command': pick}}]}})
-            yield json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'c', 'content': 'Q4 ledger'}]}})
-            yield json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': final}]}})
-            yield json.dumps({'type': 'result', 'result': final, 'total_cost_usd': 0})
-        first = Mock(ask=self.root.name, returncode=0, stdin=Mock(), pid=0, stdout=stream())
-        second = Mock(ask=self.root.name, returncode=0, stdin=Mock(), stdout=[json.dumps({'type': 'result', 'result': 'Step one is on screen.', 'total_cost_usd': 0})])
-        with patch.dict(os.environ, {'ATTICUS_UI': '1', 'ATTICUS_CARET': '', 'ATTICUS_SELECTION': ''}), patch.object(atticus, 'selection_context', return_value=''), \
-             patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'relay'), patch.object(atticus, 'preview_commands'), \
-             patch.object(atticus, 'start_claude', return_value=second) as start, patch.object(atticus, 'stop_claude'), patch.object(atticus, 'running_app', side_effect=lambda app: app), \
-             patch.object(atticus, 'work_page', return_value={}), patch.object(atticus.threading, 'Timer'), contextlib.redirect_stdout(io.StringIO()) as output:
-            reply, _, _ = atticus.run('Context: Front app: Lumen Ledger.', first, request='Show me how to lock this ledger')
-        self.held = held[0]
-        return reply, output.getvalue(), start, second
-
-    def test_a_walkthrough_stays_in_the_box_through_a_choice_and_a_background_ask_still_moves(self):
-        agent = '[agent {"title":"Ledger lock","brief":"Lock the ledger"}]'
-        reply, output, start, second = self.walkthrough_run('[show] Checking your screen', agent)
-        self.assertEqual(reply, 'Step one is on screen.')
-        self.assertNotIn('⤴', output); start.assert_called_once()
-        self.assertIn('requires main-window delivery', second.stdin.write.call_args.args[0])
-        self.assertIn('show', atticus.run.modes)   # survives the routing retry, so main() still checks for draw()'s receipt
-        self.assertTrue(self.held)   # the gate holds the walkthrough's first tool, its choice and its retry to look, read, pick and draw
-        self.assertIn('· Checking your screen', output); self.assertNotIn('[show]', output)
-        os.remove(atticus.show_file(self.root.name))
-        for note in ('Checking your screen', '[text] Checking your screen'):   # no [show]: a real background ask is not stolen
-            reply, output, start, _ = self.walkthrough_run(note, agent)
-            self.assertEqual(reply, ''); self.assertEqual(output.count('⤴ '), 1); start.assert_not_called()
-            self.assertNotIn('show', atticus.run.modes); self.assertFalse(self.held); self.assertNotIn('[text]', output)
-        reply, *_ = self.walkthrough_run('[text]', '[text]\n' + agent)   # a decision before a directive never hides it
-        self.assertEqual(reply, '')
-
-    def test_a_walkthrough_never_moves_by_itself_after_a_choice_or_continuation(self):
-        p = Mock(ask=self.root.name, waiting=threading.Event())
-        move = atticus.MainMove('Show me how to lock this ledger', p)
-        move.record({'message': {'content': [{'type': 'text', 'text': '[show] Checking your screen'},
-                                             {'type': 'tool_use', 'id': 'pick', 'name': 'Bash', 'input': {'command': atticus.PICK + ' "Which ledger?" "A" "B"'}}]}})
-        for i in range(3): move.record({'message': {'content': [{'type': 'tool_use', 'id': f'w{i}', 'name': 'Bash', 'input': {'command': atticus.WINDOW + f' L{i}'}}]}})
-        move.elapsed = 60; Path(move.answer).write_text('go')
-        with patch.object(atticus, 'stop_claude') as stop, contextlib.redirect_stdout(io.StringIO()):
-            move.poll(); move.close()
-            after = atticus.MainMove('Show me how to lock this ledger', p); self.addCleanup(after.close)   # its retry or continuation in the same ask
-            after.elapsed = 60; after.poll()
-        self.assertFalse(move.moved or after.moved); self.assertTrue(after.local_delivery); stop.assert_not_called()
-
-    def test_an_undecided_ask_never_moves_by_itself_but_the_user_can_move_it(self):
-        self.prefs.update(draw=True); self.addCleanup(self.prefs.update, draw=False)   # with Drawings off there is no decision to wait for
-        p = Mock(ask=self.root.name, waiting=threading.Event())
-        move = atticus.MainMove('Lock this ledger', p); self.addCleanup(move.close)
-        for i in range(3): move.record({'message': {'content': [{'type': 'tool_use', 'id': f'w{i}', 'name': 'Bash', 'input': {'command': atticus.WINDOW + f' L{i}'}}]}})
-        move.elapsed = 60
-        with patch.object(atticus, 'stop_claude') as stop, patch.object(atticus, 'persist_handoff'), contextlib.redirect_stdout(io.StringIO()):
-            move.poll(); self.assertFalse(move.moved); stop.assert_not_called()   # it may still say [show]
-            Path(move.answer).write_text('go'); move.poll()
-        self.assertTrue(move.moved)
 
     def test_completed_context_matches_followups_without_duplicate_raw_results(self):
         for title, brief, status in [('Audio report', 'Compare budget microphones', 'done'),

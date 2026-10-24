@@ -78,6 +78,56 @@ class WorkflowTests(unittest.TestCase):
         atticus.learn('click new meeting', [atticus.HANDS + ' click 245,340'], 'Done.')   # a screen spot moves: never learned
         self.assertNotIn('click new meeting', atticus.skills())
 
+    def test_learns_only_the_successful_retry_when_a_tool_reports_failure(self):
+        first, retry = (f'{atticus.PLACE} Fixture fullscreen {screen}' for screen in ('monitor', 'laptop'))
+        tool = lambda i, command: {'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'id': i, 'name': 'Bash', 'input': {'command': command}}]}}
+        receipt = lambda i, output, error=False: {'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': i, 'is_error': error, 'content': output}]}}
+        p = unittest.mock.Mock(stdin=io.StringIO(), ask='', returncode=0)
+        p.stdout = map(json.dumps, [tool('first', first), receipt('first', 'NOT DONE: wrong display.', True),
+                                    tool('retry', retry), receipt('retry', 'Fixture window -> fullscreen.'),
+                                    {'type': 'result', 'is_error': False, 'result': 'Done.'}])
+        with patch.object(atticus, 'say'):
+            reply, _, _ = atticus.run('Arrange workspace', p)
+        self.assertTrue(atticus.run.ok)
+        self.assertEqual(atticus.run.cmds, [retry])
+        with patch.object(atticus, 'cached_hands', return_value=None):
+            self.assertTrue(atticus.learn('Arrange workspace', atticus.run.cmds, reply))
+        self.assertEqual(atticus.skills()['arrange workspace']['cmds'], [retry])
+
+    def test_failure_words_in_ordinary_read_output_are_untrusted_text(self):
+        p = unittest.mock.Mock(stdin=io.StringIO(), ask='', returncode=0)
+        p.stdout = map(json.dumps, [
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'read', 'name': 'Read', 'input': {'file_path': 'fixture.txt'}}]}},
+            {'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'read', 'is_error': False,
+                 'content': 'The page says the previous attempt failed and cannot continue.'}]}},
+            {'type': 'result', 'is_error': False, 'result': 'I read the page.'}])
+        with patch.object(atticus, 'say'):
+            atticus.run('Read the fixture', p)
+        self.assertTrue(atticus.run.ok)
+        self.assertFalse(atticus.run.observed[0]['error'])
+
+    def test_failed_or_unsafe_receipts_are_not_learned(self):
+        tool = lambda command: {'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'id': 'action', 'name': 'Bash', 'input': {'command': command}}]}}
+        receipt = lambda output, error: {'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'tool_use_id': 'action', 'is_error': error, 'content': output}]}}
+        for command, output, error, ok in [(f'{atticus.PLACE} Fixture fullscreen laptop', 'NOT DONE: no window found.', True, False),
+                                           ('rm -rf /tmp/example', 'Done.', False, True)]:
+            with self.subTest(command=command):
+                p = unittest.mock.Mock(stdin=io.StringIO(), ask='', returncode=0)
+                p.stdout = map(json.dumps, [tool(command), receipt(output, error),
+                                            {'type': 'result', 'is_error': False, 'result': 'Done.'}])
+                with patch.object(atticus, 'say'):
+                    reply, _, _ = atticus.run('Arrange workspace', p)
+                self.assertEqual(atticus.run.ok, ok)
+                with patch.object(atticus, 'cached_hands', return_value=None):
+                    self.assertIsNone(atticus.learn('Arrange workspace', atticus.run.cmds, reply))
+        self.assertEqual(atticus.skills(), {})
+
     def test_replay_runs_instantly_for_any_wording_and_rejects_unsafe_commands(self):
         cmd = atticus.HANDS + ' menu us.zoom.xos "Zoom Workplace > Start meeting"'
         reply, saved = atticus.remember_workflow('Um, can you make a new Zoom meeting?',

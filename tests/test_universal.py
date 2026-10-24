@@ -277,6 +277,27 @@ class UniversalTests(unittest.TestCase):
                 self.assertIsNone(atticus.fast(ask), ask)   # one bare word may be his file or tab, not <word>.com: the AI finds it
         run.assert_not_called(); show.assert_not_called()
 
+    def test_video_promises_stay_on_the_same_instant_path(self):
+        apps = {'chrome': 'Google Chrome', 'terminal': 'Terminal', 'notes': 'Notes', 'safari': 'Safari'}
+        app_named = lambda words: apps.get(words.lower().strip(' .!?'))
+        saved = {'work mode': {'cmds': [f'{atticus.PLACE} Safari full current'], 'reply': 'Work mode ready.', 'at': '2026-10-01'}}
+        ok = subprocess.CompletedProcess([], 0)
+        with patch.multiple(atticus, app_named=app_named, proc_of=lambda app: app, request_screen=lambda: 'current',
+                            place=lambda app, where='full', screen='current', title='': f'{app} window -> {where}',
+                            show=lambda target, bg=False: f'opened {target}', skills=lambda: saved, save_skills=lambda _: None,
+                            fast_hands=lambda _: None, free_focus=lambda **_: None, LAST=str(self.root / 'last_app')), \
+             patch.object(atticus.subprocess, 'run', return_value=ok):
+            expected = {
+                'Chrome left, Terminal right': 'Google Chrome: left. Terminal: right.',
+                'work mode': 'Work mode ready.',
+                'full screen Chrome': 'Google Chrome: full screen.',
+                'put Notes on the right': 'Notes: right.',
+                'open Safari': 'Opened Safari.',
+            }
+            for said, reply in expected.items():
+                with self.subTest(said=said):
+                    self.assertEqual(atticus.fast(said), reply)
+
     def test_agent_titles_start_at_the_words_that_matter(self):
         self.assertEqual(atticus.agent_title('Can you do the steps and get me the post hog API key?'), 'Get post hog API key')
         self.assertEqual(atticus.agent_title('Hey Atticus, um, can you start a Zoom meeting?'), 'Start Zoom meeting')
@@ -289,14 +310,29 @@ class UniversalTests(unittest.TestCase):
         show.assert_not_called()
 
     def test_app_names_derive_from_installed_apps_and_ambiguous_names_defer(self):
-        with patch.object(atticus.os.path, 'isdir', return_value=True), patch.object(atticus.os, 'listdir', return_value=['Fixture Alpha Editor.app', 'Unfamiliar Editor.app']):
+        empty = Mock(returncode=0); empty.communicate.return_value = ('', '')
+        with patch.object(atticus, '_APPS_CACHE', (0, set())), patch.object(atticus.os.path, 'isdir', return_value=True), \
+             patch.object(atticus.os, 'listdir', return_value=['Fixture Alpha Editor.app', 'Unfamiliar Editor.app']), \
+             patch.object(atticus.subprocess, 'Popen', return_value=empty):
             self.assertEqual(atticus.app_named('fa editor'), 'Fixture Alpha Editor')
             self.assertEqual(atticus.app_named('fixturealphaeditor'), 'Fixture Alpha Editor')
             self.assertIsNone(atticus.app_named('editor'))
             self.assertIsNone(atticus.app_named('editor history'))
-        with patch.object(atticus.os.path, 'isdir', return_value=True), \
-             patch.object(atticus.os, 'listdir', side_effect=lambda d: ['Finder.app'] if d == '/System/Library/CoreServices' else []):
+        with patch.object(atticus, '_APPS_CACHE', (0, set())), patch.object(atticus.os.path, 'isdir', return_value=True), \
+             patch.object(atticus.os, 'listdir', side_effect=lambda d: ['Finder.app'] if d == '/System/Library/CoreServices' else []), \
+             patch.object(atticus.subprocess, 'Popen', return_value=empty):
             self.assertEqual(atticus.app_named('finder'), 'Finder')
+
+    def test_app_discovery_uses_fast_cached_spotlight_results_with_folder_fallback(self):
+        found = Mock(returncode=0)
+        found.communicate.return_value = ('/Applications/Bundle/Pages.app\n/System/Applications/Notes.app\n', '')
+        with patch.object(atticus, '_APPS_CACHE', (0, set())), patch.object(atticus.os.path, 'isdir', return_value=True), \
+             patch.object(atticus.os, 'listdir', return_value=['Fallback.app']), \
+             patch.object(atticus.subprocess, 'Popen', return_value=found) as run:
+            self.assertEqual(atticus.app_named('Pages'), 'Pages')
+            self.assertIn('Fallback', atticus.installed_apps())
+            self.assertEqual(run.call_count, 1)
+            found.communicate.assert_called_once_with(timeout=.08)
 
     def test_general_method_and_prompt_budget(self):
         self.assertIn('read text →', atticus.SYSTEM)

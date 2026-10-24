@@ -67,8 +67,6 @@ class StreamTests(unittest.TestCase):
         long = ANSWER + ' '
         self.assertEqual(atticus.streamed_answer(long), ANSWER)
         self.assertEqual(atticus.streamed_answer(ANSWER[:100]), '')   # could still be a 3-8 word note
-        self.assertEqual(atticus.streamed_answer('[text] ' + long), ANSWER)   # a text decision streams as before; [show] or a half tag never does
-        for held in ('[show] ' + long, '[tex', '[text][draft] ' + long): self.assertEqual(atticus.streamed_answer(held), '', held)
         for held in ('[draft] ' + long, '[insert] ' + long, '[replace] ' + long, '  \n[agent {\n  "title": "x",\n' + long,
                      '```json\n[agent ' + long, '[sonnet]', '[steer {"id":"a","text":"' + long, '[agent-profile {' + long):
             self.assertEqual(atticus.streamed_answer(held), '', held)
@@ -249,6 +247,15 @@ starts.forEach((s,i)=>{check(new Set(s).size===1,'a word re-rendered with the sa
   check(!i||s[0]>=starts[i-1][0],'words fade in reading order: '+a.words()[i].textContent+' '+s+' after '+starts[i-1])});
 check(Math.max(...starts.flat())-now<=900,'a long backlog catches up instead of lagging');
 ''')
+
+    def test_closed_output_pipe_cancels_without_a_traceback(self):
+        with patch('builtins.print', side_effect=BrokenPipeError), patch('sys.stdout', io.StringIO()), \
+             patch.object(atticus, 'stop_workers', side_effect=SystemExit(0)) as stop:
+            with self.assertRaises(SystemExit) as ended:
+                atticus.say('✓', 'Finished.')
+            atticus.sys.stdout.close()
+        self.assertEqual(ended.exception.code, 0)
+        stop.assert_called_once_with()
 
     @unittest.skipUnless(shutil.which('node'), 'Node runs the box handler')
     def test_a_streamed_blocks_marker_background_or_border_never_shows_before_its_first_word(self):

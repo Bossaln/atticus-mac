@@ -64,6 +64,25 @@ for (const [label, keys] of Object.entries(want)) if (JSON.stringify(capsOf(labe
         self.assertNotIn('Checking your Claude sign-in', self.page)
         self.assertIn("$('wk-brain').hidden = $('wk-plan').hidden = provider === 'server'", self.page)   # no plan to choose on a custom server
 
+    def test_setup_checks_one_provider_process_at_a_time(self):
+        swift = (ROOT / 'Atticus.swift').read_text()
+        check = swift.split('    func checkPlan() {', 1)[1].split('\n    }', 1)[0]
+        self.assertIn('guard !checkingPlan else { return }', check)
+        self.assertLess(check.index('checkingPlan = true'), check.index('Onboarding.plan'))
+        self.assertIn('self?.checkingPlan = false', check)
+
+    def test_voice_asks_use_the_mac_language(self):
+        swift = (ROOT / 'Atticus.swift').read_text()
+        speech = swift.split('    func speechModule(dictate: Bool = false)', 1)[1].split('    func prepareSpeech()', 1)[0]
+        self.assertIn('current = Locale.current', speech)
+        self.assertIn('language.languageCode == current.language.languageCode', speech)
+        self.assertIn(': SpeechTranscriber(locale: locale, preset: .progressiveTranscription)', speech)
+        start = swift.split('    func start(dictate: Bool)', 1)[1].split('    func heard(', 1)[0]
+        self.assertIn('dictate || SFSpeechRecognizer.authorizationStatus() == .authorized', start)
+        self.assertIn('Privacy & Security → Speech Recognition.', start)
+        prepare = swift.split('    func prepareSpeech()', 1)[1].split('    var text =', 1)[0]
+        self.assertIn('guard !preparingSpeech else { return }', prepare)
+
 
 if __name__ == '__main__':
     unittest.main()

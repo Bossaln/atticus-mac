@@ -57,6 +57,15 @@ class SpotifyTests(unittest.TestCase):
              patch.object(atticus, 'get', side_effect=[page, json.dumps({'title': 'Fixture song'})]):
             self.assertEqual(atticus.spotify_item('fixture song'), (f'spotify:track:{track}', 'Fixture song'))
 
+    def test_web_lookup_rejects_a_weak_title_before_playing(self):
+        track = 'W' * 22
+        page = f'https://open.spotify.com/track/{track}'
+        with patch.object(atticus, 'playlist', return_value=None), \
+             patch.object(atticus, 'get', side_effect=[page, json.dumps({'title': 'Unrelated public playlist'})]), \
+             patch.object(atticus.subprocess, 'run') as run:
+            self.assertIsNone(atticus.play('fixture playlist'))
+        run.assert_not_called()
+
     def test_play_uses_shared_lookup_and_keeps_spotify_behind(self):
         item = ('spotify:track:' + 'B' * 22, 'Fixture song')
         with patch.object(atticus, 'spotify_item', return_value=item) as lookup, \
