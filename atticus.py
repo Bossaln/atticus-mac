@@ -28,6 +28,7 @@ import fcntl
 import atexit, base64, difflib, hashlib, html, json, plistlib, shutil, threading, os, re, select, signal, stat, subprocess, sys, tempfile, time, urllib.parse, urllib.request
 import unicodedata
 import uuid
+import traceback
 from functools import lru_cache, wraps
 from collections import Counter
 from datetime import datetime
@@ -829,6 +830,11 @@ def question_path(directory):
 def ask_user(j, secs):
     """Hands a question to relay() (the box, or a dialog) and waits for the answer. None: no answer in time, or cancelled."""
     d, parent = os.environ['ATTICUS_ASK'], os.getppid()
+    def finish(answer):
+        if 'q' in j and not j.get('retry') and not j.get('need') and answer not in ('y', 'task'):
+            try: Path(os.path.join(d, 'declined')).touch()   # share the actual decision, never infer denial from model text
+            except FileNotFoundError: pass   # the cancelled ask's owner already removed its folder
+        return answer
     deadline = time.monotonic() + secs
     fd = os.open(os.path.join(d, 'permission.lock'), os.O_RDWR | os.O_CREAT, 0o600)
     with os.fdopen(fd, 'r+') as lock:
@@ -836,19 +842,19 @@ def ask_user(j, secs):
         while True:
             try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); break
             except BlockingIOError:
-                if time.monotonic() >= deadline or os.getppid() != parent: return None
+                if time.monotonic() >= deadline or os.getppid() != parent: return finish(None)
                 time.sleep(.05)
-        if time.monotonic() >= deadline or os.getppid() != parent: return None
+        if time.monotonic() >= deadline or os.getppid() != parent: return finish(None)
         answers = os.path.join(DIR, 'answers'); os.makedirs(answers, mode=0o700, exist_ok=True)
         a = os.path.join(answers, uuid.uuid4().hex)
         private_json(question_path(d), {**j, '_a': a})
         while time.monotonic() < deadline:
             if os.path.exists(a) or os.getppid() != parent: break
             time.sleep(.02)   # the allowed action starts right after the click
-        if not os.path.exists(a): return None
+        if not os.path.exists(a): return finish(None)
         with open(a) as f: answer = f.read().strip()
         os.remove(a)
-        return answer
+        return finish(answer)
 
 
 def pick(question, options):
@@ -3423,7 +3429,27 @@ def report_error(kind, **props):
         posthog('error', {'kind': kind, **props})
 
 
-def exception_error(exc_type, tb, value=None):
+def failure_why(detail, custom=False):
+    """Classify backend errors, never the user's request or the model's ordinary answer."""
+    for why, pattern in (
+        ('signed_out', r'\b(?:o?auth(?:enticate|entication|orization)?|unauthori[sz]ed)\b|\b401\b|invalid (?:api )?key|not logged in|sign.?in'),
+        ('rate_limited', r'rate.?limit|usage limit|too many requests|\b429\b'),
+        ('offline', r'network|connect|dns|timed? ?out|timeout'),
+        ('unavailable', r'overload|unavailable|service error|\b5\d\d\b'),
+        ('sandbox', r'sandbox'),
+    ):
+        if re.search(pattern, detail, re.I): return why
+    # HTTP client errors mean the server rejected the configured request (model, tools, API compatibility).
+    return 'server_rejected' if custom and re.search(r'\b4\d\d\b', detail) else 'stopped'
+
+
+def report_worker_failure(worker, model, why):
+    if why == 'cancelled': return
+    setup = why in ('setup_needed', 'provider_needed', 'model_missing', 'server_rejected', 'signed_out', 'rate_limited', 'offline', 'unavailable', 'sandbox')
+    report_error('setup' if setup else 'worker_exit', worker=worker, model=model if model in ('haiku', 'sonnet', 'opus') else 'custom', why=why)
+
+
+def exception_error(exc_type, tb, value=None, *, kind='exception', **props):
     ours = None   # the last Atticus line on the way down: a crash inside subprocess.py still says which call failed
     while tb and tb.tb_next:
         if tb.tb_frame.f_code.co_filename == ME: ours = tb
@@ -3431,7 +3457,7 @@ def exception_error(exc_type, tb, value=None):
     if tb and tb.tb_frame.f_code.co_filename == ME: ours = tb
     frame = tb.tb_frame if tb else None
     errno = value.errno if isinstance(value, OSError) else None   # OSError's own field: never a custom attribute that could throw here
-    report_error('exception', exception=getattr(exc_type, '__name__', 'Exception'),
+    report_error(kind, **props, exception=getattr(exc_type, '__name__', 'Exception'),
                  file=os.path.basename(frame.f_code.co_filename) if frame else '',
                  line=tb.tb_lineno if tb else 0, function=frame.f_code.co_name if frame else '',
                  at_line=ours.tb_lineno if ours else 0, at_function=ours.tb_frame.f_code.co_name if ours else '',
@@ -3444,10 +3470,22 @@ def install_exception_hooks():
         exception_error(exc_type, tb, value)
         previous_sys(exc_type, value, tb)
     def thread_hook(args):
+        if issubclass(args.exc_type, SystemExit): return
+        if issubclass(args.exc_type, BrokenPipeError) and stdout_closed():
+            sys.stdout = open(os.devnull, 'w')
+            return stop_workers()
         exception_error(args.exc_type, args.exc_traceback, args.exc_value)
         if previous_thread: previous_thread(args)
     sys.excepthook = system_hook
     if previous_thread: threading.excepthook = thread_hook
+
+
+def stdout_closed():
+    try:
+        poll = select.poll(); poll.register(sys.stdout, select.POLLERR | select.POLLHUP)
+        return bool(poll.poll(0))
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def dictation_event(mode, secs, cleanup, fallback, timed_out, insert):
@@ -3549,7 +3587,6 @@ def end_turn(status='cancelled', emit=True):
         checkpoint(status=status)
         if emit:
             ask_done(TURN)
-            if status == 'cancelled': report_error('stopped')
 
 
 atexit.register(end_turn)
@@ -3788,6 +3825,9 @@ def stop_claude(p):
 def stop_workers(*_):
     global STOPPING
     STOPPING = True
+    if threading.current_thread() is not threading.main_thread():
+        os.kill(os.getpid(), signal.SIGTERM)   # only the main thread can change signal handlers and end the process
+        return
     end_turn()
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     if os.getpgrp() == os.getpid():
@@ -5106,14 +5146,14 @@ class MainMove:
         with self.lock:
             if self.closed or self.moved: return
             if self.local_delivery:
-                if self.ready: print('⇢ {}', flush=True); self.ready = False
+                if self.ready: say('⇢', '{}'); self.ready = False
                 return
             now = time.monotonic(); waiting = self.p.waiting.is_set()
             if not self.ready:   # movable once the words are confirmed; the clock starts then too
                 commit = os.environ.get('ATTICUS_COMMIT')
                 if commit and not os.path.exists(commit): self.last = now; return
                 self.ready = True
-                print('⇢ ' + json.dumps({'a': self.answer}), flush=True)
+                say('⇢', json.dumps({'a': self.answer}))
             # the clock runs only while a tool runs: the model reading and writing its answer is not long work
             if not waiting and any(s.get('status') == 'in-flight' for s in self.trace.values()): self.elapsed += max(0, now - self.last)
             self.last = now
@@ -5141,8 +5181,8 @@ class MainMove:
     def close(self):
         with self.lock:
             if self.closed: return
-            if self.ready and not self.moved: print('⇢ {}', flush=True)   # nothing reads the move file now: the box drops its controls
             self.closed = True; self.done.set()
+            if self.ready and not self.moved: say('⇢', '{}')   # nothing reads the move file now: the box drops its controls
             if not self.moved: MainMove.carried[self.p.ask] = {'answer': self.answer, 'trace': self.trace, 'elapsed': self.elapsed, 'local_delivery': self.local_delivery}
         if self.thread: self.thread.join(.3)
 
@@ -5170,23 +5210,29 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     main_only = main_only or main_delivery_required()
     p = p or start_claude()
     if not p:
+        c = plan()
+        run.why = 'signed_out' if c.get('need') == 'login' else 'setup_needed'
         say('!', 'setup')   # Atticus.app opens its setup window
-        return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
+        return c['text'] + ' Atticus setup is open to fix it.', 0, []
     if getattr(p, 'ask', ''):
         save_request(p.ask, main_ask(task, request)[0])
     content = user_content(task, shots, request)
     if main_only:
         content.insert(0, {'type': 'text', 'text': 'This request requires main-window delivery. Finish here; do not emit agent, steer, or agent-profile run directives.'})
     message = json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n'
-    try:
-        p.stdin.write(message); p.stdin.close()
-    except (BrokenPipeError, ValueError):   # the warm worker quit before the ask (crash, sign-out, sleep): one fresh start
-        stop_claude(p); p = start_claude(getattr(p, 'atticus_model', None))
-        if not p:
-            say('!', 'setup')
-            return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
-        if getattr(p, 'ask', ''): save_request(p.ask, main_ask(task, request)[0])
-        p.stdin.write(message); p.stdin.close()
+    for attempt in range(2):
+        try:
+            p.stdin.write(message); p.stdin.close()
+            break
+        except (BrokenPipeError, ValueError):   # one fresh start; if it also quit, read its result/stderr through the normal failure path
+            if attempt: break
+            stop_claude(p); p = start_claude(getattr(p, 'atticus_model', None))
+            if not p:
+                c = plan()
+                run.why = 'signed_out' if c.get('need') == 'login' else 'setup_needed'
+                say('!', 'setup')
+                return c['text'] + ' Atticus setup is open to fix it.', 0, []
+            if getattr(p, 'ask', ''): save_request(p.ask, main_ask(task, request)[0])
     p.waiting = threading.Event()
     if getattr(p, 'ask', '') and getattr(p, 'relaying', False) is not True and os.environ.get('ATTICUS_RELAY_ACTIVE') != str(os.getpid()):
         p.relaying = True
@@ -5373,26 +5419,30 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         detail = '\n'.join(filter(None, [reply if result_error else '', p.errors.read(2000).strip()]))
         run.error = clean(detail)
         custom = bool(server())
+        run.why = failure_why(detail, custom)
+        if custom and run.why == 'stopped':
+            selected, available = str(pref('apiModel', '')).strip(), models()
+            if selected and available and selected not in available: run.why = 'model_missing'
         if not c['ok']:
-            run.why = 'setup_needed'; reply = c['text'] + ' Atticus setup is open to fix it.'
-        elif re.search(r'\b(?:o?auth(?:enticate|entication|orization)?|unauthori[sz]ed)\b|\b401\b|invalid (?:api )?key|not logged in|sign.?in', detail, re.I):
-            run.why = 'signed_out'
+            run.why = 'signed_out' if c.get('need') == 'login' else 'setup_needed'
+            reply = c['text'] + ' Atticus setup is open to fix it.'
+        elif run.why == 'signed_out':
             if custom:
                 reply = 'Your custom server rejected its credentials. Check its key in Settings.'
             else:
                 say('!', 'setup')
                 reply = 'Your Claude sign-in expired. Atticus setup is open to sign in again.'
-        elif re.search(r'rate.?limit|usage limit|too many requests|\b429\b', detail, re.I):
-            run.why = 'rate_limited'; reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
-        elif re.search(r'network|connect|dns|timed? ?out|timeout', detail, re.I):
-            run.why = 'offline'; reply = ('Could not connect to your custom server. Check its address and try again.' if custom else
+        elif run.why == 'rate_limited':
+            reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
+        elif run.why == 'offline':
+            reply = ('Could not connect to your custom server. Check its address and try again.' if custom else
                      'Claude could not connect. Check your internet connection and try again.')
-        elif re.search(r'overload|unavailable|service error|\b5\d\d\b', detail, re.I):
-            run.why = 'unavailable'; reply = ('Your custom server' if custom else 'Claude') + ' is temporarily unavailable. Please try again.'
-        elif re.search(r'sandbox', detail, re.I):
-            run.why = 'sandbox'; reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
+        elif run.why == 'unavailable':
+            reply = ('Your custom server' if custom else 'Claude') + ' is temporarily unavailable. Please try again.'
+        elif run.why == 'sandbox':
+            reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
         else:
-            say('!', 'setup'); run.why = 'stopped'
+            say('!', 'setup')
             reason = ' '.join(clean(detail).split()) or f'exit code {p.returncode}'
             reply = f'{"Your custom server" if custom else "Claude"} stopped: {reason}. Atticus setup is open; choose Set Up, then try again.'
     if auto_work and reply.endswith('[done]'):   # accepted from older warmed prompts during an update
@@ -5402,6 +5452,8 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     verified = not run.work or evidence
     run.cmds = [c for i, c in enumerate(cmds) if i not in bad] if base_ok and verified else []
     run.ok = base_ok and verified
+    if not run.why and getattr(p, 'ask', '') and os.path.exists(os.path.join(p.ask, 'declined')):
+        run.ok, run.why, run.cmds = False, 'cancelled', []
     if not run.ok and not run.why:
         run.why = next(w for w, hit in (('timed_out', timed_out[0]), ('not_finished', not completed), ('tool_failed', last_failed),
                                         ('unverified', base_ok), ('no_reply', not reply), ('other', True)) if hit)
@@ -5442,9 +5494,11 @@ def run_devin(task, shots=(), request=None):
     run.error = ''
     run.ok = False
     if not shutil.which('devin'):
+        run.why = 'setup_needed'
         say('!', 'setup')   # Atticus.app opens its setup window
         return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
     if not wait_commit():
+        run.why = 'cancelled'
         return 'The request was cancelled before the transcript was confirmed.', 0, []
     ask = tempfile.mkdtemp(prefix='atticus-ask-')   # the choices card (and hands events) talk through it
     atexit.register(shutil.rmtree, ask, True)   # however this run ends
@@ -5494,7 +5548,9 @@ def run_devin(task, shots=(), request=None):
         p.errors.seek(0)
         detail = p.errors.read(200).strip() or reply[:200]
         run.error = clean(detail)
+        run.why = failure_why(detail) if c['ok'] else 'setup_needed'
         if not c['ok']:
+            if c.get('need') == 'login': run.why = 'signed_out'
             reply = c['text'] + ' Atticus setup is open to fix it.'
         else:
             say('!', 'setup')
@@ -5504,6 +5560,8 @@ def run_devin(task, shots=(), request=None):
         warning = 'Atticus could not delete Devin’s saved session. Remove it in Devin before continuing.'
         reply = f'{reply} {warning}'.strip()
     run.ok = success
+    if not success and timed_out: run.why = 'timed_out'
+    if not run.why and os.path.exists(os.path.join(ask, 'declined')): run.ok, run.why = False, 'cancelled'
     if p.stdout:
         p.stdout.close()
     errors.close()
@@ -5517,9 +5575,11 @@ def run_pi(task, shots=(), request=None):
     run.ok = False
     pi = shutil.which('pi')
     if not pi:
+        run.why = 'setup_needed'
         say('!', 'setup')
         return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
     if not wait_commit():
+        run.why = 'cancelled'
         return 'The request was cancelled before the transcript was confirmed.', 0, []
     ask = tempfile.mkdtemp(prefix='atticus-ask-')
     atexit.register(shutil.rmtree, ask, True)
@@ -5576,21 +5636,26 @@ def run_pi(task, shots=(), request=None):
     run.cmds = [] if failed or p.returncode or timed_out[0] or not reply else cmds
     run.ok = bool(reply and not failed and not p.returncode and not timed_out[0])
     if timed_out[0]:
+        run.why = 'timed_out'
         reply = 'Pi timed out before finishing. Please try again.'
     elif p.returncode:
         errors.seek(0); detail = errors.read(500).strip()
         run.error = clean(detail)
-        if re.search(r'auth|credential|model|provider|login', detail, re.I):
+        run.why = failure_why(detail)
+        if run.why == 'stopped' and re.search(r'auth|credential|model|provider|login', detail, re.I): run.why = 'provider_needed'
+        if run.why in ('signed_out', 'provider_needed'):
             say('!', 'setup')
             reply = 'Pi needs a provider and model. Atticus setup is open to fix it.'
         else:
             say('!', 'setup')
             reply = f'Pi stopped: {clean(detail) or f"exit code {p.returncode}"}. Atticus setup is open; choose Set Up, then try again.'
     elif not reply and failed:
+        run.why = 'tool_failed'
         reply = 'The last Pi tool failed, so I could not verify that the request was completed. Please try again.'
     if p.stdout:
         p.stdout.close()
     errors.close()
+    if not run.why and os.path.exists(os.path.join(ask, 'declined')): run.ok, run.why, run.cmds = False, 'cancelled', []
     return reply or 'Pi returned an empty answer. Please try again.', cost, steps
 
 
@@ -7218,7 +7283,7 @@ def main():
         log_turn(' '.join(args[1:]), r, started, model='instant',
                  path='shortcut' if getattr(fast, 'shortcut', None) else 'instant', attempt_usd=[])
         if r.startswith('The user said no.'):
-            print('! ' + r, flush=True); sys.exit(1)
+            return say('!', r)
         return print('✓ ' + r, flush=True)
     if args[:1] == ['--play']:
         return print(play(' '.join(args[1:])) or 'nothing found on Spotify by that name')
@@ -7467,8 +7532,16 @@ def main():
         remember_turn(task, said, agents=[h['handoffId'] for h in run.handoffs if h.get('handoffId')])
         log_turn(TURN.get('task', task), said, t, cost, steps, run.ran, model=model, escalated=escalated, escalate_why=escalate_why, attempt_usd=attempt_usd)
         return True
+    def cancelled():
+        if getattr(run, 'why', '') not in ('', 'cancelled'): return False
+        if getattr(run, 'why', '') != 'cancelled' and not os.path.exists(os.path.join(os.environ['ATTICUS_ASK'], 'declined')): return False
+        run.ok, run.why = False, 'cancelled'
+        end_turn('cancelled', emit=False)
+        log_turn(TURN.get('task', task), reply, t, cost, steps, run.ran, model=model, attempt_usd=attempt_usd)
+        say('!', reply)
+        return True
     if handed_off(): return
-    if not wait_commit(): return
+    if not wait_commit() or cancelled(): return
     previous = []
     # One continuation, including CLI asks; no task classifier or second fast-path call.
     if offer_model and (reply.rstrip().endswith('[sonnet]') or not run.ok and run.work):   # a trailing [sonnet]: the model stopped short of a reachable goal
@@ -7502,6 +7575,7 @@ def main():
             run.ran = previous + run.ran
             reply, cost, steps = again or reply, None if cost is None or more is None else cost + more, steps + extra
             if handed_off(): return
+    if cancelled(): return
     if previous: run.cmds = []   # continuation commands alone cannot replay the whole goal
     failed_shortcut = failed_replay or (previous_shortcut if previous_shortcut and '[unlearn]' in reply else None)   # a replay that failed its own check goes, tag or not
     retry_key = failed_shortcut['key'] if failed_shortcut and failed_replay and failed_shortcut.get('failed_at') == 0 else ''
@@ -7536,7 +7610,7 @@ def main():
     failed = failed_action_reply(reply, run.work)
     final_ran = list(failed_replay.get('output', ())) + run.ran if failed_replay else run.ran
     if not run.ok or failed: report(task, reply, final_ran, time.time() - t, 'error' if not run.ok else 'could not do it')
-    if not run.ok: report_error('worker_exit', worker=client(), model=model, why=getattr(run, 'why', '') or 'other')
+    if not run.ok: report_worker_failure(client(), model, getattr(run, 'why', '') or 'other')
     learned_entry = skills().get(learned_key) if learned_key else None
     learned_turn = {'key': learned_key, 'commands': learned_entry['cmds'],
                     'output': [f'{o.get("action", "")} => {str(o.get("result", ""))[:400]}' for o in run.observed] or [reply[:400]]} if learned_entry else None
@@ -7561,6 +7635,23 @@ def main():
         Path(asked).write_text(time.strftime('%Y-%m-%d')); say('!', 'improve')
     if os.environ.get('ATTICUS_UI') != '1':   # typed from the menu bar: no overlay, so a notification
         osa('on run argv\ndisplay notification (item 1 of argv) with title "Atticus"\nend run', reply)
+
+
+def run_main():
+    try:
+        main()
+    except KeyboardInterrupt:
+        stop_workers()
+    except Exception as error:
+        if isinstance(error, BrokenPipeError) and stdout_closed():
+            sys.stdout = open(os.devnull, 'w')
+            return stop_workers()
+        try:
+            end_turn('crashed')
+        finally:
+            exception_error(type(error), error.__traceback__, error, kind='worker_exit', worker='python')
+            traceback.print_exception(type(error), error, error.__traceback__)
+            sys.exit(70)   # handled and reported; Swift reports all other abnormal exits
 
 
 if __name__ == '__main__':
@@ -7644,7 +7735,4 @@ if __name__ == '__main__':
         assert risky('echo x >> ~/.zshrc') == 'Change a file?' == risky('curl -s -o ~/x https://y') and not risky('osascript -e x 2>&1; ls >/dev/null; echo > /tmp/a')
         assert risky('open -a Notes & osascript -e \'tell application "Mail" to send m\'') == 'Send this?'
         sys.exit(print('selftest ok'))
-    try: main()
-    except BaseException:
-        end_turn('crashed')
-        raise
+    run_main()

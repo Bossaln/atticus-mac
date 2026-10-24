@@ -3303,7 +3303,8 @@ final class App: NSObject, WKScriptMessageHandler {
                 try? FileManager.default.removeItem(atPath: commit)
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 if !self.ahead.isEmpty { self.proc = nil; self.ahead = ""; self.busy = !self.engine.isRunning; return }
-                if p.terminationStatus != 0 { telemetry(["error", "worker_exit", "python", String(p.terminationStatus)]) }
+                // Exit 70 means Python already reported the crash; a signal is always an unreported process death.
+                if p.terminationReason == .uncaughtSignal || (p.terminationStatus != 0 && p.terminationStatus != 70) { telemetry(["error", "worker_exit", "python", String(p.terminationStatus)]) }
                 self.busy = false; self.agentMoveFile = ""; self.guardUntil = Date().addingTimeInterval(2); self.proc = nil; self.mini.finish(); self.js("finished")   // Spotify jumps ~0.5 s after play returns
                 self.lastDone = Date()
                 if !self.answer.isEmpty { self.cue("soundDone") }

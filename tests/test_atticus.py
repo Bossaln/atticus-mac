@@ -186,10 +186,11 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
             self.assertEqual(atticus.main_model(), 'haiku')  # server() maps the alias to its chosen model
             self.assertEqual(atticus.agent_model(), 'custom')
 
-    def routing_ask(self, prefs, outcomes, *, quick=None, retry='n', tip=None):
+    def routing_ask(self, prefs, outcomes, *, quick=None, retry='n', tip=None, why=''):
         def attempt(*args, **kwargs):
             reply, ok, actions = outcomes[min(brain.call_count - 1, len(outcomes) - 1)]
             brain.ok = ok; brain.cmds = actions[:] if ok else []; brain.ran = actions[:]; brain.handoff = None; brain.work = bool(actions)
+            brain.why = why
             brain.observed = [{'action': action, 'result': 'Verified fixture state', 'error': False} for action in actions]
             prior = Path(os.environ['ATTICUS_ASK'], 'prior-work.json'); brain.prior = json.loads(prior.read_text()) if prior.exists() else None   # the ask folder goes with main()
             return reply, .001, actions[:]
@@ -207,6 +208,65 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
              patch('sys.argv', ['atticus.py', 'Fixture task']), patch('sys.stdout', io.StringIO()):
             atticus.main()
         return brain, start, ask, log
+
+    def test_a_declined_model_action_is_not_retried_or_reported_as_a_failure(self):
+        with patch.object(atticus, 'save_request', side_effect=lambda directory, _: Path(directory, 'declined').touch()), \
+             patch.object(atticus, 'report_error') as error, patch.object(atticus, 'report') as report:
+            brain, start, ask, log = self.routing_ask({'routing': 'balanced'}, [('Not done.', False, ['fixture action'])])
+        self.assertEqual(brain.call_count, 1); start.assert_not_called(); ask.assert_not_called()
+        error.assert_not_called(); report.assert_not_called()
+        self.assertEqual(atticus.TURN['status'], 'cancelled'); log.assert_called_once()
+
+    def test_declining_a_tool_does_not_hide_a_later_worker_exit(self):
+        directory = self.root / 'declined-ask'; directory.mkdir()
+        (directory / 'declined').touch()
+        p = unittest.mock.Mock(ask=str(directory), returncode=1, stdin=io.StringIO(), errors=io.StringIO('Fixture worker failure'))
+        p.stdout = [json.dumps({'type': 'user', 'message': {'content': [
+            {'type': 'tool_result', 'is_error': True, 'content': 'The user said no.'}]}})]   # exits 1 before a final result
+        with patch.object(atticus, 'plan', return_value={'ok': True}), patch.object(atticus, 'relay'), patch.object(atticus, 'say'):
+            reply, _, _ = atticus.run('Fixture task', p)
+        self.assertFalse(atticus.run.ok)
+        self.assertEqual(atticus.run.why, 'stopped')
+        self.assertIn('Claude stopped', reply)
+        with patch.object(atticus, 'save_request', side_effect=lambda directory, _: Path(directory, 'declined').touch()), \
+             patch.object(atticus, 'report') as report, patch.object(atticus, 'report_error') as error:
+            self.routing_ask({'routing': 'cheapest'}, [(reply, False, [])], why=atticus.run.why)
+        self.assertEqual(atticus.TURN['status'], 'failed')
+        report.assert_called_once()
+        error.assert_called_once_with('worker_exit', worker='claude', model='haiku', why='stopped')
+
+    def test_main_reports_one_real_failure_or_one_setup_problem(self):
+        for why, kind in [('tool_failed', 'worker_exit'), ('server_rejected', 'setup'), ('provider_needed', 'setup')]:
+            with self.subTest(why=why), patch.object(atticus, 'report_error') as sent:
+                self.routing_ask({'routing': 'cheapest'}, [('Not done.', False, [])], why=why)
+            sent.assert_called_once_with(kind, worker='claude', model='haiku', why=why)
+
+    def test_custom_server_failure_checks_its_actual_available_models(self):
+        for available, why in [(['available-model'], 'model_missing'), (['chosen-model'], 'stopped'), ([], 'stopped')]:
+            p = unittest.mock.Mock(ask='', returncode=1, stdin=io.StringIO(), stdout=[], errors=io.StringIO('Unrecognized backend failure'))
+            with self.subTest(available=available), patch.object(atticus, 'server', return_value={'ANTHROPIC_BASE_URL': 'fixture'}), \
+                 patch.object(atticus, 'pref', side_effect=lambda k, d: 'chosen-model' if k == 'apiModel' else d), \
+                 patch.object(atticus, 'models', return_value=available) as models, \
+                 patch.object(atticus, 'plan', return_value={'ok': True}), patch.object(atticus, 'say'):
+                atticus.run('Fixture task', p)
+            self.assertEqual(atticus.run.why, why); models.assert_called_once()
+
+    def test_missing_backend_preconditions_keep_the_setup_reason(self):
+        for need, why in [('login', 'signed_out'), ('install', 'setup_needed')]:
+            with self.subTest(need=need), patch.object(atticus, 'start_claude', return_value=None), \
+                 patch.object(atticus, 'plan', return_value={'ok': False, 'need': need, 'text': 'Set up the client.'}), patch.object(atticus, 'say'):
+                atticus.run('Fixture task')
+            self.assertEqual(atticus.run.why, why)
+
+    def test_saying_no_to_an_instant_cli_action_is_a_handled_exit(self):
+        with patch('sys.argv', ['atticus.py', '--fast', 'Fixture task']), \
+             patch.object(atticus, 'licensed', return_value=True), patch.object(atticus, 'ping'), \
+             patch.object(atticus, 'allow_focus'), patch.object(atticus, 'hands_command', return_value=False), \
+             patch.object(atticus, 'fast', return_value='The user said no.'), patch.object(atticus, 'remember_turn'), \
+             patch.object(atticus, 'report_error') as sent, patch('sys.stdout', io.StringIO()):
+            atticus.main()
+        sent.assert_not_called()
+        self.assertEqual(atticus.TURN['status'], 'cancelled')
 
     def test_a_slow_task_that_saved_nothing_never_suggests_remember_how_to(self):
         # "remember how to X" only reports a procedure that was already saved, so suggesting it here is a dead end
@@ -870,6 +930,7 @@ print('Ready.')
             reply, _, _ = atticus.run_pi('test')
         say.assert_called_with('!', 'setup')
         self.assertEqual(reply, 'Pi needs a provider and model. Atticus setup is open to fix it.')
+        self.assertEqual(atticus.run.why, 'provider_needed')
 
     def test_pi_ignores_malformed_events_and_uses_json_mode_images_and_atticus_gate(self):
         with tempfile.TemporaryDirectory() as root:

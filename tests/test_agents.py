@@ -304,6 +304,36 @@ class AgentTests(unittest.TestCase):
             reply,_,_=atticus.run('Request: Fixture task',dead)
         start.assert_called_once();self.assertEqual(reply,'Fresh answer.')
 
+    def test_a_fresh_worker_that_also_quit_uses_the_normal_failure_path(self):
+        workers = []
+        for _ in range(2):
+            p = unittest.mock.Mock(ask='', returncode=1, stdout=[], errors=io.StringIO('Unknown failure'))
+            p.stdin.write.side_effect = BrokenPipeError
+            workers.append(p)
+        with patch.object(atticus, 'start_claude', return_value=workers[1]) as start, \
+             patch.object(atticus, 'stop_claude'), patch.object(atticus, 'plan', return_value={'ok': True}), \
+             patch.object(atticus, 'say'), patch.object(atticus, 'report_error') as errors:
+            reply, _, _ = atticus.run('Fixture task', workers[0])
+        start.assert_called_once(); errors.assert_not_called()
+        self.assertFalse(atticus.run.ok); self.assertEqual(atticus.run.why, 'stopped')
+        self.assertIn('stopped', reply)
+
+    def test_closing_a_move_with_a_closed_overlay_is_cancellation(self):
+        move, _ = self.moving(); move.ready = True
+        output = unittest.mock.Mock(); output.write.side_effect = BrokenPipeError
+        with patch('sys.stdout', output), patch.object(atticus, 'stop_workers') as stop, patch.object(atticus, 'report_error') as errors:
+            move.close()
+            atticus.sys.stdout.close()   # say replaced the disconnected stream with devnull
+        self.assertTrue(move.closed); self.assertTrue(move.done.is_set())
+        stop.assert_called_once(); errors.assert_not_called()
+
+    def test_a_thread_cancellation_signals_the_main_thread(self):
+        with patch.object(atticus.threading, 'current_thread', return_value=object()), \
+             patch.object(atticus.os, 'kill') as kill, patch.object(atticus.signal, 'signal') as signal_handler:
+            atticus.stop_workers()
+        kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        signal_handler.assert_not_called()
+
     def test_a_failed_ask_says_why_in_one_fixed_word(self):
         for said, why in (('Error: 429 rate limit exceeded', 'rate_limited'), ('Error: something odd', 'stopped')):
             worker=Path(self.root.name)/'fail.py';worker.write_text("import json,sys\njson.loads(sys.stdin.readline())\nprint(json.dumps({'type':'result','is_error':True,'total_cost_usd':0,'result':%r}),flush=True)\n" % said)
