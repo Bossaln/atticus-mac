@@ -18,6 +18,63 @@ class AudioNativeTests(unittest.TestCase):
         self.assertIn('else { UserDefaults.standard.set(true, forKey: "siriVoice") }', voice)
         deliver = source[source.index("    func deliver("):source.index("    func linger(")]
         self.assertIn("siriVoice()", deliver)
+        self.assertIn("readAloudArguments(spoken(a))", deliver)
+        self.assertLess(deliver.index("readAloudArguments(spoken(a))"), deliver.index("siriVoice()"))
+        drawing = source[source.index("final class ScreenDrawing"):source.index("// The box can take typing")]
+        self.assertIn("p.arguments = sayArguments(words)", drawing)
+
+    def test_best_installed_english_voice_prefers_quality_then_region(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        policy = source[source.index("struct ReadAloudVoice"):source.index("let installedReadAloudVoice")]
+        run_swift(self, """import Foundation
+import AVFoundation
+""" + policy + """
+let fixture = [
+    ReadAloudVoice(name: "US Enhanced", language: "en-US", quality: .enhanced),
+    ReadAloudVoice(name: "UK Premium", language: "en-GB", quality: .premium),
+    ReadAloudVoice(name: "US Premium", language: "en-US", quality: .premium),
+    ReadAloudVoice(name: "French Premium", language: "fr-FR", quality: .premium)]
+precondition(bestEnglishVoice(fixture, region: "US")?.name == "US Premium")
+precondition(bestEnglishVoice(Array(fixture.prefix(2)), region: "US")?.name == "UK Premium")
+precondition(bestEnglishVoice([fixture.last!], region: "US") == nil)
+let compact = [ReadAloudVoice(name: "Albert", language: "en-US", quality: .default),
+               ReadAloudVoice(name: "Samantha", language: "en-US", quality: .default)]
+precondition(bestEnglishVoice(compact, region: "US") == nil)
+let installed = AVSpeechSynthesisVoice.speechVoices().map {
+    ReadAloudVoice(name: $0.name, language: $0.language, quality: $0.quality)
+}
+if installed.contains(where: { $0.language.lowercased().hasPrefix("en") && ($0.quality == .premium || $0.quality == .enhanced) }) {
+    let picked = bestEnglishVoice(installed, region: Locale.current.region?.identifier)
+    precondition(picked?.quality == .premium || picked?.quality == .enhanced)
+}
+print("read-aloud voice policy ok")
+""")
+
+    def test_say_voice_is_validated_and_compact_tip_is_once(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        voice = source[source.index("let usableReadAloudVoice"):source.index("// The talk shortcut")]
+        self.assertIn('p.arguments = ["-v", "?"]', voice)
+        self.assertIn("sayVoiceName($0.name, names: names)", voice)
+        self.assertIn("if usableReadAloudVoice == nil { compactTip() }", voice)
+        self.assertIn('(usableReadAloudVoice.map { ["-v", $0] } ?? []) + ["--", words]', voice)
+        tip = source[source.index("    func voiceQualityTip()"):source.index("    @discardableResult func shush()")]
+        self.assertIn('bool(forKey: "voiceQualityTip")', tip)
+        self.assertIn('set(true, forKey: "voiceQualityTip")', tip)
+        self.assertIn("Manage Voices", tip)
+
+    def test_say_voice_list_parser_handles_spaces_and_rejects_unknown_names(self):
+        source = (ROOT / "Atticus.swift").read_text()
+        parser = source[source.index("func sayVoiceNames"):source.index("let usableReadAloudVoice")]
+        run_swift(self, "import Foundation\n" + parser + """
+let names = sayVoiceNames("Bad News            en_US    # Hello\\nDaniel (English (UK)) en_GB    # Hello\\n")
+precondition(names == ["Bad News", "Daniel (English (UK))"])
+precondition(sayVoiceName("Ava", names: ["Ava", "Ava (Premium)"]) == "Ava")
+precondition(sayVoiceName("Ava", names: ["Ava (Enhanced)", "Ava (Premium)"]) == "Ava (Premium)")
+precondition(sayVoiceName("Ava", names: ["Ava (Enhanced)"]) == "Ava (Enhanced)")
+precondition(sayVoiceName("Daniel", names: names) == "Daniel (English (UK))")
+precondition(sayVoiceName("Voice 2", names: names) == nil)
+print("say voice list parser ok")
+""")
 
     def test_device_choice_falls_back_without_opening_bluetooth(self):
         source = (ROOT / "Atticus.swift").read_text()

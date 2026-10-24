@@ -482,6 +482,46 @@ func siriVoice() {
     }
 }
 
+struct ReadAloudVoice {
+    let name: String, language: String, quality: AVSpeechSynthesisVoiceQuality
+}
+func bestEnglishVoice(_ voices: [ReadAloudVoice], region: String?) -> ReadAloudVoice? {
+    func rank(_ q: AVSpeechSynthesisVoiceQuality) -> Int { q == .premium ? 2 : q == .enhanced ? 1 : 0 }
+    return voices.filter { $0.language.lowercased().hasPrefix("en") && ($0.quality == .premium || $0.quality == .enhanced) }.sorted {
+        let quality = rank($0.quality) - rank($1.quality)
+        if quality != 0 { return quality > 0 }
+        let local = Locale(identifier: $0.language).region?.identifier == region
+        let other = Locale(identifier: $1.language).region?.identifier == region
+        return local != other ? local : $0.name < $1.name
+    }.first
+}
+let installedReadAloudVoice = bestEnglishVoice(AVSpeechSynthesisVoice.speechVoices().map {
+    ReadAloudVoice(name: $0.name, language: $0.language, quality: $0.quality)
+}, region: Locale.current.region?.identifier)
+func sayVoiceNames(_ output: String) -> Set<String> {
+    Set(output.split(separator: "\n").compactMap { line in
+        line.range(of: #"\s+[a-z]{2,3}_[A-Z0-9]{2,3}\s+#"#, options: .regularExpression).map { String(line[..<$0.lowerBound]) }
+    })
+}
+func sayVoiceName(_ name: String, names: Set<String>) -> String? {
+    if names.contains(name) { return name }
+    for quality in ["Premium", "Enhanced"] where names.contains("\(name) (\(quality))") { return "\(name) (\(quality))" }
+    return names.sorted().first { $0.hasPrefix(name + " (") }
+}
+let usableReadAloudVoice: String? = {
+    let p = Process(), out = Pipe()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["-v", "?"]; p.standardOutput = out
+    do { try p.run() } catch { return nil }
+    let names = sayVoiceNames(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    p.waitUntilExit()
+    return installedReadAloudVoice.flatMap { p.terminationStatus == 0 ? sayVoiceName($0.name, names: names) : nil }
+}()
+func readAloudArguments(_ words: String, compactTip: () -> Void) -> [String] {
+    guard !UserDefaults.standard.bool(forKey: "siriVoice"), !siriVoiceTrying else { return ["--", words] }
+    if usableReadAloudVoice == nil { compactTip() }
+    return (usableReadAloudVoice.map { ["-v", $0] } ?? []) + ["--", words]
+}
+
 // The talk shortcut, any key plus modifiers, recorded in Settings: Carbon modifiers to register, and the
 // modifier keys whose release ends listening (none for a lone F-key: its own key-up ends it).
 let atticusFnKey = 1 << 20   // Carbon has no Fn bit; Fn shortcuts use the event monitor below.
@@ -1054,6 +1094,7 @@ final class ScreenDrawing {
     var cleanup: (() -> Void)?
     var status: ((String) -> Void)?
     var speechEnabled: () -> Bool = { false }
+    var sayArguments: (String) -> [String] = { ["--", $0] }
     var active: Bool { request != nil }
     var hasInput: Bool { inputMode || !inputPath.isEmpty }
     var summary: [String:Any]? {   // what is on screen, for the next ask to build on
@@ -1422,7 +1463,7 @@ final class ScreenDrawing {
             showCallout(words,step:index+1,total:r.steps.count,marks:marks.isNull ? shapeBounds(shapes) ?? target.bounds : marks,avoid:earlier + (hit.map { [$0] } ?? []))
         }
         if !words.isEmpty, speechEnabled() {
-            let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/say"); p.arguments = ["--",words]
+            let p = Process(); p.executableURL = URL(fileURLWithPath:"/usr/bin/say"); p.arguments = sayArguments(words)
             try? p.run(); voice = p
         }
         let top = NSScreen.screens.first?.frame.maxY ?? 0
@@ -1849,6 +1890,11 @@ final class App: NSObject, WKScriptMessageHandler {
     var drawingReply = false
     var pointContext: [String:Any]?
     var voice: Process?   // `say`: the Mac's system voice (a Siri voice if picked in Spoken Content); AVSpeechSynthesizer can't use Siri voices
+    func voiceQualityTip() {
+        guard !UserDefaults.standard.bool(forKey: "voiceQualityTip") else { return }
+        UserDefaults.standard.set(true, forKey: "voiceQualityTip")
+        show(); js("notice", "Voice sounds robotic? This Mac has no natural voice yet. Get one: System Settings → Accessibility → Read & Speak → System voice → Manage Voices → download a Siri voice, then pick it as the System voice."); hide(after: 14)
+    }
     @discardableResult func shush() -> Bool {
         guard let v = voice else { return false }; voice = nil
         guard v.isRunning else { return false }; v.terminate(); return true
@@ -1856,8 +1902,9 @@ final class App: NSObject, WKScriptMessageHandler {
     func deliver(_ a: String, aloud: Bool = true) {   // Settings: read answers aloud, copy them
         if Prefs.bool("autoCopy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string) }
         if Prefs.bool("speak") && aloud {
-            siriVoice()   // a voice not downloaded at first use may become available later
-            shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["--", spoken(a)]
+            let arguments = readAloudArguments(spoken(a)) { voiceQualityTip() }
+            siriVoice()   // retry for next time: this read uses the fallback after a previous Siri test failed
+            shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = arguments
             p.terminationHandler = { [weak self] _ in DispatchQueue.main.async {
                 guard let self, self.voice === p else { return }; self.voice = nil; self.hide(after: 2)
             } }
@@ -1968,6 +2015,7 @@ final class App: NSObject, WKScriptMessageHandler {
         drawing.cleanup = Hands.restoreAccessibility
         drawing.status = { [weak self] words in self?.js("msg",words) }
         drawing.speechEnabled = { Prefs.bool("speak") }
+        drawing.sayArguments = { [weak self] words in readAloudArguments(words) { self?.voiceQualityTip() } }
         drawing.autoSteps = { Prefs.str("guideSteps") != "next" }
         drawing.inputCleared = { [weak self] in self?.clearPointContext() }
         drawing.inputAway = { [weak self] in self?.finishPointing() }
