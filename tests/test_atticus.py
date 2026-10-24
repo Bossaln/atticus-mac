@@ -414,10 +414,10 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
     def test_all_rules_go_while_they_fit_then_word_matches_beyond_five(self):
         mem = Path(atticus.DIR) / 'memory.md'
         with patch.object(atticus, 'MEMORY', str(mem)):
-            mem.write_text('When I say dad, use the contact Papa.\n' + 'Keep replies short and friendly please.\n' * 40)   # ~1600 chars, no shared word
-            self.assertIn('dad', atticus.relevant_rules('email Papa'))
+            mem.write_text('When I say dad, use the contact Robert.\n' + 'Keep replies short and friendly please.\n' * 40)   # ~1600 chars, no shared word
+            self.assertIn('dad', atticus.relevant_rules('email Robert'))
             mem.write_text(''.join(f'Rule {i}: email signs off as S.\n' for i in range(8)) + 'Unrelated padding words here.\n' * 200)
-            got = atticus.relevant_rules('email Papa').splitlines()
+            got = atticus.relevant_rules('email Robert').splitlines()
             self.assertEqual(len(got), 8)
             self.assertTrue(all('email' in r for r in got))
 

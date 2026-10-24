@@ -5850,7 +5850,7 @@ def memory_find(query=''):
 
 
 def relevant_rules(task, most=15):
-    """All saved rules while they fit in ~4000 chars ("email Papa" needs the "dad" rule); past that, up to `most` that share a word with the request."""
+    """All saved rules while they fit in ~4000 chars ("email Robert" needs the "dad" rule); past that, up to `most` that share a word with the request."""
     rules = memory_rules()
     if sum(map(len, rules)) < 4000:
         return '\n'.join(rules)

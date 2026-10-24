@@ -140,7 +140,7 @@ class AgentTests(unittest.TestCase):
         self.assertIsNone(atticus.parse_handoff('[agent-profile {"action":"invent","name":"Scout"}]'))
 
     def test_full_installed_prompt_including_handoff_stays_under_budget(self):
-        installed='/Users/saarthranka/Applications/Atticus.app/Contents/Resources/atticus.py'
+        installed='/Users/exampleuser/Applications/Atticus.app/Contents/Resources/atticus.py'
         for draw in (False,True):   # Drawings off swaps DRAWING for POINTER: both must fit
             self.prefs.update(draw=draw,pointer=True,askMe=True,learnMe=True,tips=True,learn=True)
             prompt=atticus.system_prompt(atticus.ASK_FIRST)
