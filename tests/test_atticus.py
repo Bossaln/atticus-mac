@@ -499,9 +499,10 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
             old = time.time() - 5 * 3600
             os.utime(os.path.join(d, 'kofi'), (old, old)); os.utime(os.path.join(d, 'tip'), (old, old))
             self.assertEqual(ask({'support': False}).count('Support: '), 0)
-            self.assertIn('Support: ', ask({'tips': False}))   # tips off, tip jar on
+            self.assertIn('Support: ', ask({'tips': False, 'support': True}))   # tips off, tip jar on
             self.assertNotIn('Support: ', ask({}))   # 4 h clock restarted: the plain tip is next
             os.utime(os.path.join(d, 'kofi'), (old, old))
+            self.assertNotIn('Support: ', ask({'tips': False}))   # tips turned off before the tip jar existed: it stays off too
             with patch.object(atticus, 'failed_action_reply', return_value=True):
                 self.assertNotIn('Support: ', ask({}, 'Could not join Zoom.'))   # never right after a miss
 

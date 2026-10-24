@@ -200,7 +200,9 @@ enum Prefs {
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
         "meetingNudge", "meetingDetect", "meetingAuto", "fixSetup", "dictateLearn"]
     static var d: [String: Any] = {
-        var values = defaults.merging((try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]) { $1 }
+        let saved = (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: path)))) as? [String: Any] ?? [:]
+        var values = defaults.merging(saved) { $1 }
+        if saved["support"] == nil, saved["tips"] as? Bool == false { values["support"] = false }   // tips turned off before the tip jar existed: keep its line off too (atticus.py reads the same default)
         if !["cheapest", "balanced", "capable"].contains(values["routing"] as? String ?? "") {
             values["routing"] = values["model"] as? String != "haiku" ? "capable" :
                 (values["escalate"] as? Bool != false && values["escalateAuto"] as? Bool != false ? "balanced" : "cheapest")
@@ -2624,6 +2626,7 @@ final class App: NSObject, WKScriptMessageHandler {
         guard let device = listenMic().flatMap({ AVCaptureDevice(uniqueID: $0.uid) }) ?? AVCaptureDevice.default(for: .audio) else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "No microphone is available. Connect one and try again."); hide(after: 6); return
         }
+        if !dictate && !replying && onboarding.win == nil && Prefs.bool("tips") && !Prefs.bool("pointCoached") { Prefs.set("pointCoached", true); js("pointCoach", true) }   // the first ask after setup (mic and speech allowed): one look at the Point button
         onboarding.tried()
         quietAudio.begin(Prefs.bool("quietAudio"), level: Float32(Prefs.num("quietLevel")))
         listenID += 1; let listeningID = listenID; began = Date()   // key-down until the mic is ready; a release in that gap is a tap
@@ -3244,6 +3247,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func run(_ t: String, speculative: Bool = false, remaining: String? = nil) {
         let point = pointContext, drawn = drawing.summary
         pointContext = nil; unpoint(false)
+        if point != nil { js("point", false) }   // the mark went with this ask (its picture is in the bubble): the chip must not wait for the next one
         drawing.clearInput(); drawing.deselect(); mini.reset(); if !busy && !engine.isRunning { noteHidden() }; busy = true; agentMoveFile = ""; answer = ""; showAgent = ""; try? FileManager.default.removeItem(atPath: focusFile)
         if !speculative { js("think") }
         if let w = warm, !w.p.isRunning { try? w.input.close(); warm = nil }
@@ -4015,6 +4019,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         guard let b = m.body as? [String: String] else { return }
         if b["do"] == "done" { return finish() }
         if b["do"] == "kofi" { NSWorkspace.shared.open(kofi); return }
+        if b["do"] == "feedback" { Atticus.settings.open(tab: "feedback"); return }
         if b["do"] == "enableAll" { return enableAll(connected: b["connected"] == "true") }
         if b["do"] == "provider", let c = b["client"], ["claude", "devin", "pi"].contains(c) {   // the plan row's Change provider sheet
             Atticus.settings.apply("client", c)

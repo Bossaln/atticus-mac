@@ -519,7 +519,7 @@
     if (!coachPending || bar.dataset.s) return;
     bar.dataset.s = 'coach'; bar.querySelector('.hint').innerHTML = '<b>Point at your screen:</b> click ' + POINTER + ' below, then circle, click or scribble on anything and type or say your question.'; fit();
   };
-  $('point').onclick = () => { coachDone(); if (working) return status('Finish or stop the current answer first'); post({ point: 1 }); };
+  $('point').onclick = () => { if (working) return status('Finish or stop the current answer first'); coachDone(); post({ point: 1 }); };   // a refused click keeps the coach
   bar.querySelector('.rm').onclick = () => post({ pointClear: 1 });
   bar.querySelector('.gotit').onclick = coachDone;
   const markShot = () => { const img = bar.querySelector('img'); return bar.classList.contains('has') && !img.hidden && img.src; };   // the crop the next ask carries into its bubble
@@ -803,7 +803,7 @@
       else if (was === 'Pointing…' || was === 'Marked') status('');
       fit();
     },
-    pointCoach() { coachPending = true; if ($('comp').classList.contains('open')) coachShow(); },
+    pointCoach(open) { coachPending = true; if (open) comp(true); else if ($('comp').classList.contains('open')) coachShow(); },   // open: the first ask after setup shows it without a hover
     finished() { clockStop(); miniFinish(false); unstream(); },
     dictate(on) {   // the last dictation's wave must not show on the next; its empty turn never reaches the box
       document.body.classList.toggle('dictate', !!on); document.body.classList.remove('locked', 'hearing'); $('thread').querySelectorAll('.turn.dict').forEach(e => e.remove());
@@ -837,7 +837,7 @@
       const shot = !document.body.classList.contains('dictate') && markShot();
       if (shot) {
         const b = document.createElement('button'); b.className = 'shot'; b.title = 'What you marked'; b.setAttribute('aria-expanded', false);
-        b.innerHTML = '<img alt="What you marked">'; b.firstChild.src = shot;
+        b.innerHTML = '<img alt="What you marked">'; b.firstChild.onload = () => fit(); b.firstChild.src = shot;   // decoded after this fit: size the box again
         b.onclick = e => { e.stopPropagation(); b.setAttribute('aria-expanded', b.classList.toggle('big')); follow(360); };
         d.prepend(b);
       }

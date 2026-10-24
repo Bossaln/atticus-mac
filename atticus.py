@@ -3639,7 +3639,7 @@ def tip(reply, taught=''):
         Path(kofi).touch()
     if not os.path.exists(stamp):   # never on the very first ask
         return Path(stamp).write_text('0')
-    if pref('support', True) and time.time() - os.path.getmtime(kofi) > 4 * 3600:
+    if pref('support', pref('tips', True)) and time.time() - os.path.getmtime(kofi) > 4 * 3600:
         Path(kofi).touch()
         return say('i', 'Support: ' + SUPPORT[int(time.time()) % len(SUPPORT)])
     n = int(Path(stamp).read_text() or 0)
@@ -6967,8 +6967,8 @@ def feedback(data):
     mac = subprocess.run(['/usr/sbin/sysctl', '-n', 'hw.model'], capture_output=True, text=True).stdout.strip()
     text = str(data.get('text', '')).strip()[:4000]   # what the user typed in Settings; they see it in the preview before it goes anywhere
     body = (f'## What happened\n\n{text}\n\n' if text else '## What happened\n\n\n## What you expected\n\n\n') + ('## Atticus\n'
-            f'Version / commit: {str(data.get("version", "unknown"))[:80]}\nmacOS: {platform.mac_ver()[0]}\nMac model: {mac}\n'
-            f'AI client: {client()}\nModel: {model}\nSafe mode: {"on" if pref("safe", True) else "off"}\n'
+            f'Version: {APP_VERSION}\nVersion / commit: {str(data.get("version", "unknown"))[:80]}\nmacOS: {platform.mac_ver()[0]}\nMac model: {mac}\n'
+            f'AI client: {client()}\nModel: {model}\nRouting: {routing_mode()}\nSafe mode: {"on" if pref("safe", True) else "off"}\n'
             f'Input: {"type" if pref("input", "voice") == "type" else "voice"}\n'
             f'Shortcut: {"toggle" if pref("talkMode", "hold") == "toggle" else "hold"}\n')
     if data.get('include') is True:
