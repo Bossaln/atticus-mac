@@ -1703,8 +1703,7 @@ final class App: NSObject, WKScriptMessageHandler {
     // Settings → Speech model: Apple's newer SpeechTranscriber, or the Dictation model the keyboard mic uses.
     // Dictation drops fastResults / frequentFinalization (Apple: faster but less accurate); asks keep them for live commands.
     func speechModule(dictate: Bool = false) -> any SpeechModule {
-        let en = Locale(identifier: "en-US"), current = Locale.current, locales = SFSpeechRecognizer.supportedLocales()
-        let locale = locales.contains(current) ? current : locales.first { $0.language.languageCode == current.language.languageCode } ?? en
+        let en = Locale(identifier: "en-US"), locale = en   // SpeechTranscriber rejects the Mac locale ("unsupported locale") even when SFSpeechRecognizer lists it: every voice ask died (1.5.0)
         if Prefs.str("speechModel") == "dictation" {
             return dictate ? DictationTranscriber(locale: en, contentHints: [.shortForm], transcriptionOptions: [.punctuation], reportingOptions: [.volatileResults], attributeOptions: [])
                 : DictationTranscriber(locale: locale, preset: .progressiveShortDictation)

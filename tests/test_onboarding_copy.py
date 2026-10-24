@@ -74,8 +74,7 @@ for (const [label, keys] of Object.entries(want)) if (JSON.stringify(capsOf(labe
     def test_voice_asks_use_the_mac_language(self):
         swift = (ROOT / 'Atticus.swift').read_text()
         speech = swift.split('    func speechModule(dictate: Bool = false)', 1)[1].split('    func prepareSpeech()', 1)[0]
-        self.assertIn('current = Locale.current', speech)
-        self.assertIn('language.languageCode == current.language.languageCode', speech)
+        self.assertNotIn('Locale.current', speech)   # SpeechTranscriber rejected the Mac's locale: every voice ask died in 1.5.0
         self.assertIn(': SpeechTranscriber(locale: locale, preset: .progressiveTranscription)', speech)
         start = swift.split('    func start(dictate: Bool)', 1)[1].split('    func heard(', 1)[0]
         self.assertIn('dictate || SFSpeechRecognizer.authorizationStatus() == .authorized', start)
