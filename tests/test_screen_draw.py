@@ -389,7 +389,7 @@ if (messages.slice(before).some(m => m.point) || els.status.textContent !== 'Fin
 '''
         result = subprocess.run(['node','--input-type=module'],input=script,capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        listen = page[page.index('    listen(keep) {'):page.index('    level(v) {')]
+        listen = page[page.index('    listen(mode) {'):page.index('    level(v) {')]
         self.assertIn("!document.body.classList.contains('dictate') && markShot()",listen)   # the sent bubble shows the crop; dictation never does
         run = (ROOT/'Atticus.swift').read_text().split('    func run(_ t: String',1)[1]
         self.assertLess(run.index('pointContext = nil'),run.index('drawing.clearInput()'))   # sending takes the mark off the screen but keeps its crop for the worker

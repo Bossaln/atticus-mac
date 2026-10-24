@@ -44,10 +44,12 @@ if(!old.removed||button.disabled||button.textContent!=='Try again'||sent.id!=='q
         source = (Path(__file__).resolve().parents[1] / 'ui' / 'ui.html').read_text()
         native = (Path(__file__).resolve().parents[1] / 'Atticus.swift').read_text()
         self.assertIn('<span id="dictwave" role="img" aria-label="Listening"></span>', source)
+        helper = source[source.index('  const dictateMode ='):source.index('\n  };', source.index('  const dictateMode =')) + 5]
         dictate = source[source.index('    dictate(on) {'):source.index('    locked(on) {')]
         script = '''const bars=[{style:{height:'21px'}},{style:{height:'9px'}}];let gone=0,state;
 const $=id=>id==='thread'?{querySelectorAll:s=>s==='.turn.dict'?[{remove(){gone++;}}]:[]}:{children:bars},pill=s=>{state=s;};
 const document={body:{classList:{toggle(){},remove(){}}}};
+''' + helper + '''
 const ui={''' + dictate + '''};ui.dictate(true);if(bars.some(b=>b.style.height)||gone!==1||state!=='')process.exit(1);'''
         result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, "a new dictation shows the last one's wave, state or empty turn " + result.stderr)

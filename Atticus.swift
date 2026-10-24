@@ -2620,7 +2620,8 @@ final class App: NSObject, WKScriptMessageHandler {
         cue("soundStart")
         if !dictate && (!replying || drawingReply) { unwarm(); warm = spawn() }
         hovering = false
-        if replying && !drawingReply { js("draft", "") } else { js("listen"); if !dictate, let s = selection { js("selected", s.text) } }   // talking about a drawing still shows the listening orb
+        if dictate { js("listen", "dict") }
+        else if replying && !drawingReply { js("draft", "") } else { js("listen"); if let s = selection { js("selected", s.text) } }   // talking about a drawing still shows the listening orb
         show()
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return

@@ -17,6 +17,9 @@ class FixtureTests(unittest.TestCase):
     def test_main_overlay_fixture(self):
         self.check_fixtures(['ui'])
 
+    def test_timer_row_fixture(self):
+        self.check_fixtures(['timer_row'])
+
     def test_box_contrast_fixture(self):
         self.check_fixtures(['contrast'])
 

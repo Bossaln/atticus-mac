@@ -596,7 +596,8 @@ if (state() !== 'finishing' || dn.textContent) fail('a new release kept the last
     def test_dictation_leaves_the_boxs_last_answer_current(self):
         # Oct 20, 2026: a dictation's hidden turn marked the box's answer old (grey) though no new ask happened
         page = self.page
-        methods = page[page.index('    dictate(on) {'):page.index('    locked(on)')] + page[page.index('    listen(keep) {'):page.index('    level(v) {')]
+        helper = page[page.index('  const dictateMode ='):page.index('\n  };', page.index('  const dictateMode =')) + 5]
+        methods = page[page.index('    dictate(on) {'):page.index('    locked(on)')] + page[page.index('    listen(mode) {'):page.index('    level(v) {')]
         script = r'''
 const set = () => { const s = new Set(); return { add: (...c) => c.forEach(x => s.add(x)), remove: (...c) => c.forEach(x => s.delete(x)), toggle: (c, on) => on ? s.add(c) : s.delete(c), contains: c => s.has(c) }; };
 const kids = [], thread = { children: kids, get firstElementChild() { return kids[0]; }, querySelectorAll: q => q === '.turn.dict' ? kids.filter(k => k.className.split(' ').includes('dict')) : [], append: d => kids.push(d) };
@@ -605,10 +606,11 @@ const document = { body: { classList: set() }, createElement: node }, card = { c
 const $ = id => id === 'thread' ? thread : id === 'card' ? card : { children: [], value: '' };
 const miniClear = () => {}, clockStop = () => {}, comp = () => {}, markShot = () => '', setState = () => {}, status = () => {}, fit = () => {}, pill = () => {};
 let hover, listening, working, boost, atBottom;
+''' + helper + r'''
 const ui = {
 ''' + methods + r'''};
 const answer = node(); kids.push(answer);
-ui.dictate(true); ui.listen(); ui.dictate(false);
+ui.dictate(true); ui.listen('dict'); ui.dictate(false);
 if (kids.length !== 1 || kids[0] !== answer) process.exit(console.error('the dictation turn stayed in the box') || 1);
 if (answer.classList.contains('old')) process.exit(console.error('a dictation greyed out the last answer') || 1);
 ui.listen();

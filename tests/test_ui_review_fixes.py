@@ -190,7 +190,7 @@ if (apiCost(.0412) !== '≈4.12¢ at API prices' || apiCost(.1861) !== '≈18.6�
         self.assertIn('${u.asks} asks ${money(u.askUsd ?? u.usd)} · ${u.agentCalls || 0} agent calls ${money(u.agentUsd || 0)}', self.settings)
 
     def test_a_new_ask_drops_a_paused_card_left_by_resuming_elsewhere(self):
-        listen = self.box[self.box.index('    listen(keep)'):self.box.index('    level(v)')]
+        listen = self.box[self.box.index('    listen(mode)'):self.box.index('    level(v)')]
         self.assertIn("querySelectorAll('.rewrite, .paused, .worker').forEach(e => e.remove())", listen)
 
     def test_rewrite_buttons_answer_hover_and_press_like_card_buttons(self):
