@@ -44,7 +44,7 @@ PREFS = os.path.join(DIR, 'settings.json')   # written by the Settings window
 GUMROAD_PRODUCT = ''   # Gumroad product ID (4o1C13Q132kPu-TW7b-sAA== when sales start); empty = free
 BUY = 'https://3370759087892.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
-# Daily-user count: once a day, a random ID (no name, no asks) goes to PostHog. Off in Settings → Safety. Empty key = off.
+# Anonymous counts, timings and error locations under a random install ID; never asks or screen content. Off in Settings → Privacy. Empty key = off.
 POSTHOG_KEY = os.environ.get('ATTICUS_POSTHOG_KEY', 'phc_mGpLLzJtYTToBF8uSkqkUxMMG9ANmQWKDBnpsRDmzy6P')   # public capture token; empty override disables
 try:
     APP_VERSION = Path(ME).with_name('VERSION').read_text().strip()
@@ -521,7 +521,7 @@ Tools:
 - Routines: {ROUTINE} add time HH:MM daily|weekdays "<ask>" [mode] | add interval SECONDS "<ask>" [mode] | list | remove listed-ID.
 Earlier supplies follow-ups. "this"/"here" = front window; "it" after a task = Last task window. Answer/draw from open content (video, page, doc) unless told not to.
 Memory: follow rules. Recall/forget X: --me find, then drop a fact or {FORGET} the exact rule. Save personal facts: {ABOUT} <category> "<kind>" "<exact words from now/Earlier>"; how-tos: {REMEMBER} "<rule>".
-Shortcuts: "when I say X, do Y" in any words: run and verify Y, then end with [shortcut X], X in the user's exact words. Atticus saves the verified actions; never write shortcuts yourself.
+Shortcuts: "when I say X, do Y" in any words: run and verify Y, then end with [shortcut X], X in the user's exact words. Atticus saves the verified actions and tells the user; never save it yourself (shortcut or rule) or say it is saved.
 Own settings: {SET} "<setting name>" on|off|<option>, never click in Settings. Show Settings: open -a Atticus.
 Corrections: fix the task, then save one short user preference, not app/site-specific workarounds.
 If Context has a Previous learned shortcut and the current request reports it failed, redo its task and include [unlearn]; else ignore it.
@@ -1175,12 +1175,19 @@ def place(proc, where='full', screen='current', title=''):
     if landed and not (x <= (landed[0] + landed[2]) // 2 < x + w and y - 25 <= (landed[1] + landed[3]) // 2 < y + h):
         return f'NOT DONE: {proc} window did not move to {n} (it may be full screen in its own Space). Say so; do not report success.'
     if native:
-        osa(tell + f'set value of attribute "AXFullScreen" of {win} to true')
-        for _ in range(20):
-            if osa(tell + f'get value of attribute "AXFullScreen" of {win}') == 'true': break
-            time.sleep(.1)
+        def entered():
+            for _ in range(15):
+                if osa(tell + f'get value of attribute "AXFullScreen" of {win}') == 'true': return True
+                time.sleep(.1)
+        for _ in range(2):   # a request made during another Space animation is dropped: ask once more
+            osa(tell + f'set value of attribute "AXFullScreen" of {win} to true')
+            if entered(): break
         else: return f'NOT DONE: {proc} did not enter full screen on {n}.'
-        landed = bounds(False)
+        landed = None
+        for _ in range(15):   # the animation moves the window: judge its display once it holds still, which also lets the next one start
+            before, landed = landed, bounds(False)
+            if not landed or landed == before: break
+            time.sleep(.1)
         if not landed:
             preview_app(proc, 'move', title)
             return f'Moved {proc} into full screen, but could not check which display it used. Look at the screen before saying where it is.'
@@ -1196,12 +1203,20 @@ def place_many(args):
     moves = [m.split('\0') for m in '\0'.join(args).split('\0+\0') if m and m != '+']
     if not moves: return 'no window found: no placement requested'
     screen = request_screen()
-    def move(m):
-        if len(m) < 3: m = m + ['full', 'current'][len(m) - 1:]
+    for m in moves:
+        if len(m) < 3: m += ['full', 'current'][len(m) - 1:]
         if m[2] == 'current': m[2] = screen
-        return place(*m)
-    with ThreadPoolExecutor(len(moves) or 1) as pool:
-        return '\n'.join(pool.map(move, moves))
+    flat = [i for i, m in enumerate(moves) if m[1] != 'fullscreen']
+    native = [i for i, m in enumerate(moves) if m[1] == 'fullscreen']
+    with ThreadPoolExecutor(len(flat) or 1) as pool:   # plain moves at once
+        out = dict(zip(flat, pool.map(lambda i: place(*moves[i]), flat)))
+    # native full screen is a Space animation, and macOS drops or misplaces one started during another: one window at a time,
+    # each first out of any full screen and onto its display, so entering one never hides a window still to move
+    if len(native) > 1:
+        for i in native: out[i] = place(moves[i][0], 'full', *moves[i][2:])
+    for i in native:
+        if not place_failed(out.get(i, '')): out[i] = place(*moves[i])
+    return '\n'.join(out[i] for i in range(len(moves)))
 
 
 def model_note(output):   # an instant reply is read by the user, not the model
@@ -1638,7 +1653,8 @@ def failed_action_reply(reply, did_action):
 
 def named_shortcut(text):
     match = NAMED.search(text)
-    return match if match and plain(text[:match.start()] + 'shortcut') == 'shortcut' else None
+    lead = text[:match.start()] if match else ''   # "No, when I say …" re-teaches it; a longer lead is another instruction
+    return match if match and (plain(lead + 'shortcut') == 'shortcut' or len(re.findall(r"[\w']+", lead)) <= 2 and re.search(r'[,.!?]\s*$', lead)) else None
 
 
 TRIGGER = r'\s*\[shortcut ([^\]\n]{2,40})\]'   # the model names X of "when I say X, do Y"; never shown
@@ -1783,8 +1799,16 @@ def learn(task, cmds, reply, asked=''):
         except ValueError: return
         if bid and app_running(bid): return   # a quit that did not quit is evidence against the reply
     sk = skills()
-    new = sk.get(k, {}).get('cmds') != cmds
-    sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d'), **({'asked': asked} if asked else {})}
+    old = sk.get(k, {})
+    new = old.get('cmds') != cmds
+    said = asked or old.get('asked', '')   # a redo after a failed replay keeps what the user taught it as
+    sk[k] = {'cmds': cmds, 'reply': reply, 'at': time.strftime('%Y-%m-%d'), **({'asked': said, 'mine': True} if said else {'mine': True} if old.get('mine') else {})}
+    if asked:   # taught by name: no older version of it (a whole-sentence key, a rule, a workflow) may steer the AI or a replay
+        name = r'\W+'.join(map(re.escape, k.split()))
+        for other in [o for o in sk if o != k and re.search(rf'\bi say {name}\b', o)]: sk.pop(other)
+        for rule in memory_rules():
+            if re.match(rf'\W*(?:when(?:ever)? i say\W+)?{name}\b', rule, re.I): edit_rule(rule, '')
+        workflows(k, None)
     save_skills(sk)
     return new   # True: a task it did not know yet (the box shows a green "Learned" tip)
 
@@ -1997,7 +2021,6 @@ def fast(text):
         reply = action and fast(action)
         if reply and learn(name, fast.cmds, reply, text) is not None:
             output = fast.shortcut['output'] if fast.shortcut else [reply]
-            sk = skills(); sk[plain(name)]['mine'] = True; save_skills(sk)
             fast.shortcut = {'key': plain(name), 'commands': fast.cmds, 'output': output}
             tip(reply, f'Learned: Say “{name}” any time.')
             return reply
@@ -2017,7 +2040,7 @@ def fast(text):
         return ('I have saved the procedure for next time.' if workflows(m[1]) or any(gist(k) == gist(m[1]) for k in skills()) else
                 'I do not have a verified procedure for that yet. Complete the task successfully first so I can save it.')
     if t in ('no', 'yes', 'ok', 'okay', 'nevermind', 'never mind', 'cancel', 'nothing', 'thanks', 'thank you'):
-        return 'Okay.'   # stray word after a turn: no AI call
+        return None if os.environ.get('ATTICUS_LIVE') == '1' else 'Okay.'   # stray word after a turn: no AI call; mid-sentence it starts the next words ("No, when I say …")
     m = re.fullmatch(r'(?:close|quit) (.+)', t)
     app = app_named(m[1]) if m and not DEICTIC.search(m[1]) else None
     if app:
@@ -2040,6 +2063,9 @@ def fast(text):
             return r
         if replay.ran:   # it acted, then a step failed or its check contradicted: never another instant reply, the AI redoes it
             fast.failed = {'key': k, 'commands': replay.commands, 'output': replay.ran, 'failed_at': replay.failed_at}
+            if telemetry_enabled():
+                report_error('replay', shortcut=hashlib.sha256((install_id() + '\0' + k).encode()).hexdigest()[:16],
+                             failed_at=replay.failed_at)
             return None
     site = re.fullmatch(r'(?:search(?: up)?|google|look up) ([a-z0-9][\w.-]*) for (.+)', t)
     m = site or re.fullmatch(r'(?:search(?: up)?|google|look up)(?: for)? (.+)', t)
@@ -2112,14 +2138,12 @@ def fast(text):
     if len(parts) > 1:   # "Chrome left, Terminal right": every part a move, or the AI does it all
         moves = [move_target(p if re.match(r'(snap|move|put|throw|send|make)\b', p) else 'put ' + p) for p in parts]
         if all(moves):   # else maybe one move said in parts: "full screen, chrome on my big screen"
-            from concurrent.futures import ThreadPoolExecutor
-            screen = request_screen()
-            outs = list(ThreadPoolExecutor(len(moves)).map(lambda m: place(proc_of(m[0]), m[1], screen if m[2] == 'current' else m[2]), moves))   # all at once, like --place a + b
-            if any(place_failed(o) for o in outs): return None
-            if any('could not check' in o for o in outs): return '\n'.join(model_note(o) for o in outs)
+            out = place_many([x for a, w, sc in moves for x in ('+', proc_of(a), w, sc)][1:])   # as --place a + b does
+            if place_failed(out): return None
+            if 'could not check' in out: return model_note(out)
             fast.cmds = [PLACE + ' ' + ' + '.join(shlex.join([proc_of(a), w, sc]) for a, w, sc in moves)]
             Path(LAST).write_text(moves[-1][0])
-            return ' '.join(f'{a}: {w.replace("fullscreen", "full screen")}' + (f' on {sc}' if sc != 'current' else '') + '.' for a, w, sc in moves)
+            return '; '.join(f'{a}: {w.replace("fullscreen", "full screen")}' + (f' on {sc}' if sc != 'current' else '') for a, w, sc in moves) + '.'   # one sentence: a replay says the whole outcome
     m = move_target(t)
     if not m:
         return None
@@ -3338,21 +3362,34 @@ def activate(key):
     return 'Thanks for buying Atticus! It is unlocked.'
 
 
-def posthog(event, props=None, stamp=()):
-    """One anonymous event (a random ID, no person profile). stamp: (text, file) written once it is sent."""
+def telemetry_enabled():
+    return bool(POSTHOG_KEY and pref('stats', True) and not os.environ.get('ATTICUS_DIR'))   # ATTICUS_DIR is the pure-test sandbox
+
+
+def install_id():
     idf = os.path.join(DIR, 'id')
     if not os.path.exists(idf):
-        os.makedirs(DIR, exist_ok=True)
+        os.makedirs(DIR, mode=0o700, exist_ok=True)
         Path(idf).write_text(base64.b32encode(os.urandom(10)).decode())
-    body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': Path(idf).read_text(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION, **(props or {})}})
-    subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/' + (' && printf %s "$2" > "$3"' if stamp else ''),
-                      'atticus-ping', body, *stamp],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   # its own process: never slows the answer
+    return Path(idf).read_text()
+
+
+def posthog(event, props=None, stamp=()):
+    """One anonymous event (a random ID, no person profile). stamp: (text, file) written once it is sent."""
+    if not telemetry_enabled():
+        return
+    try:
+        body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': install_id(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION, **(props or {})}})
+        subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/' + (' && printf %s "$2" > "$3"' if stamp else ''),
+                          'atticus-ping', body, *stamp],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)   # cancellation cannot kill it or slow the answer
+    except (OSError, ValueError):
+        pass   # telemetry never breaks an ask
 
 
 def ping():
     day, stamp = time.strftime('%Y-%m-%d'), os.path.join(DIR, 'pinged')
-    if not POSTHOG_KEY or not pref('stats', True) or (os.path.exists(stamp) and Path(stamp).read_text() == day):
+    if not telemetry_enabled() or (os.path.exists(stamp) and Path(stamp).read_text() == day):
         return
     posthog('used', stamp=(day, stamp))
 
@@ -3377,6 +3414,70 @@ def report(task, reply, ran, secs, why):
     if POSTHOG_KEY and pref('improve', False) and os.environ.get('ATTICUS_LIVE') != '1':
         posthog('task_failed', {'task': clean(task), 'reply': clean(reply), 'steps': [clean(c) for c in list(ran)[:12]], 'why': why,
                                 'secs': round(secs, 1), 'model': pref('model', 'haiku'), 'client': client(), 'macos': platform.mac_ver()[0]})
+
+
+def report_error(kind, **props):
+    """Privacy-safe failures only: callers pass enums, indexes and code locations, never user text."""
+    if telemetry_enabled():
+        posthog('error', {'kind': kind, 'macos': platform.mac_ver()[0], **props})
+
+
+def exception_error(exc_type, tb):
+    while tb and tb.tb_next:
+        tb = tb.tb_next
+    frame = tb.tb_frame if tb else None
+    report_error('exception', exception=getattr(exc_type, '__name__', 'Exception'),
+                 file=os.path.basename(frame.f_code.co_filename) if frame else '',
+                 line=tb.tb_lineno if tb else 0, function=frame.f_code.co_name if frame else '')
+
+
+def install_exception_hooks():
+    previous_sys, previous_thread = sys.excepthook, getattr(threading, 'excepthook', None)
+    def system_hook(exc_type, value, tb):
+        exception_error(exc_type, tb)
+        previous_sys(exc_type, value, tb)
+    def thread_hook(args):
+        exception_error(args.exc_type, args.exc_traceback)
+        if previous_thread: previous_thread(args)
+    sys.excepthook = system_hook
+    if previous_thread: threading.excepthook = thread_hook
+
+
+def dictation_event(mode, secs, cleanup, fallback, timed_out, insert):
+    posthog('dictation', {'mode': mode if mode in ('verbatim', 'cleanup') else 'verbatim',
+                          'secs': round(max(0, float(secs)), 3), 'cleanup_used': bool(cleanup),
+                          'fell_back': bool(fallback), 'timed_out': bool(timed_out),
+                          'insert': insert if insert in ('ok', 'no box', 'failed') else 'failed'})
+
+
+def tool_kinds(commands):
+    """Command classes only, never their arguments."""
+    kinds = []
+    for command in commands:
+        helpers = re.findall(r'--(place|show|hands|web|draw|look|search|read|front|watch|pick|play|queue|type|window)\b', str(command))
+        if helpers:
+            found = helpers
+        else:
+            try: tokens = shlex.split(str(command).split('=>', 1)[0])
+            except ValueError: tokens = []
+            found = [os.path.basename(tokens[0])] if tokens else []
+        for kind in found:
+            if kind and kind not in kinds: kinds.append(kind)
+    return kinds[:20]
+
+
+def ask_done(row):
+    if row.get('_telemetry_sent'):
+        return
+    status = row.get('status')
+    status = 'ok' if status in ('completed', 'handed_off') else 'failed' if status in ('failed', 'crashed') else 'cancelled'
+    steps = row.get('steps', 0)
+    posthog('ask_done', {'path': row.get('path', 'instant' if row.get('model') == 'instant' else 'model'),
+                         'model': row.get('model', 'unknown'), 'secs': round(max(0, float(row.get('secs', 0))), 1),
+                         'steps': len(steps) if isinstance(steps, (list, tuple)) else max(0, int(steps or 0)),
+                         'tools': tool_kinds(row.get('ran', [])), 'status': status,
+                         'escalated': bool(row.get('escalated')), 'macos': platform.mac_ver()[0]})
+    row['_telemetry_sent'] = True
 
 
 def say(tag, text):   # one line per message; an answer's own line breaks (lists, display math) travel as U+2028
@@ -3427,36 +3528,41 @@ def begin_turn(task):
                 at=time.strftime('%Y-%m-%d %H:%M:%S'), task=task, reply='', usd=0,
                 steps=[], step_times=[], ran=[], status='running', live=os.environ.get('ATTICUS_LIVE') == '1',
                 confirmed=not bool(os.environ.get('ATTICUS_COMMIT')), pics=0, cursor=os.environ.get('ATTICUS_CARET') == '1',
-                model=main_model(), escalated=False, escalate_why=None, attempt_usd=[], attempt_usage=[])
+                model=main_model(), path='model', escalated=False, escalate_why=None, attempt_usd=[], attempt_usage=[])
     checkpoint()
 
 
-def end_turn(status='cancelled'):
+def end_turn(status='cancelled', emit=True):
     if TURN and TURN.get('status') == 'running':
         now = time.monotonic()
         for step in TURN['step_times']:
             if step.get('status') == 'running':
                 step.update(secs=round(now - step.pop('_start', now), 3), status=status)
+        TURN['secs'] = round(time.time() - TURN['_started'], 1)
         checkpoint(status=status)
+        if emit:
+            ask_done(TURN)
+            if status == 'cancelled': report_error('stopped')
 
 
 atexit.register(end_turn)
 
 
-def log_turn(task, reply, started, cost=0, steps=0, ran=(), pics=0, *, model=None, escalated=False, escalate_why=None, attempt_usd=None, attempt_usage=None):
+def log_turn(task, reply, started, cost=0, steps=0, ran=(), pics=0, *, model=None, path='model', escalated=False, escalate_why=None, attempt_usd=None, attempt_usage=None):
     status = TURN.get('status', 'completed')
     model = model or TURN.get('model') or main_model()
     attempt_usd = list(attempt_usd) if attempt_usd is not None else ([] if model == 'instant' else [cost])
     row = {'at': time.strftime('%Y-%m-%d %H:%M:%S'), 'task': task, 'reply': reply,
            'usd': round(cost, 5) if cost is not None else None, 'secs': round(time.time() - started, 1), 'steps': steps,
            'ran': list(ran) or getattr(replay, 'ran', []), 'live': os.environ.get('ATTICUS_LIVE') == '1',
-           'pics': pics, 'cursor': os.environ.get('ATTICUS_CARET') == '1', 'model': model, 'escalated': bool(escalated),
+           'pics': pics, 'cursor': os.environ.get('ATTICUS_CARET') == '1', 'model': model, 'path': path, 'escalated': bool(escalated),
            'escalate_why': escalate_why if escalated else None, 'attempt_usd': attempt_usd,
            'attempt_usage': list(attempt_usage) if attempt_usage is not None else list(TURN.get('attempt_usage', []))}
     if TURN and TURN.get('task') == task:
         TURN.update(row, status='completed' if status == 'running' else status,
                     confirmed=not os.environ.get('ATTICUS_COMMIT') or os.path.exists(os.environ['ATTICUS_COMMIT']))
         append_log({k: v for k, v in TURN.items() if not k.startswith('_')})
+        ask_done(TURN)
     else:
         append_log(row)
 
@@ -4471,8 +4577,6 @@ class Agents:
                 named = shortcut_name(request, result)
                 key = plain(named or request)
                 if key and commands and all(replayable(c) for c in commands) and learn(key, commands, answer or row['summary'], request if named else '') is not None:
-                    if named:
-                        sk = skills(); sk[key]['mine'] = True; save_skills(sk)
                     row['learned'] = key
             row['made'] = agent_results(row)
         self.stop_process(row['id']); self.save(row)
@@ -5226,7 +5330,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         if not wait_commit(): return '', None, steps
         run.handoff = move.pending; run.handoffs = [run.handoff]
         if not completed: cost = None   # the interrupted CLI did not provide terminal usage; zero would be misleading
-        end_turn('handed_off')
+        end_turn('handed_off', emit=False)
         print('⤴ ' + json.dumps(run.handoff, ensure_ascii=False), flush=True)
     if run.handoff:
         run.ok = True
@@ -6865,6 +6969,13 @@ def feedback(data):
 
 def main():
     args = sys.argv[1:]
+    if len(args) == 8 and args[:2] == ['--telemetry', 'dictation']:
+        try: dictation_event(args[2], args[3], args[4] == '1', args[5] == '1', args[6] == '1', args[7])
+        except (TypeError, ValueError): pass
+        return
+    if len(args) == 5 and args[:3] == ['--telemetry', 'error', 'worker_exit']:
+        return report_error('worker_exit', worker=args[3] if args[3] in ('python', 'claude', 'devin', 'pi') else 'python',
+                            exit=int(args[4]) if args[4].lstrip('-').isdigit() else -1)
     if args == ['--draw', '--help']:
         return print(DRAW_HELP if pref('draw', True) else 'Screen drawings are off')
     if args[:1] == ['--draw']:
@@ -7067,8 +7178,11 @@ def main():
         if not r:
             checkpoint(status='not_handled')
             sys.exit(1)
+        if r.startswith('The user said no.'): end_turn('cancelled', emit=False)
+        elif failed_action_reply(r, bool(getattr(fast, 'cmds', []))): end_turn('failed', emit=False)
         remember_turn(' '.join(args[1:]), r, getattr(fast, 'shortcut', None))
-        log_turn(' '.join(args[1:]), r, started, model='instant', attempt_usd=[])
+        log_turn(' '.join(args[1:]), r, started, model='instant',
+                 path='shortcut' if getattr(fast, 'shortcut', None) else 'instant', attempt_usd=[])
         if r.startswith('The user said no.'):
             print('! ' + r, flush=True); sys.exit(1)
         return print('✓ ' + r, flush=True)
@@ -7236,13 +7350,18 @@ def main():
         if not wait_commit(): return
     quick = not marked and (not commit or os.path.exists(commit)) and pref('instant', True) and fast(remaining if remaining is not None else task)
     if quick:
+        quick_cancelled = quick.startswith('The user said no.')
+        quick_failed = failed_action_reply(quick, bool(getattr(fast, 'cmds', [])))
         if reading_started: reading.join()   # the summary cannot recreate its scratch file after a fast exit
         if snap.started: atexit.register(snap.join, .3)
         quick = ' '.join(done + [quick])
         if warm:
             stop_claude(warm)
+        if quick_cancelled: end_turn('cancelled', emit=False)
+        elif quick_failed: end_turn('failed', emit=False)
         remember_turn(task, quick, getattr(fast, 'shortcut', None))
-        log_turn(task, quick, t, model='instant', attempt_usd=[])
+        log_turn(task, quick, t, model='instant',
+                 path='shortcut' if getattr(fast, 'shortcut', None) else 'instant', attempt_usd=[])
         return say('!' if quick.startswith('The user said no.') else '✓', quick)
     failed_replay = None if quick or not isinstance(getattr(fast, 'failed', None), dict) else fast.failed
     if failed_replay: say('▸', 'The shortcut did not work. Redoing it')
@@ -7354,7 +7473,8 @@ def main():
     retry_key = failed_shortcut['key'] if failed_shortcut and failed_replay and failed_shortcut.get('failed_at') == 0 else ''
     name = shortcut_name(task, reply)
     reply = re.sub(TRIGGER, '', reply).replace('[unlearn]', '').replace('[sonnet]', '').strip()
-    if failed_shortcut:
+    # a flaky step must not erase a shortcut the user taught when the redo worked; a redo that can be learned below replaces it
+    if failed_shortcut and not (failed_replay and run.ok and not failed_action_reply(reply, run.work) and skills().get(failed_shortcut['key'], {}).get('mine')):
         unlearn(failed_shortcut['key'])
     replacement, reply = replacement_reply(reply, bool(selected))
     if not replacement:
@@ -7372,7 +7492,7 @@ def main():
     shortcut, learned_key, learned_say = '', '', ''
     named_commands = [c for c in (shortcut_commands(task, run.cmds) or []) if not c.startswith(SHORTCUT)] if name else []
     if name and run.ok and learn(name, named_commands, reply, confirmed_task) is not None:
-        sk = skills(); sk[plain(name)]['mine'] = True; save_skills(sk); workflow = True; shortcut = name; learned_key = plain(shortcut)
+        workflow = True; shortcut = name; learned_key = plain(shortcut)
     if not name and pref('learn', True) and run.ok and (not failed_shortcut or retry_key) and task == confirmed_task:   # after a live action, run.cmds did only the rest of the ask; a teaching sentence is not itself a shortcut
         learned_task = retry_key or (turns[-1]['q'] if fix else task)
         learned = learn(learned_task, run.cmds, reply)
@@ -7382,11 +7502,12 @@ def main():
     failed = failed_action_reply(reply, run.work)
     final_ran = list(failed_replay.get('output', ())) + run.ran if failed_replay else run.ran
     if not run.ok or failed: report(task, reply, final_ran, time.time() - t, 'error' if not run.ok else 'could not do it')
+    if not run.ok: report_error('worker_exit', worker=client(), model=model)
     learned_entry = skills().get(learned_key) if learned_key else None
     learned_turn = {'key': learned_key, 'commands': learned_entry['cmds'],
                     'output': [f'{o.get("action", "")} => {str(o.get("result", ""))[:400]}' for o in run.observed] or [reply[:400]]} if learned_entry else None
     remember_turn(task, reply, learned_turn)
-    if not run.ok: end_turn('failed')
+    if not run.ok or failed: end_turn('failed', emit=False)
     log_turn(TURN.get('task', task), reply, t, cost, steps, final_ran, len(images or ()),
              model=model, escalated=escalated, escalate_why=escalate_why, attempt_usd=attempt_usd)
     # clicks inside an app pull it forward; give the user back the app the user was in unless the user asked to go somewhere
@@ -7409,6 +7530,7 @@ def main():
 
 
 if __name__ == '__main__':
+    install_exception_hooks()
     if sys.argv[1:] == ['--selftest']:
         assert label('Bash', {'command': 'open -a "Visual Studio Code" x'}) == 'Opening Visual Studio Code'
         assert label('Bash', {'command': 'open "https://www.google.com/search?q=x"'}) == 'Opening google.com'

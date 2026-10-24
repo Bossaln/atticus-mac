@@ -70,7 +70,8 @@ final class CGEvent {
  }
 }
 struct Harness {
- let element: CFTypeRef = NSNumber(value: 1), focus: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old", range: CFRange? = CFRange(location: 0, length: 3)
+ let element: CFTypeRef = NSNumber(value: 1), focus: CFTypeRef = NSNumber(value: 1), app = FakeApp(), text = "old"
+ var range: CFRange? = CFRange(location: 0, length: 3), keyboardOnly = false
  enum Delivery { case landed, unchanged, unknown }
  static let settle: TimeInterval = 0.05
  static func string(_ value: CFTypeRef?) -> String? { value as? String }
@@ -132,6 +133,14 @@ clipboardBusy = false; pump(2, until: { ok }); precondition(ok && leases == unlo
 reset(); NSApp.keyWindow = 1; ok = false; let hidKeyed = hidEvents, pidKeyed = events
 answered = false; h.apply("draft", valid: { true }) { ok = $0; answered = true }; pump(2, until: { answered }); NSApp.keyWindow = nil
 precondition(ok && hidEvents == hidKeyed && events == pidKeyed + 2, "with the box holding the keyboard, ⌘V went to the box instead of the target app")
+reset(); var keyboard = h; keyboard.range = nil; keyboard.keyboardOnly = true; focused = 2
+NSWorkspace.shared.frontmostApplication = keyboard.app; let keyboardEvents = events
+answered = false; keyboard.apply("draft", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication === keyboard.app }) { ok = $0; answered = true }; pump(2, until: { answered })
+precondition(ok && events == keyboardEvents + 2, "frontmost keyboard fallback required a readable focused element")
+reset(); keyboard = h; keyboard.range = nil; keyboard.keyboardOnly = true
+NSWorkspace.shared.frontmostApplication = FakeApp(); let movedEvents = events
+answered = false; keyboard.apply("private", preserveFocus: true, valid: { NSWorkspace.shared.frontmostApplication === keyboard.app }) { ok = $0; answered = true }; pump(2, until: { answered })
+precondition(!ok && events == movedEvents, "keyboard fallback pasted after the front app changed")
 print("paste safety ok")
 '''
         self.assertIn('paste safety ok', run_swift(self, swift))
@@ -145,6 +154,7 @@ print("paste safety ok")
 import CoreFoundation
 let kAXFocusedUIElementAttribute = "focus", kAXSubroleAttribute = "subrole", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value", kAXRoleAttribute = "role", kAXParentAttribute = "parent", kAXSecureTextFieldSubrole = "secure"
 var selectedText = "", subrole = "field", canEdit = true, exposesSelectedText = true, useParent = false
+var focusAvailable = true, wakeRevealsFocus = true, wakeWrites: [String] = []
 struct Prefs { static func bool(_ key: String) -> Bool { true } }
 final class NSRunningApplication: Equatable {
  static let current = NSRunningApplication()
@@ -156,17 +166,24 @@ typealias AXUIElement = Int
 func AXIsProcessTrusted() -> Bool { true }
 func AXUIElementCreateApplication(_ pid: Int) -> Int { pid }
 func AXUIElementSetMessagingTimeout(_ e: Int, _ timeout: Double) {}
-func axAttribute(_ e: Int, _ name: String) -> Any? {
- if name == "focus" { return 1 }
- if name == "parent" { return useParent && e == 1 ? 2 : nil }
- if name == "subrole" { return subrole }
- if name == "role" { return e == 2 ? "AXWebArea" : "AXStaticText" }
+func AXUIElementSetAttributeValue(_ e: Int, _ name: CFString, _ value: CFTypeRef) -> Int32 {
+ wakeWrites.append(name as String)
+ if wakeRevealsFocus { focusAvailable = true }
+ return 0
+}
+func axAttribute(_ e: Int, _ name: String) -> CFTypeRef? {
+ if name == "focus" { return focusAvailable ? NSNumber(value: 1) : nil }
+ if name == "AXManualAccessibility" || name == "AXEnhancedUserInterface" { return kCFBooleanFalse }
+ if name == "parent" { return useParent && e == 1 ? NSNumber(value: 2) : nil }
+ if name == "subrole" { return subrole as CFString }
+ if name == "role" { return (e == 2 ? "AXWebArea" : "AXStaticText") as CFString }
  if e == 2 { return name == "value" ? NSAttributedString(string: "prefix old suffix") : nil }
- return name == "value" ? selectedText : exposesSelectedText ? selectedText : nil
+ return name == "value" ? selectedText as CFString : exposesSelectedText ? selectedText as CFString : nil
 }
 struct TextSelection {
  let element: Int, focus: Int, app: NSRunningApplication, text: String, range: CFRange?
  var editable: Bool { canEdit }
+ var keyboardOnly: Bool { false }
 ''' + pastable + '''
  static func string(_ value: Any?) -> String? { value as? String ?? (value as? NSAttributedString)?.string }
  static func parent(_ e: Int) -> Int? { axAttribute(e, kAXParentAttribute) as? Int }
@@ -194,6 +211,14 @@ subrole = "secure"; precondition(TextSelection.capture(enabled: true, allowEmpty
 subrole = "field"; selectedText = String(repeating: "x", count: 6001)
 precondition(TextSelection.capture() == nil, "AI selection budget exceeded")
 precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.text.count == 6001, "typing truncated selected text")
+selectedText = ""; focusAvailable = false; wakeRevealsFocus = true; wakeWrites = []
+precondition(TextSelection.capture(enabled: true, allowEmpty: true)?.range?.location == 0, "lazy accessibility was not re-queried")
+precondition(wakeWrites == ["AXManualAccessibility"], "lazy accessibility was not enabled once")
+focusAvailable = false; wakeRevealsFocus = false; wakeWrites = []
+let keyboard = TextSelection.capture(enabled: true, allowEmpty: true, keyboardFallback: true)
+precondition(keyboard?.range == nil && keyboard?.element == 1 && keyboard?.focus == 1, "frontmost app did not get a keyboard fallback")
+NSWorkspace.shared.frontmostApplication = .current
+precondition(TextSelection.capture(NSRunningApplication(), enabled: true, allowEmpty: true, keyboardFallback: true) == nil, "keyboard fallback ignored the frontmost app")
 print("typing capture ok")
 '''
         self.assertIn('typing capture ok', run_swift(self, swift))

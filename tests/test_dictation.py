@@ -184,10 +184,12 @@ func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     workers.append(p)
     return p
 }
+func telemetry(_ args: [String]) {}
 struct Selection { let text: String }
 final class Harness {
     var dictateSelectionPending = false, dictateCleanup = false, busy = true, dictating = true
     var dictateID = 1, text = "Exact words.", inserted: [String] = [], dictateBefore = "Notes before the cursor."
+    var dictateFellBack = false, dictateTimedOut = false
     var dictateSelection: Selection?, dictateProcess: Process?, dictateInput: FileHandle?, dictateOutput: FileHandle?
     func insertDictation(_ value: String) { inserted.append(value); busy = false; dictating = false }
     func dictationDeliveryFailed(_ value: String, cleanup: Bool = false) { busy = false; dictating = false }
@@ -208,13 +210,26 @@ let cancelled = Harness(); cancelled.dictateCleanup = true
 cancelled.warmDictationCleanup(); cancelled.finishDictation(); cancelled.dictateID += 1; cancelled.dictateProcess?.terminate(); pump(0.5)
 precondition(cancelled.inserted.isEmpty && processCalls == 2, "cancelled cleanup inserted late output")
 let early = Harness(); early.dictateCleanup = true; early.text = "Ship it by Friday."
-early.warmDictationCleanup(); early.startDictateAhead(); pump(0.3)
+early.warmDictationCleanup(); early.startDictateAhead(early: true); pump(0.3)
 early.text = "ship it, by Friday"; early.finishDictation(); pump(0.3)
 precondition(early.inserted == ["Ship it by Friday."] && processCalls == 4 && early.dictateProcess == nil, "matching words did not reuse the early cleanup or left the spare running")
 let changed = Harness(); changed.dictateCleanup = true; changed.text = "Ship it by Friday"
-changed.warmDictationCleanup(); changed.startDictateAhead()
+changed.warmDictationCleanup(); changed.startDictateAhead(early: true)
 changed.text = "Ship it by Friday morning"; changed.finishDictation(); pump(0.5)
 precondition(changed.inserted == ["Ship it by Friday morning"] && processCalls == 6, "changed words used the stale early cleanup")
+let bounded = Harness(); bounded.dictateCleanup = true; bounded.text = "Write the release notes"
+bounded.warmDictationCleanup(); bounded.startDictateAhead(early: true)
+bounded.text = "Write the release notes with setup steps"; bounded.startDictateAhead(early: true)
+bounded.text = "Write the release notes with setup steps and examples"; bounded.startDictateAhead(early: true)
+precondition(bounded.dictateAheadRuns == 2 && processCalls == 9 && bounded.dictateRun?.key == "write the release notes with setup steps",
+             "pause cleanup was not capped at two runs")
+bounded.stopDictationCleanup()
+let revised = Harness(); revised.dictateCleanup = true; revised.text = "Send the release notes"
+revised.warmDictationCleanup(); revised.startDictateAhead(early: true)
+revised.text = "Send the release notes after review today"; revised.startDictateAhead()
+revised.text += " please"; revised.finishDictation(); pump(0.5)
+precondition(revised.inserted == ["Send the release notes after review today please"] && processCalls == 12,
+             "final speech revision did not use the third and last cleanup worker")
 hang = true
 let hung = Harness(); hung.dictateCleanup = true; hung.text = "keep these heard words"
 hung.warmDictationCleanup(); hung.finishDictation(); pump(1)
@@ -261,6 +276,7 @@ final class Harness {
     func hide(after: Double, shrink: Bool = false) {}
     func prepareDictation(_ value: String, target: Target) -> () -> Void { {} }
     func dictationDeliveryFailed(_ value: String) { failed.append(value); busy = false; dictating = false }
+    func recordDictationEvent(_ insert: String) {}
 ''' + method + r'''}
 let user = AppRef(1), other = AppRef(2), target = Target(user), h = Harness()
 h.dictateSelection = target; NSWorkspace.shared.frontmostApplication = user
@@ -312,6 +328,7 @@ struct TextSelection {
     enum Delivery { case landed, unchanged, unknown }
     static let settle: TimeInterval = 0.05
     let focus = "box", app = AppRef(id: 1), range: CFRange? = CFRange(location: 0, length: 0)
+    var keyboardOnly: Bool { false }
     var pastable: Bool { true }
     var value: String? { "" }
     func selectionMatches() -> Bool { true }
@@ -478,6 +495,7 @@ final class Harness {
         if let d = arg as? [String: Any] { log.append("\(call) \(d["text"]!) \(d["ok"]!)"); if let w = d["words"] as? String { words.append(w) } } else { log.append("\(call) \(arg as? String ?? "")") }
     }
     func prepareDictation(_ value: String, target: Target) -> () -> Void { {} }
+    func recordDictationEvent(_ insert: String) {}
     func hush() { dictating = false; dictateID += 1; busy = false }
     func shush() {}
     func close(clear: Bool) { log.append("close"); hush() }
@@ -641,8 +659,9 @@ if (!answer.classList.contains('old')) process.exit(console.error('a real ask no
         self.assertIn('pillOn = on', pill)
         self.assertNotIn('280', pill)
         heard = source[source.index('    func heard(_ now: String)'):]
-        self.assertIn('if dictating { return }', heard)
-        self.assertNotIn('scheduleDictateAhead', heard)
+        self.assertIn('if dictating { scheduleDictateAhead(); return }', heard)
+        self.assertIn('self?.startDictateAhead(early: true)', heard)
+        self.assertIn('dictateAheadRuns < 2', heard)
         insert = source[source.index('    func insertDictation('):source.index('    func typed(')]
         self.assertIn('cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.8)', insert)
 

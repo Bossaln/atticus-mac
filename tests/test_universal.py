@@ -288,7 +288,7 @@ class UniversalTests(unittest.TestCase):
                             fast_hands=lambda _: None, free_focus=lambda **_: None, LAST=str(self.root / 'last_app')), \
              patch.object(atticus.subprocess, 'run', return_value=ok):
             expected = {
-                'Chrome left, Terminal right': 'Google Chrome: left. Terminal: right.',
+                'Chrome left, Terminal right': 'Google Chrome: left; Terminal: right.',
                 'work mode': 'Work mode ready.',
                 'full screen Chrome': 'Google Chrome: full screen.',
                 'put Notes on the right': 'Notes: right.',

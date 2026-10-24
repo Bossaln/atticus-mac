@@ -11,6 +11,10 @@ import atticus
 
 
 class TelemetryTests(unittest.TestCase):
+    def setUp(self):
+        test_dir = os.environ.pop('ATTICUS_DIR', None)
+        self.addCleanup(lambda: os.environ.__setitem__('ATTICUS_DIR', test_dir) if test_dir is not None else os.environ.pop('ATTICUS_DIR', None))
+
     def test_success_is_daily_and_failure_can_retry(self):
         with tempfile.TemporaryDirectory(prefix='atticus telemetry ') as root:
             root = Path(root)
@@ -61,6 +65,56 @@ class TelemetryTests(unittest.TestCase):
         self.assertFalse(any(word in cleaned for word in ('hunter2', 'Diary', 'private')))
         self.assertIn('tell application "Notes"', cleaned)
 
+    def test_ask_done_has_counts_and_command_classes_but_no_ask_text(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
+             patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), patch.object(atticus, 'pref', return_value=True), \
+             patch.object(atticus.subprocess, 'Popen') as send:
+            atticus.ask_done({'task': 'Private request', 'reply': 'Private answer', 'path': 'shortcut', 'model': 'instant',
+                              'secs': 1.26, 'steps': ['one', 'two'], 'ran': [f'{atticus.PLACE} Notes left', f'{atticus.WEB} read secret'],
+                              'status': 'completed', 'escalated': False})
+        payload = json.loads(send.call_args.args[0][4])
+        self.assertEqual(payload['event'], 'ask_done')
+        self.assertEqual(payload['properties']['tools'], ['place', 'web'])
+        self.assertEqual(payload['properties']['status'], 'ok')
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'path', 'model', 'secs', 'steps',
+                                                      'tools', 'status', 'escalated', 'macos'})
+        self.assertNotIn('Private', json.dumps(payload))
+
+    def test_ask_done_maps_terminal_states(self):
+        with patch.object(atticus, 'posthog') as send:
+            for state in ('completed', 'failed', 'cancelled'):
+                atticus.ask_done({'status': state})
+        self.assertEqual([call.args[1]['status'] for call in send.call_args_list], ['ok', 'failed', 'cancelled'])
+
+    def test_error_shapes_never_include_exception_messages_or_shortcut_words(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
+             patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), patch.object(atticus, 'pref', return_value=True), \
+             patch.object(atticus.subprocess, 'Popen') as send:
+            try:
+                raise RuntimeError('private crash detail')
+            except RuntimeError as error:
+                atticus.exception_error(type(error), error.__traceback__)
+            atticus.report_error('replay', shortcut='0123456789abcdef', failed_at=2)
+        crash, replay = [json.loads(call.args[0][4]) for call in send.call_args_list]
+        self.assertEqual(set(crash['properties']), {'$process_person_profile', 'version', 'kind', 'macos',
+                                                    'exception', 'file', 'line', 'function'})
+        self.assertEqual(crash['properties']['exception'], 'RuntimeError')
+        self.assertNotIn('private crash detail', json.dumps(crash))
+        self.assertEqual(replay['properties']['kind'], 'replay')
+        self.assertEqual(replay['properties']['shortcut'], '0123456789abcdef')
+        self.assertEqual(replay['properties']['failed_at'], 2)
+
+    def test_dictation_has_only_mode_counts_timing_and_outcome(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
+             patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), patch.object(atticus, 'pref', return_value=True), \
+             patch.object(atticus.subprocess, 'Popen') as send:
+            atticus.dictation_event('cleanup', 1.23456, True, False, False, 'no box')
+        payload = json.loads(send.call_args.args[0][4])
+        self.assertEqual(payload['event'], 'dictation')
+        self.assertEqual(payload['properties']['secs'], 1.235)
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'mode', 'secs',
+                                                      'cleanup_used', 'fell_back', 'timed_out', 'insert'})
+
     def test_the_ask_log_and_its_folder_are_private_even_on_older_installs(self):
         with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root):
             os.chmod(root, 0o755); log = Path(root, 'log.jsonl'); log.write_text(''); log.chmod(0o644)
@@ -72,8 +126,13 @@ class TelemetryTests(unittest.TestCase):
              patch.object(atticus.subprocess, 'Popen') as send:
             with patch.object(atticus, 'POSTHOG_KEY', ''):
                 atticus.ping()
-            with patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), patch.object(atticus, 'pref', return_value=False):
+            with patch.object(atticus, 'POSTHOG_KEY', 'fixture-token'), \
+                 patch.object(atticus, 'pref', side_effect=lambda key, default: True if key == 'improve' else False):
                 atticus.ping()
+                atticus.ask_done({'status': 'completed'})
+                atticus.report_error('stopped')
+                atticus.dictation_event('verbatim', 1, False, False, False, 'ok')
+                atticus.report('Private request', 'Private reply', (), 1, 'error')
             send.assert_not_called()
             self.assertEqual(list(Path(root).iterdir()), [])
 

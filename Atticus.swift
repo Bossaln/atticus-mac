@@ -559,6 +559,13 @@ func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
     return p
 }
 
+func telemetry(_ args: [String]) {
+    guard Prefs.bool("stats") else { return }
+    let p = py(["--telemetry"] + args)
+    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+    try? p.run()   // its curl child outlives this helper; never wait on an ask
+}
+
 func detectLocalServers(_ done: @escaping ([[String: Any]]) -> Void) {
     DispatchQueue.global().async {
         let p = py(["--local-servers"]), out = Pipe(); p.standardOutput = out
@@ -630,33 +637,45 @@ struct TextSelection {
         guard let value = axAttribute(element, kAXParentAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return (value as! AXUIElement)
     }
-    static func capture(_ app: NSRunningApplication? = NSWorkspace.shared.frontmostApplication, enabled: Bool = Prefs.bool("selection"), allowEmpty: Bool = false, onSecure: (() -> Void)? = nil) -> TextSelection? {
+    static func capture(_ app: NSRunningApplication? = NSWorkspace.shared.frontmostApplication, enabled: Bool = Prefs.bool("selection"), allowEmpty: Bool = false, keyboardFallback: Bool = false, onSecure: (() -> Void)? = nil) -> TextSelection? {
         guard enabled, AXIsProcessTrusted(), let app,
               app != .current else { return nil }
         let target = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(target, 0.15)
-        guard let focused = axAttribute(target, kAXFocusedUIElementAttribute) else { return nil }
-        let focus = focused as! AXUIElement
-        var element: AXUIElement? = focus
-        for _ in 0..<16 {
-            guard let candidate = element else { break }
-            AXUIElementSetMessagingTimeout(candidate, 0.15)
-            if axAttribute(candidate, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole { onSecure?(); return nil }
-            let range = selectedRange(candidate), value = string(axAttribute(candidate, kAXValueAttribute))
-            let derived = range.flatMap { r -> String? in
-                guard let value, r.location >= 0, r.length >= 0, r.location + r.length <= (value as NSString).length else { return nil }
-                return (value as NSString).substring(with: NSRange(location: r.location, length: r.length))
+        var secure = false
+        func focusedSelection() -> TextSelection? {
+            guard let focused = axAttribute(target, kAXFocusedUIElementAttribute) else { return nil }
+            let focus = focused as! AXUIElement
+            var element: AXUIElement? = focus
+            for _ in 0..<16 {
+                guard let candidate = element else { break }
+                AXUIElementSetMessagingTimeout(candidate, 0.15)
+                if axAttribute(candidate, kAXSubroleAttribute) as? String == kAXSecureTextFieldSubrole { secure = true; onSecure?(); return nil }
+                let range = selectedRange(candidate), value = string(axAttribute(candidate, kAXValueAttribute))
+                let derived = range.flatMap { r -> String? in
+                    guard let value, r.location >= 0, r.length >= 0, r.location + r.length <= (value as NSString).length else { return nil }
+                    return (value as NSString).substring(with: NSRange(location: r.location, length: r.length))
+                }
+                if let text = string(axAttribute(candidate, kAXSelectedTextAttribute)) ?? derived ?? (allowEmpty && range != nil ? "" : nil),
+                   allowEmpty || text.count <= 6000 {
+                    let selection = TextSelection(element: candidate, focus: focus, app: app, text: text, range: range)
+                    // nothing highlighted: keep it only as a cursor in a text box, where a draft can go
+                    if !text.isEmpty && !allowEmpty || range != nil && (selection.editable || selection.pastable) { return selection }
+                }
+                guard let next = parent(candidate) else { break }
+                element = next
             }
-            if let text = string(axAttribute(candidate, kAXSelectedTextAttribute)) ?? derived ?? (allowEmpty && range != nil ? "" : nil),
-               allowEmpty || text.count <= 6000 {
-                let selection = TextSelection(element: candidate, focus: focus, app: app, text: text, range: range)
-                // nothing highlighted: keep it only as a cursor in a text box, where a draft can go
-                if !text.isEmpty && !allowEmpty || range != nil && (selection.editable || selection.pastable) { return selection }
-            }
-            guard let next = parent(candidate) else { break }
-            element = next
+            return nil
         }
-        return nil
+        if let selection = focusedSelection() { return selection }
+        guard !secure else { return nil }
+        for key in ["AXManualAccessibility"] {   // not AXEnhancedUserInterface: it makes Chrome and Electron window moves animate and lag
+            if let value = axAttribute(target, key), CFEqual(value, kCFBooleanTrue) { continue }
+            _ = AXUIElementSetAttributeValue(target, key as CFString, kCFBooleanTrue)
+        }
+        if let selection = focusedSelection() { return selection }
+        guard !secure, keyboardFallback, NSWorkspace.shared.frontmostApplication == app else { return nil }
+        return TextSelection(element: target, focus: target, app: app, text: "", range: nil)
     }
     var caret: Bool { text.isEmpty && range?.length == 0 }
     static func selectedRange(_ element: AXUIElement) -> CFRange? {
@@ -668,9 +687,10 @@ struct TextSelection {
         var settable = DarwinBoolean(false)
         return range != nil && AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success && settable.boolValue
     }
+    var keyboardOnly: Bool { range == nil && text.isEmpty && CFEqual(element, focus) }
     // Chrome, Electron and web editors often refuse an AX write; a text field there still takes a paste.
     var pastable: Bool {
-        ["AXTextArea", "AXTextField", "AXComboBox", "AXSearchField", "AXWebArea"].contains {
+        keyboardOnly || ["AXTextArea", "AXTextField", "AXComboBox", "AXSearchField", "AXWebArea"].contains {
             $0 == axAttribute(element, kAXRoleAttribute) as? String || $0 == axAttribute(focus, kAXRoleAttribute) as? String
         }
     }
@@ -684,14 +704,19 @@ struct TextSelection {
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.settle) { confirm(until: deadline, finished) }
         }
         func paste(_ attempt: Int = 0) {
-            guard pastable, !app.isTerminated, range != nil else { done(false); return }
+            guard pastable, !app.isTerminated, range != nil || keyboardOnly else { done(false); return }
             let target = AXUIElementCreateApplication(app.processIdentifier)
             AXUIElementSetMessagingTimeout(target, 0.15)
+            func focusMatches() -> Bool {
+                if keyboardOnly { return true }
+                guard let focused = axAttribute(target, kAXFocusedUIElementAttribute) else { return false }
+                return CFEqual(focused, focus)
+            }
             guard valid(), !app.isTerminated, NSWorkspace.shared.frontmostApplication == app,
-                  let focused = axAttribute(target, kAXFocusedUIElementAttribute), CFEqual(focused, focus),
-                  selectionMatches(),
+                  focusMatches(),
+                  keyboardOnly || selectionMatches(),
                   pastable,
-                  let finalFocus = axAttribute(target, kAXFocusedUIElementAttribute), CFEqual(finalFocus, focus),
+                  focusMatches(),
                   NSWorkspace.shared.frontmostApplication == app else { done(false); return }
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: draft.isEmpty ? 51 : 9, keyDown: true),
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: draft.isEmpty ? 51 : 9, keyDown: false) else { done(false); return }
@@ -2460,7 +2485,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let front = NSWorkspace.shared.frontmostApplication, cleanup = dictateCleanup
         DispatchQueue.global().async { [weak self] in
             var secureField = false
-            let selected = TextSelection.capture(front, enabled: true, allowEmpty: true, onSecure: { secureField = true })
+            let selected = TextSelection.capture(front, enabled: true, allowEmpty: true, keyboardFallback: true, onSecure: { secureField = true })
             // Clean up reads the text before the cursor for names and terms.
             let before = selected.flatMap { s -> String? in
                 guard cleanup, let value = s.value as NSString?, let r = s.range, r.location >= 0, r.location <= value.length else { return nil }
@@ -2567,6 +2592,7 @@ final class App: NSObject, WKScriptMessageHandler {
         cancelFast(); noteHidden()
         if dictate {
             dictateCleanup = Prefs.str("dictateMode") == "cleanup"
+            dictateFellBack = false; dictateTimedOut = false
             captureDictationSelection(); replacement = nil
             if dictateCleanup { warmDictationCleanup() }
         } else if replying { offerText = text } else { captureSelection(); replacement = nil }
@@ -2644,7 +2670,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func heard(_ now: String) {
         guard engine.isRunning || busy else { return }
         text = now
-        if dictating { return }   // cleanup starts only after key-up; cancelled partial words never leave the Mac
+        if dictating { scheduleDictateAhead(); return }   // cleanup starts on a pause; the pill still shows only the wave
         if offerText != nil {
             js(drawingReply ? "words" : "draft", now)
             if clickTalk { quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q; DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q) }
@@ -2668,6 +2694,17 @@ final class App: NSObject, WKScriptMessageHandler {
         let go = DispatchWorkItem { [weak self] in self?.startAhead() }
         aheadItem = go
         DispatchQueue.main.asyncAfter(deadline: .now() + Prefs.num("aheadDelay"), execute: go)
+    }
+
+    func scheduleDictateAhead() {
+        dictateAheadItem?.cancel()
+        guard dictateCleanup, engine.isRunning else { return }
+        let go = DispatchWorkItem { [weak self] in
+            guard self?.engine.isRunning == true else { return }
+            self?.startDictateAhead(early: true)
+        }
+        dictateAheadItem = go
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: go)
     }
 
     func words() -> [Substring] { text.split(separator: " ") }
@@ -2781,6 +2818,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     var correctionTimer: Timer?, learnedWord: String?, dictationAppName = "App", dictateSeconds = 0.0, lastDictation: String?
+    var dictateFellBack = false, dictateTimedOut = false
     @discardableResult func saveDictation(_ value: String, appName: String) -> Bool {
         let saved = DictationData.record(value, raw: text.trimmingCharacters(in: .whitespacesAndNewlines), app: appName, seconds: dictateSeconds > 0 ? dictateSeconds : Date().timeIntervalSince(began))
         if !saved { js("dictated", ["text": "Your words are ready. Couldn’t save history or stats.", "ok": false]) }
@@ -2884,7 +2922,8 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func stopDictationCleanup() {
         stopDictationWorker()
-        dictateRun?.process.terminate(); dictateRun = nil
+        dictateAheadItem?.cancel(); dictateAheadItem = nil
+        dictateRun?.process.terminate(); dictateRun = nil; dictateAheadRuns = 0
     }
 
     // One transcript handed to a cleanup worker. key is its words only, so final words that match reuse a run started early.
@@ -2895,9 +2934,12 @@ final class App: NSObject, WKScriptMessageHandler {
         func finish(_ value: String?) { result = .some(value); done?(value) }
         func then(_ f: @escaping (String?) -> Void) { if let result { f(result) } else { done = f } }
     }
-    var dictateRun: DictationCleanup?, dictateReleased = Date()
+    var dictateRun: DictationCleanup?, dictateAheadItem: DispatchWorkItem?, dictateReleased = Date(), dictateAheadRuns = 0
     static func dictationKey(_ s: String) -> String {
         s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+    static func dictationChangedMeaningfully(_ old: String, _ new: String) -> Bool {
+        Array(new.split(separator: " ")).difference(from: old.split(separator: " ")).count >= 3
     }
 
     func stopDictationWorker() {
@@ -2924,14 +2966,21 @@ final class App: NSObject, WKScriptMessageHandler {
         return run
     }
 
-    // Cleanup starts at key-up while the last words finalize; a spare worker waits in case they change.
-    func startDictateAhead() {
+    // At most two speculative pause/key-up runs, plus one final run. Only one speculative result is kept in flight.
+    func startDictateAhead(early: Bool = false) {
+        if !early { dictateAheadItem?.cancel(); dictateAheadItem = nil }
         let source = text.trimmingCharacters(in: .whitespacesAndNewlines), key = Self.dictationKey(source)
-        guard dictating, dictateCleanup, !dictateSelectionPending, key.split(separator: " ").count >= 3, key != dictateRun?.key,
+        guard dictating, dictateCleanup, !dictateSelectionPending, dictateAheadRuns < 2,
+              key.split(separator: " ").count >= 3, key != dictateRun?.key else { return }
+        if early {
+            if let run = dictateRun, run.result == nil && !Self.dictationChangedMeaningfully(run.key, key) { return }
+        }
+        guard
               let run = sendDictationCleanup(source) else { return }
         dictateRun?.process.terminate()
         dictateRun = run
-        warmDictationCleanup()
+        dictateAheadRuns += 1
+        warmDictationCleanup()   // final speech words may still revise after key-up
     }
 
     func warmDictationCleanup() {
@@ -2968,11 +3017,12 @@ final class App: NSObject, WKScriptMessageHandler {
         let early = dictateRun?.key == Self.dictationKey(source)
         if !early { dictateRun?.process.terminate(); dictateRun = sendDictationCleanup(source) }
         stopDictationWorker()
-        guard let run = dictateRun else { return insertDictation(source) }   // cleanup could not start: the heard words still go in
+        guard let run = dictateRun else { dictateFellBack = true; return insertDictation(source) }   // cleanup could not start: the heard words still go in
         let id = dictateID
         run.then { [weak self] cleaned in
             guard let self, dictateID == id, dictateRun === run else { return }
             dictateRun = nil
+            dictateFellBack = cleaned == nil
             NSLog("Dictation cleanup: %.2f s after key-up%@", Date().timeIntervalSince(dictateReleased), early ? " (started early)" : "")
             insertDictation(cleaned ?? source)
         }
@@ -2981,13 +3031,22 @@ final class App: NSObject, WKScriptMessageHandler {
         DispatchQueue.main.asyncAfter(deadline: .now() + limit) { [weak self] in
             guard let self, dictateID == id, dictateRun === run else { return }
             NSLog("Dictation cleanup: no answer in %.1f s, inserting the heard words", limit)
+            dictateFellBack = true; dictateTimedOut = true
             dictateRun = nil; run.process.terminate()
             insertDictation(source)
         }
     }
 
+    func recordDictationEvent(_ insert: String) {
+        telemetry(["dictation", dictateCleanup ? "cleanup" : "verbatim",
+                   String(max(0, Date().timeIntervalSince(dictateReleased))),
+                   dictateCleanup && !dictateFellBack ? "1" : "0",
+                   dictateFellBack ? "1" : "0", dictateTimedOut ? "1" : "0", insert])
+    }
+
     func dictationDeliveryFailed(_ value: String) {
         let failed = dictateSelection == nil ? "No text field." : "Couldn’t insert."
+        recordDictationEvent(dictateSelection == nil ? "no box" : "failed")
         busy = false; dictating = false; dictateSelection = nil; lastDictation = value
         let paste = pasteHotkeyRegistered ? " Press ⌃⌘V to paste it." : ""
         cue("soundStop")
@@ -3010,6 +3069,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }) { [weak self] ok in
             guard let self, dictateID == id else { return }
             if !ok { dictationDeliveryFailed(value); return }
+            recordDictationEvent("ok")
             busy = false; dictating = false; dictateSelection = nil
             cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.8); inserted()
         }
@@ -3166,6 +3226,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 try? FileManager.default.removeItem(atPath: commit)
                 guard let self, self.proc === p else { return }   // a cancelled run ending late must not touch the next one
                 if !self.ahead.isEmpty { self.proc = nil; self.ahead = ""; self.busy = !self.engine.isRunning; return }
+                if p.terminationStatus != 0 { telemetry(["error", "worker_exit", "python", String(p.terminationStatus)]) }
                 self.busy = false; self.agentMoveFile = ""; self.guardUntil = Date().addingTimeInterval(2); self.proc = nil; self.mini.finish(); self.js("finished")   // Spotify jumps ~0.5 s after play returns
                 self.lastDone = Date()
                 if !self.answer.isEmpty { self.cue("soundDone") }
@@ -3191,6 +3252,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if let path = point?["image"] as? String { try? FileManager.default.removeItem(atPath:path) }
             busy = false
             if speculative { ahead = ""; return }
+            telemetry(["error", "worker_exit", "python", "-1"])
             pinned = true; js("workerFailed"); show(); return
         }
         warm = nil; proc = w.p; commit = w.commit

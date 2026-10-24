@@ -208,9 +208,9 @@ Atticus has to stay fast and nearly free, so new features must fit under these l
 - System prompt: under 10,000 characters in source and at most 10,050 with the installed helper path. Every ask pays for it, and tests enforce both limits.
 - Anything that waits or runs in the background: $0 while it waits. AI only to set it up and to act at the end.
 
-## Usage count
+## Anonymous usage
 
-Once a day, Atticus sends one random ID (made on your Mac, not tied to you) to PostHog, so I can see how many people use it. It never sends your name, your asks or your screen. Turn it off in Settings → Account & Access → Count me as a user.
+Atticus sends a random ID (made on your Mac, not tied to you) with daily use, ask outcomes, feature names, timings, dictation outcomes, and code locations for errors. It never sends task text, dictated words, file contents, paths, or screen content. Turn it off in Settings → Account & Access → Count me as a user.
 
 If you say yes to **Help improve Atticus** (asked once, off until you do), a task that fails sends what you asked, the steps Atticus took and why it failed, under the same random ID. Emails, numbers, file paths, link details and anything typed for you are removed on your Mac first. Turn it off in Settings → Account & Access → Help improve Atticus.
 

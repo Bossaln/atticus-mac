@@ -246,7 +246,7 @@ class NightTests(unittest.TestCase):
                 self.assertTrue(all('window 1' not in s for s in calls));shell.assert_not_called()
 
     def test_native_fullscreen_rejects_a_successful_entry_on_the_wrong_display(self):
-        checks = iter(('0, 25, 1000, 775', '1200, 25, 1000, 775'))
+        checks = iter(('0, 25, 1000, 775', '1200, 25, 1000, 775', '1200, 25, 1000, 775'))   # moved, then full screen settles elsewhere
         def osa(script, *args):
             if 'return {value of attribute' in script: return 'false, false, 0, 25, 1000, 775'
             if 'return {position, size}' in script: return next(checks)
@@ -256,6 +256,19 @@ class NightTests(unittest.TestCase):
         with patch.object(atticus,'osa',side_effect=osa),patch.object(atticus,'free_focus'),patch.object(atticus,'preview_app'), \
              patch.object(atticus,'screens',return_value=displays),patch.object(atticus.time,'sleep'),patch.object(atticus.subprocess,'run'):
             self.assertEqual(atticus.place('Fixture','fullscreen','laptop'), 'NOT DONE: Fixture entered full screen on the wrong display.')
+
+    def test_native_fullscreen_asks_again_when_macos_drops_the_request(self):
+        asked = []
+        def osa(script, *args):
+            if 'set value of attribute "AXFullScreen"' in script: asked.append(script)
+            if 'return {value of attribute' in script: return 'false, false, 0, 25, 1000, 775'
+            if 'return {position, size}' in script: return '0, 0, 1000, 800'
+            if 'get value of attribute "AXFullScreen"' in script: return 'true' if len(asked) > 1 else 'false'   # the first one came mid-animation
+            return ''
+        with patch.object(atticus,'osa',side_effect=osa),patch.object(atticus,'free_focus'),patch.object(atticus,'preview_app'), \
+             patch.object(atticus,'screens',return_value=[('Laptop',0,0,1000,800,True)]),patch.object(atticus.time,'sleep'),patch.object(atticus.subprocess,'run'):
+            self.assertEqual(atticus.place('Fixture','fullscreen','laptop'), 'Fixture window -> fullscreen of Laptop')
+        self.assertEqual(len(asked), 2)
 
     def test_place_cli_status_distinguishes_failures_from_an_unverified_success(self):
         for output in ('NOT DONE: wrong display.', 'no window found for "Fixture"', 'where must be left, right, full, fullscreen or center'):
@@ -274,7 +287,7 @@ class NightTests(unittest.TestCase):
         self.assertEqual(stopped.exception.code,1)
 
     def test_fullscreen_position_check_retries_during_the_animation(self):
-        reads = iter(('0, 25, 1000, 775', '', '', '0, 25, 1000, 775'))
+        reads = iter(('0, 25, 1000, 775', '', '', '0, 25, 1000, 775', '0, 25, 1000, 775'))
         def osa(script, *args):
             if 'return {value of attribute' in script: return 'false, false, 0, 25, 1000, 775'
             if 'return {position, size}' in script: return next(reads)
@@ -284,7 +297,7 @@ class NightTests(unittest.TestCase):
              patch.object(atticus,'screens',return_value=[('Laptop',0,0,1000,800,True)]), \
              patch.object(atticus.time,'sleep') as sleep,patch.object(atticus.subprocess,'run'):
             self.assertEqual(atticus.place('Fixture','fullscreen','laptop'), 'Fixture window -> fullscreen of Laptop')
-        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(sleep.call_count, 3)   # two unreadable frames, then one wait to see it hold still
 
     def test_place_batches_state_and_verification_without_fixed_delays(self):
         calls = []

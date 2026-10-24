@@ -389,7 +389,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
              patch.object(atticus, 'posthog') as sent, patch.object(atticus.threading, 'Thread'), \
              patch('sys.argv', ['atticus.py', 'no, I meant the work inbox']), patch('sys.stdout', io.StringIO()):
             atticus.main()
-        props = sent.call_args.args[1]
+        props = next(call.args[1] for call in sent.call_args_list if call.args[0] == 'task_failed')
         self.assertEqual((props['task'], props['why']), ('Summarize my inbox', 'the user said it was wrong'))
         self.assertNotIn('lawsuit', json.dumps(props))
 

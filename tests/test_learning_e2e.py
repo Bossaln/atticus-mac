@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -12,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import atticus
 from tests import scratch_dir
 
+PLACE_MANY, THREAD = atticus.place_many, threading.Thread
 URL = 'https://board.example'
 APPS = {'Safari', 'Obsidian', 'Mail', 'Fixture Board', 'Other Fixture'}
 
@@ -128,7 +131,7 @@ class LearningEndToEndTests(Ask):
         self.show.side_effect = lambda target, bg=False: ('could not open ' if target == second else 'opened ') + target
         redo = f'{atticus.SHOW} "https://board.example/recovered"'
         self.ask('board setup', 'Recovered the remaining step.', [redo])
-        self.assertEqual(atticus.skills(), {})
+        self.assertEqual(atticus.skills()['board setup']['cmds'], [f'{atticus.SHOW} "{first}"', f'{atticus.SHOW} "{second}"'])   # the user's own shortcut stays whole
         row = json.loads((self.root / 'log.jsonl').read_text().splitlines()[-1])
         self.assertTrue(any(first in step for step in row['ran']))
         self.assertTrue(any(second in step for step in row['ran']))
@@ -152,6 +155,62 @@ class LearningEndToEndTests(Ask):
         self.ask('Hide fixture board', 'I could not hide it.', ["osascript -e 'tell application \"Fixture Board\" to set visible to false'"])
         self.ask('Hide other fixture', 'Hidden.', ["osascript -e 'tell application \"Other Fixture\" to set visible to false'"], ok=False)
         self.assertEqual(atticus.skills(), before)
+
+
+class WorkModeTests(Ask):
+    """Teach a two-display full screen layout by name, replay it with no model, re-teach it: the real place_many, fake windows."""
+    def setUp(self):
+        super().setUp()
+        self.calls, self.active, self.most, self.fail = [], 0, 0, False
+        lock, both = threading.Lock(), threading.Barrier(2, timeout=2)
+        def place(app, where, screen, title=''):
+            if where != 'fullscreen':
+                if screen == 'current': both.wait()   # plain moves run at once: one alone would wait out the barrier
+                self.calls.append((app, where, screen)); return f'{app} window -> {where} of {screen}'
+            with lock: self.active += 1; self.most = max(self.most, self.active)
+            time.sleep(.02)   # a Space animation; another one started meanwhile would overlap it
+            with lock: self.active -= 1; self.calls.append((app, where, screen))
+            return f'NOT DONE: {app} entered full screen on the wrong display.' if self.fail else f'{app} window -> fullscreen of {screen}'
+        for p in (patch.multiple(atticus, place_many=PLACE_MANY, place=place),):
+            p.start(); self.addCleanup(p.stop)
+
+    def test_teach_replay_and_reteach_work_mode(self):
+        (self.root / 'memory.md').write_text('- Work mode: Other Fixture full screen on the laptop, Fixture Board on the monitor.\n- Keep replies short.\n')
+        stale = 'when i say work mode full screen other fixture on my laptop and fixture board on my monitor'
+        atticus.save_skills({stale: {'cmds': [f'{atticus.PLACE} "Other Fixture" fullscreen laptop'], 'reply': 'Done.', 'at': '2099-01-01'}})
+        said, pill, model = self.ask('No, when I say work mode, full screen Fixture Board on my laptop and full screen Other Fixture on my monitor.')
+        self.assertFalse(model)
+        self.assertEqual(said, 'Fixture Board: full screen on laptop; Other Fixture: full screen on monitor.')
+        self.assertEqual(pill, 'Learned: Say “work mode” any time.')
+        self.assertEqual(set(atticus.skills()), {'work mode'})   # the stale whole-sentence version is gone
+        self.assertTrue(atticus.skills()['work mode']['mine'])
+        self.assertEqual(atticus.memory_rules(), ['Keep replies short.'])   # so is the rule that described the old layout
+        # each window reaches its display first, then they enter full screen one at a time
+        self.assertEqual(self.calls, [('Fixture Board', 'full', 'laptop'), ('Other Fixture', 'full', 'monitor'),
+                                      ('Fixture Board', 'fullscreen', 'laptop'), ('Other Fixture', 'fullscreen', 'monitor')])
+        self.assertEqual(self.most, 1)
+        self.calls.clear()
+        said, pill, model = self.ask('Work mode.')
+        self.assertFalse(model)
+        self.assertEqual(said, 'Fixture Board: full screen on laptop; Other Fixture: full screen on monitor.')
+        self.assertEqual(self.calls[2:], [('Fixture Board', 'fullscreen', 'laptop'), ('Other Fixture', 'fullscreen', 'monitor')])
+        self.assertEqual(self.most, 1)
+        self.ask('When I say work mode, full screen Other Fixture on my laptop and full screen Fixture Board on my monitor')
+        self.calls.clear()
+        self.ask('work mode')
+        self.assertEqual(self.calls[2:], [('Other Fixture', 'fullscreen', 'laptop'), ('Fixture Board', 'fullscreen', 'monitor')])
+
+    def test_plain_moves_stay_parallel(self):
+        with patch.object(threading, 'Thread', THREAD): self.assertEqual(atticus.fast('Fixture Board left, Other Fixture right'), 'Fixture Board: left; Other Fixture: right.')
+
+    def test_a_failed_replay_keeps_the_users_shortcut_when_the_redo_works(self):
+        self.ask('When I say work mode, full screen Fixture Board on my laptop and full screen Other Fixture on my monitor')
+        taught = atticus.skills()['work mode']
+        self.fail = True
+        checks = "osascript -e 'tell application \"System Events\" to get value of attribute \"AXFullScreen\" of window 1' 2>&1; echo ---"
+        said, pill, model = self.ask('Work mode.', 'Both are full screen now.', [f'{atticus.PLACE} "Fixture Board" fullscreen laptop', checks])
+        self.assertTrue(model)
+        self.assertEqual(atticus.skills()['work mode']['cmds'], taught['cmds'])   # the redo could not be learned: what the user taught stays
 
 
 class OpenAppsAndSitesTests(Ask):

@@ -202,9 +202,15 @@ try {
       for(let ms=0;ms<2000&&(ms<400||!shown());ms+=50)await new Promise(r=>setTimeout(r,50));   // settled, or 2 s on a slow machine
       const rect=d.querySelector('.mini-view').getBoundingClientRect(),thread=d.getElementById('thread').getBoundingClientRect(),latest=d.querySelector('.step:last-child').getBoundingClientRect();
       assert(Math.abs(rect.top-fixedTop)<1&&rect.top>=thread.top&&rect.bottom<=thread.bottom,'Mini remains fully visible at '+i+' steps');
-      assert(latest.top>=rect.bottom&&latest.bottom<=thread.bottom,'Newest step remains readable at '+i+' steps');}
+      assert(latest.top>=rect.bottom&&latest.bottom<=thread.bottom,'Newest step remains readable at '+i+' steps');
+      assert(d.querySelector('.steps').getBoundingClientRect().top>=rect.bottom,'Step stack starts below the mini at '+i+' steps');}
   }
-  assert(w.getComputedStyle(d.querySelector('.steps')).webkitMaskImage.includes('linear-gradient'),'Older steps fade under the pinned mini');
+  {const clear=()=>{const v=d.querySelector('.mini-view').getBoundingClientRect(),s=d.querySelector('.steps').getBoundingClientRect(),l=d.querySelector('.step:last-child').getBoundingClientRect();return s.top>=v.bottom&&l.top>=s.top&&l.bottom<=s.bottom;};
+    ui.line('▸ Reading '+'a much longer label than the box can hold '.repeat(8));await new Promise(r=>setTimeout(r,400));
+    assert(clear(),'A long step stays in its stack below the mini');
+    frame.style.width='720px';await new Promise(r=>setTimeout(r,150));assert(clear(),'A wider box (taller mini) keeps the steps below it');
+    frame.style.width='';await new Promise(r=>setTimeout(r,150));}
+  assert(w.getComputedStyle(d.querySelector('.steps')).webkitMaskImage.includes('linear-gradient'),'Older steps fade at the top of their own stack');
   assert(d.querySelectorAll('.step').length===4,'Long tasks keep a bounded step stack');
   ui.line('▸ Interrupted arrival'); await new Promise(r=>setTimeout(r,60));
   const arriving=d.querySelector('.step:last-child'),arrivalTop=arriving.getBoundingClientRect().top;

@@ -24,7 +24,7 @@
   #status.live span { background: linear-gradient(90deg, var(--fg2) 0%, #fff 45%, var(--fg2) 90%); background-size: 200% 100%;
     -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
 
-  #thread { max-height: 420px; min-height: 0; overflow-y: auto; scroll-behavior: smooth; padding-top: 2px;
+  #thread { container-type: inline-size; max-height: 420px; min-height: 0; overflow-y: auto; scroll-behavior: smooth; padding-top: 2px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 100%); }
   #thread::-webkit-scrollbar { width: 0; }
   #thread:empty { display: none; }
@@ -86,9 +86,10 @@
   .step.live { color: #f5f5f7; }
   .step.live::before { background: #fff; animation: pulse 1s ease-in-out infinite; }
   .step.done::before { background: #30d158; }
-  .turn.preview .mini.on { position: relative; z-index: 1; }   /* not sticky: its picture is under this see-through page, so nothing may scroll beneath it; the bounded steps keep it still */
-  .turn.preview .steps { height: 76px; min-height: 76px; margin-top: -14px; gap: 4px; justify-content: flex-end; overflow: hidden;
-    -webkit-mask-image: linear-gradient(to bottom, transparent 14px, #000 34px); }
+  /* The mini's picture is drawn under this see-through page, so nothing may sit or scroll over it: the mini is not sticky and the
+     steps stay in flow below it, clipped to their own box. Three 16px rows tall, so adding steps never moves the mini; older rows slide out the top. */
+  .turn.preview .steps { height: 56px; margin-top: 6px; gap: 4px; justify-content: flex-end; overflow: clip;
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 20px); }
   .turn.preview .steps[data-more]::before { content: none; }
   .turn.preview .step { flex: none; animation: none; }
 
@@ -96,7 +97,7 @@
     transform-origin: top left; transition: grid-template-rows .42s var(--ease), margin .42s var(--ease), opacity .24s, transform .42s var(--spring); }
   .mini.on { grid-template-rows: 1fr; margin-top: 10px; opacity: 1; transform: none; }
   .mini-inner { min-height: 0; overflow: hidden; padding: 0 4px; margin-left: -4px; }
-  .mini-view { position: relative; display: block; padding: 0; width: 100%; aspect-ratio: 16/10; border: 0;
+  .mini-view { position: relative; display: block; padding: 0; width: 100%; height: calc((100cqw - 4px) * .625); border: 0;   /* 16:10 of its width (4px: .mini-inner's inset). Not aspect-ratio: WebKit then keeps the mini's row at its old height when the box widens, so the picture covers the steps */
     border-radius: 12px; background: transparent; overflow: hidden; cursor: pointer; color: #f5f5f7;
     box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14), 0 8px 24px rgba(0,0,0,.28); transition: box-shadow .24s; }
   .mini-view:is(:hover,.hot) { box-shadow: inset 0 0 0 1px rgba(255,255,255,.3), 0 10px 28px rgba(0,0,0,.36); }   /* no scale: the native picture under it can't follow */

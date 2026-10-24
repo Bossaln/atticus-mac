@@ -49,7 +49,7 @@ class CrossReviewTests(unittest.TestCase):
         source = (ROOT / 'Atticus.swift').read_text()
         failure = source[source.index('        guard let w = warm ?? spawn()'):source.index('        warm = nil; proc = w.p')]
         swift_check(self, 'final class Fixture { var warm:Int?, busy=true, pinned=false, ahead="draft", calls=0\n'
-                    + 'func spawn()->Int? { nil }; func js(_ s:String) { calls+=1 }; func show() {}\n'
+                    + 'func spawn()->Int? { nil }; func js(_ s:String) { calls+=1 }; func show() {}; func telemetry(_ a:[String]) {}\n'
                     + 'func run(_ speculative:Bool) { let point:[String:Any]?=nil\n' + failure + ' _=w\n}\n}\n'
                     + 'let f=Fixture(); f.run(true); precondition(f.ahead.isEmpty && !f.busy && !f.pinned && f.calls==0)\n'
                     + 'f.run(false); precondition(f.pinned && f.calls==1)\n')
