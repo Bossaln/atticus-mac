@@ -494,6 +494,8 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                     atticus.tip(reply)
                 return out.getvalue()
             self.assertEqual(ask({}), '')   # first ask: nothing
+            os.remove(os.path.join(d, 'kofi'))
+            self.assertEqual(ask({}), '')   # an install from before the tip jar: no crash, its clock starts
             old = time.time() - 5 * 3600
             os.utime(os.path.join(d, 'kofi'), (old, old)); os.utime(os.path.join(d, 'tip'), (old, old))
             self.assertEqual(ask({'support': False}).count('Support: '), 0)

@@ -3635,8 +3635,9 @@ def tip(reply, taught=''):
     stamp, kofi = os.path.join(DIR, 'tip'), os.path.join(DIR, 'kofi')
     if miss:
         return
-    if not os.path.exists(stamp):   # never on the very first ask; the first tip-jar line waits 4 h too
+    if not os.path.exists(kofi):   # first ask, or an install from before the tip jar: its 4 h clock starts now
         Path(kofi).touch()
+    if not os.path.exists(stamp):   # never on the very first ask
         return Path(stamp).write_text('0')
     if pref('support', True) and time.time() - os.path.getmtime(kofi) > 4 * 3600:
         Path(kofi).touch()
