@@ -304,6 +304,15 @@ class AgentTests(unittest.TestCase):
             reply,_,_=atticus.run('Request: Fixture task',dead)
         start.assert_called_once();self.assertEqual(reply,'Fresh answer.')
 
+    def test_a_failed_ask_says_why_in_one_fixed_word(self):
+        for said, why in (('Error: 429 rate limit exceeded', 'rate_limited'), ('Error: something odd', 'stopped')):
+            worker=Path(self.root.name)/'fail.py';worker.write_text("import json,sys\njson.loads(sys.stdin.readline())\nprint(json.dumps({'type':'result','is_error':True,'total_cost_usd':0,'result':%r}),flush=True)\n" % said)
+            p=subprocess.Popen([sys.executable,str(worker)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+            p.ask=self.root.name;p.errors=io.StringIO();self.addCleanup(p.stdout.close)
+            with patch.object(atticus,'relay'),patch.object(atticus,'say'),contextlib.redirect_stdout(io.StringIO()):
+                atticus.run('Request: Fixture task',p)
+            self.assertEqual((atticus.run.ok,atticus.run.why),(False,why))
+
     def test_every_claude_route_can_move_and_other_clients_show_no_control(self):
         for prefs in ({'routing':'cheapest'},{'routing':'balanced'},{'routing':'capable','model':'opus'}):
             with self.subTest(**prefs):

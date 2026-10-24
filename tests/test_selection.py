@@ -16,6 +16,7 @@ class SelectionTests(unittest.TestCase):
         borrow = source[source.index('func borrowPasteboard'):source.index('struct TextSelection {')]
         swift = '''import Foundation
 import CoreFoundation
+func IsSecureEventInputEnabled() -> Bool { false }
 let kAXFocusedUIElementAttribute = "focus", kAXSelectedTextAttribute = "text", kAXValueAttribute = "value"
 var keys: [Int] = [], field = "old", deaf = false, hidEvents = 0
 var focused = 1, selected = "old", currentRange = CFRange(location: 0, length: 3), events = 0, directWrites = 0, directOK = true, activations = 0
@@ -225,7 +226,7 @@ print("typing capture ok")
 
     def test_capture_is_async_and_cancelled_or_stale_results_are_ignored(self):
         source = (ROOT / 'Atticus.swift').read_text().split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
-        capture = source[source.index('    func captureSelection()'):source.index('    func captureDictationSelection()')]
+        capture = source[source.index('    func captureSelection()'):source.index('    func captureDictationSelection(')]
         finish = source[source.index('    func finish()'):source.index('        aheadItem?.cancel()', source.index('    func finish()'))] + '        finished += 1\n    }\n'
         swift = '''import Foundation
 struct Prefs { static func bool(_ key: String) -> Bool { true } }

@@ -5162,6 +5162,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     run.handoff, run.handoffs = None, []
     run.observed = []
     run.work = False   # set before the Devin/Pi paths too: main() reads run.work after every client
+    run.why = ''   # why it failed, one fixed word for PostHog
     if client() == 'devin':
         return run_devin(task, shots, request=request)
     if client() == 'pi':
@@ -5373,24 +5374,25 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         run.error = clean(detail)
         custom = bool(server())
         if not c['ok']:
-            reply = c['text'] + ' Atticus setup is open to fix it.'
+            run.why = 'setup_needed'; reply = c['text'] + ' Atticus setup is open to fix it.'
         elif re.search(r'\b(?:o?auth(?:enticate|entication|orization)?|unauthori[sz]ed)\b|\b401\b|invalid (?:api )?key|not logged in|sign.?in', detail, re.I):
+            run.why = 'signed_out'
             if custom:
                 reply = 'Your custom server rejected its credentials. Check its key in Settings.'
             else:
                 say('!', 'setup')
                 reply = 'Your Claude sign-in expired. Atticus setup is open to sign in again.'
         elif re.search(r'rate.?limit|usage limit|too many requests|\b429\b', detail, re.I):
-            reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
+            run.why = 'rate_limited'; reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
         elif re.search(r'network|connect|dns|timed? ?out|timeout', detail, re.I):
-            reply = ('Could not connect to your custom server. Check its address and try again.' if custom else
+            run.why = 'offline'; reply = ('Could not connect to your custom server. Check its address and try again.' if custom else
                      'Claude could not connect. Check your internet connection and try again.')
         elif re.search(r'overload|unavailable|service error|\b5\d\d\b', detail, re.I):
-            reply = ('Your custom server' if custom else 'Claude') + ' is temporarily unavailable. Please try again.'
+            run.why = 'unavailable'; reply = ('Your custom server' if custom else 'Claude') + ' is temporarily unavailable. Please try again.'
         elif re.search(r'sandbox', detail, re.I):
-            reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
+            run.why = 'sandbox'; reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
         else:
-            say('!', 'setup')
+            say('!', 'setup'); run.why = 'stopped'
             reason = ' '.join(clean(detail).split()) or f'exit code {p.returncode}'
             reply = f'{"Your custom server" if custom else "Claude"} stopped: {reason}. Atticus setup is open; choose Set Up, then try again.'
     if auto_work and reply.endswith('[done]'):   # accepted from older warmed prompts during an update
@@ -5400,6 +5402,9 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     verified = not run.work or evidence
     run.cmds = [c for i, c in enumerate(cmds) if i not in bad] if base_ok and verified else []
     run.ok = base_ok and verified
+    if not run.ok and not run.why:
+        run.why = next(w for w, hit in (('timed_out', timed_out[0]), ('not_finished', not completed), ('tool_failed', last_failed),
+                                        ('unverified', base_ok), ('no_reply', not reply), ('other', True)) if hit)
     if base_ok and not verified:
         run.error = 'The action returned no observable result.'
         claim = re.split(r'(?<=[.!?])\s+', ' '.join(reply.split()), maxsplit=1)[0][:140].rstrip(' .')
@@ -7531,7 +7536,7 @@ def main():
     failed = failed_action_reply(reply, run.work)
     final_ran = list(failed_replay.get('output', ())) + run.ran if failed_replay else run.ran
     if not run.ok or failed: report(task, reply, final_ran, time.time() - t, 'error' if not run.ok else 'could not do it')
-    if not run.ok: report_error('worker_exit', worker=client(), model=model)
+    if not run.ok: report_error('worker_exit', worker=client(), model=model, why=getattr(run, 'why', '') or 'other')
     learned_entry = skills().get(learned_key) if learned_key else None
     learned_turn = {'key': learned_key, 'commands': learned_entry['cmds'],
                     'output': [f'{o.get("action", "")} => {str(o.get("result", ""))[:400]}' for o in run.observed] or [reply[:400]]} if learned_entry else None

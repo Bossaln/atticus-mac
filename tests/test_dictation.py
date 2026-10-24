@@ -186,11 +186,15 @@ func py(_ args: [String], _ extra: [String: String] = [:]) -> Process {
 }
 func telemetry(_ args: [String]) {}
 struct Selection { let text: String }
+struct AppRef: Equatable {}
+final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: AppRef? }
 final class Harness {
     var dictateSelectionPending = false, dictateCleanup = false, busy = true, dictating = true
     var dictateID = 1, text = "Exact words.", inserted: [String] = [], dictateBefore = "Notes before the cursor."
-    var dictateFellBack = false, dictateTimedOut = false
+    var dictateFellBack = false, dictateTimedOut = false, dictateSelectionRetried = false
+    var dictationTargetApp: AppRef?
     var dictateSelection: Selection?, dictateProcess: Process?, dictateInput: FileHandle?, dictateOutput: FileHandle?
+    func captureDictationSelection(retry: Bool = false) {}
     func insertDictation(_ value: String) { inserted.append(value); busy = false; dictating = false }
     func dictationDeliveryFailed(_ value: String, cleanup: Bool = false) { busy = false; dictating = false }
     func cue(_ value: String) {}
@@ -223,12 +227,15 @@ bounded.text = "Write the release notes with setup steps"; bounded.startDictateA
 bounded.text = "Write the release notes with setup steps and examples"; bounded.startDictateAhead(early: true)
 precondition(bounded.dictateAheadRuns == 2 && processCalls == 9 && bounded.dictateRun?.key == "write the release notes with setup steps",
              "pause cleanup was not capped at two runs")
+bounded.startDictateAhead()
+precondition(bounded.dictateAheadRuns == 3 && processCalls == 10 && bounded.dictateRun?.key == "write the release notes with setup steps and examples",
+             "key-up did not use the warm spare after the pause budget was spent")
 bounded.stopDictationCleanup()
 let revised = Harness(); revised.dictateCleanup = true; revised.text = "Send the release notes"
 revised.warmDictationCleanup(); revised.startDictateAhead(early: true)
 revised.text = "Send the release notes after review today"; revised.startDictateAhead()
 revised.text += " please"; revised.finishDictation(); pump(0.5)
-precondition(revised.inserted == ["Send the release notes after review today please"] && processCalls == 12,
+precondition(revised.inserted == ["Send the release notes after review today please"] && processCalls == 13,
              "final speech revision did not use the third and last cleanup worker")
 hang = true
 let hung = Harness(); hung.dictateCleanup = true; hung.text = "keep these heard words"
@@ -305,6 +312,7 @@ print("dictation target safety ok")
         self.assertNotIn('NSPasteboard', insert)   # dictation never leaves its words on the clipboard
         # Oct 21, 2026: a paste into an Electron chat box landed but its field read back unchanged, so Atticus said "Couldn't insert".
         swift = r'''import Foundation
+func IsSecureEventInputEnabled() -> Bool { false }
 struct AppRef: Equatable { let id: Int; var isTerminated: Bool { false }; var processIdentifier: Int32 { 1 }; func activate() {} }
 final class NSWorkspace { static let shared = NSWorkspace(); var frontmostApplication: AppRef? }
 enum NSApp { static var keyWindow: Int? { nil } }
@@ -663,7 +671,7 @@ if (!answer.classList.contains('old')) process.exit(console.error('a real ask no
         heard = source[source.index('    func heard(_ now: String)'):]
         self.assertIn('if dictating { scheduleDictateAhead(); return }', heard)
         self.assertIn('self?.startDictateAhead(early: true)', heard)
-        self.assertIn('dictateAheadRuns < 2', heard)
+        self.assertIn('!early || dictateAheadRuns < 2', heard)
         insert = source[source.index('    func insertDictation('):source.index('    func typed(')]
         self.assertIn('cue("soundDone"); js("dictated", ["text": "", "ok": true]); hide(after: 0.8)', insert)
 

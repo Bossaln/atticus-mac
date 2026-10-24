@@ -716,6 +716,7 @@ struct TextSelection {
                 return CFEqual(focused, focus)
             }
             guard valid(), !app.isTerminated, NSWorkspace.shared.frontmostApplication == app,
+                  !keyboardOnly || !IsSecureEventInputEnabled(),   // an app-wide keyboard target cannot see a password box: secure input on anywhere = no paste
                   focusMatches(),
                   keyboardOnly || selectionMatches(),
                   pastable,
@@ -1772,7 +1773,8 @@ final class App: NSObject, WKScriptMessageHandler {
     var toggleTalk = false, shortcutDown = false, pausedNotice = Date.distantPast
     var dictating = false, dictateCleanup = false, dictateShortcutDown = false, dictateSelectionPending = false
     var dictatePressed = Date.distantPast, dictateTap: DispatchWorkItem?   // dictateTap: a quick tap waiting to see if a second one locks
-    var dictateSelection: TextSelection?, dictateProcess: Process?, dictateInput: FileHandle?, dictateOutput: FileHandle?, dictateID = 0, dictateBefore = ""
+    var dictateSelection: TextSelection?, dictationTargetApp: NSRunningApplication?, dictateProcess: Process?, dictateInput: FileHandle?, dictateOutput: FileHandle?, dictateID = 0, dictateBefore = ""
+    var dictateSelectionRetried = false
     var askFile = ""   // safe mode: where the Allow / Don't Allow answer goes (atticus.py's gate waits on it)
     var askNeed: [String:Any] = [:]
     var agentMoveFile = "" { didSet { moveKey() } }   // set while atticus.py watches it: the running ask can move to an agent
@@ -2484,32 +2486,39 @@ final class App: NSObject, WKScriptMessageHandler {
 
     var selKey: String { Prefs.bool("selection") ? selection.map { $0.caret ? "\u{1}" : $0.text } ?? "" : "" }   // \u{1}: no highlight, the cursor sits in a text box
 
-    func captureDictationSelection() {
-        dictateSeconds = 0
-        dictationAppName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "App"
-        dictateID += 1; let id = dictateID
-        dictateSelection = nil; dictateSelectionPending = true; dictateBefore = ""
-        let front = NSWorkspace.shared.frontmostApplication, cleanup = dictateCleanup
+    func captureDictationSelection(retry: Bool = false) {
+        if !retry {
+            dictateSeconds = 0
+            dictationTargetApp = NSWorkspace.shared.frontmostApplication
+            dictationAppName = dictationTargetApp?.localizedName ?? "App"
+            dictateID += 1; dictateSelection = nil; dictateBefore = ""; dictateSelectionRetried = false
+        }
+        let id = dictateID, front = dictationTargetApp, cleanup = dictateCleanup
+        dictateSelectionPending = true
         DispatchQueue.global().async { [weak self] in
             var secureField = false
-            let selected = TextSelection.capture(front, enabled: true, allowEmpty: true, keyboardFallback: true, onSecure: { secureField = true })
+            let selected = TextSelection.capture(front, enabled: true, allowEmpty: true, keyboardFallback: !retry, onSecure: { secureField = true })   // the retry only counts a real text box
             // Clean up reads the text before the cursor for names and terms.
             let before = selected.flatMap { s -> String? in
                 guard cleanup, let value = s.value as NSString?, let r = s.range, r.location >= 0, r.location <= value.length else { return nil }
                 return String(value.substring(to: r.location).suffix(600))
             } ?? ""
             DispatchQueue.main.async { [weak self] in
-                guard let self, dictating, dictateID == id else { return }
+                guard let self, dictating, dictateID == id, !retry || dictateSelectionPending else { return }   // a retry that ran out of time already moved on
                 if secureField {
                     hush(); js("dictated", ["text": "Dictation is off in secure fields", "ok": false]); hide(after: 3); return
                 }
                 dictateSelectionPending = false
                 guard let selected else {   // no text field: the words still go to History ("Nothing selected to insert")
-                    if AXIsProcessTrusted() { return }
+                    if AXIsProcessTrusted() {
+                        if retry { finishDictation() }
+                        return
+                    }
                     hush(); js("dictated", ["text": "Allow Accessibility in System Settings → Privacy & Security → Accessibility", "ok": false]); hide(after: 6); return
                 }
                 dictateSelection = selected
                 dictateBefore = before
+                if retry { finishDictation() }
             }
         }
     }
@@ -2975,11 +2984,11 @@ final class App: NSObject, WKScriptMessageHandler {
         return run
     }
 
-    // At most two speculative pause/key-up runs, plus one final run. Only one speculative result is kept in flight.
+    // At most two pause runs; key-up always gets the warm spare, then final speech can use one last run if it changed.
     func startDictateAhead(early: Bool = false) {
         if !early { dictateAheadItem?.cancel(); dictateAheadItem = nil }
         let source = text.trimmingCharacters(in: .whitespacesAndNewlines), key = Self.dictationKey(source)
-        guard dictating, dictateCleanup, !dictateSelectionPending, dictateAheadRuns < 2,
+        guard dictating, dictateCleanup, !dictateSelectionPending, !early || dictateAheadRuns < 2,
               key.split(separator: " ").count >= 3, key != dictateRun?.key else { return }
         if early {
             if let run = dictateRun, run.result == nil && !Self.dictationChangedMeaningfully(run.key, key) { return }
@@ -3012,6 +3021,17 @@ final class App: NSObject, WKScriptMessageHandler {
             let id = dictateID
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 if self?.dictateID == id { self?.finishDictation() }
+            }
+            return
+        }
+        if dictateSelection == nil, !dictateSelectionRetried, let app = dictationTargetApp,
+           NSWorkspace.shared.frontmostApplication == app {
+            dictateSelectionRetried = true
+            captureDictationSelection(retry: true)   // lazy AX can miss at key-down; try the same app once more before giving up
+            let id = dictateID
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in   // a slow app gets 1 s, then the words go on (History when there is no box)
+                guard let self, dictateID == id, dictateSelectionPending else { return }
+                dictateSelectionPending = false; finishDictation()
             }
             return
         }

@@ -185,15 +185,23 @@ print("learned fixes ok")
         self.assertIn('NSEvent.removeMonitor(editKeys)', source[source.index('    func stopReplay()'):])
         capture = source[source.index('    static func capture('):source.index('    var caret:')]
         self.assertLess(capture.index('kAXSecureTextFieldSubrole'), capture.index('kAXValueAttribute'))
-        session = source[source.index('    func captureDictationSelection()'):source.index('    func start()')]
+        session = source[source.index('    func captureDictationSelection('):source.index('    func start()')]
         self.assertIn('onSecure: { secureField = true }', session)
         self.assertLess(session.index('if secureField'), session.index('dictateSelectionPending = false'))
         self.assertIn('hush(); js("dictated"', session)
         self.assertIn('guard let selected else', session)
         self.assertIn('dictateSelection = selected', session)
         self.assertNotIn('selected.text.count <= 6000', session)
-        self.assertIn('if AXIsProcessTrusted() { return }', session)   # no text field: keep listening, the words go to History
+        self.assertIn('if AXIsProcessTrusted() {', session)   # no text field: keep listening, the words go to History
         self.assertLess(session.index('dictateSelectionPending = false'), session.index('guard let selected else'))
+        self.assertIn('dictationTargetApp = NSWorkspace.shared.frontmostApplication', session)
+        self.assertIn('if retry { finishDictation() }', session)
+        finish = source[source.index('    func finishDictation()'):source.index('    func recordDictationEvent(')]
+        self.assertIn('captureDictationSelection(retry: true)', finish)
+        self.assertIn('!dictateSelectionRetried', finish)
+        self.assertIn('NSWorkspace.shared.frontmostApplication == app', finish)
+        self.assertLess(finish.index('dictateSelectionRetried = true'), finish.index('captureDictationSelection(retry: true)'))
+        self.assertLess(finish.index('captureDictationSelection(retry: true)'), finish.index('let spoken ='))
         start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
         self.assertLess(start.index('if dictate && !AXIsProcessTrusted()'), start.index('captureDictationSelection()'))
         self.assertIn('Allow Accessibility in System Settings → Privacy & Security → Accessibility', start)
