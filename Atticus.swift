@@ -567,6 +567,7 @@ func telemetry(_ args: [String]) {
     p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
     try? p.run()   // its curl child outlives this helper; never wait on an ask
 }
+func openTipJar(_ from: String) { NSWorkspace.shared.open(kofi); telemetry(["support", from]) }   // PostHog counts clicks by place
 
 func detectLocalServers(_ done: @escaping ([[String: Any]]) -> Void) {
     DispatchQueue.global().async {
@@ -920,7 +921,11 @@ final class DrawingView: NSView {
                     let attributes: [NSAttributedString.Key:Any] = [.font:font,.foregroundColor:light ? NSColor.black : NSColor.white]
                     let text = NSAttributedString(string:shape.text ?? "",attributes:attributes)
                     let textSize = text.size(), size = CGSize(width:min(bounds.width-12,textSize.width+16),height:textSize.height+10)
-                    let box = ScreenDrawing.labelBox(size,at:point,keepOff:keepOff,in:screen.insetBy(dx:6,dy:6)).offsetBy(dx:-origin.x,dy:-origin.y)
+                    // a label set near a mark but off it sits right beside that mark; with an arrow or line it stays where the model put it
+                    let edges = shapes.contains { ["arrow","line","path"].contains($0.kind) } ? [] : targets.map { CGPoint(x:min(max(point.x,$0.minX),$0.maxX),y:min(max(point.y,$0.minY),$0.maxY)) }
+                    let near = edges.min { hypot($0.x-point.x,$0.y-point.y) < hypot($1.x-point.x,$1.y-point.y) }
+                    let anchor = near.map { hypot($0.x-point.x,$0.y-point.y) < 160 ? $0 : point } ?? point
+                    let box = ScreenDrawing.labelBox(size,at:anchor,keepOff:keepOff,in:screen.insetBy(dx:6,dy:6)).offsetBy(dx:-origin.x,dy:-origin.y)
                     let bg = CAShapeLayer(); bg.path = CGPath(roundedRect:box,cornerWidth:7,cornerHeight:7,transform:nil); bg.fillColor = (light ? color : color.blended(withFraction:0.2,of:.black) ?? color).cgColor
                     add(bg,box); hit(CGPath(rect:box,transform:nil),i)
                     let label = CATextLayer(); label.string = text; label.contentsScale = window?.backingScaleFactor ?? 2
@@ -2135,7 +2140,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 Atticus.settings.apply("paused", false); Atticus.settings.push()
                 if !Prefs.bool("paused") { js("paused", false); hide(after: 1.5) }
             }
-            if b["kofi"] != nil { NSWorkspace.shared.open(kofi) }
+            if b["kofi"] != nil { openTipJar("overlay") }
             if b["replace"] != nil, !busy { applyReplacement() }
             if b["retry"] != nil, !busy, !engine.isRunning { typed(text, keep: true) }
             if let t = b["send"] as? String { typed(t, keep: true) }
@@ -4018,7 +4023,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let b = m.body as? [String: String] else { return }
         if b["do"] == "done" { return finish() }
-        if b["do"] == "kofi" { NSWorkspace.shared.open(kofi); return }
+        if b["do"] == "kofi" { openTipJar("setup"); return }
         if b["do"] == "feedback" { Atticus.settings.open(tab: "feedback"); return }
         if b["do"] == "enableAll" { return enableAll(connected: b["connected"] == "true") }
         if b["do"] == "provider", let c = b["client"], ["claude", "devin", "pi"].contains(c) {   // the plan row's Change provider sheet
@@ -4201,13 +4206,13 @@ func unpoint(_ notify: Bool = true) {
     let gone = ringGone; ringGone = nil
     if notify { gone?() }
 }
-// A line from the box to what an answer points at: its head runs to the target while its tail fades behind, so the eye can follow.
-// Reduce Motion: a still line for a few seconds. Cocoa points. No line when the target is near the box or on another display.
+// A line from the box to what an answer points at, with an arrowhead: it draws out to the target, stays 3 s, then fades.
+// Reduce Motion: it appears already drawn. Cocoa points. No line when the target is near the box or on another display.
 var leader: NSPanel?
 @discardableResult func lead(from box: NSRect, to target: NSRect) -> Bool {
     leader?.orderOut(nil); leader = nil
     guard let (a, b) = ScreenDrawing.leader(from: box, to: target), let screen = NSScreen.screens.first(where: { $0.frame.contains(a) }), screen.frame.contains(b) else { return false }
-    let f = NSRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)).insetBy(dx: -6, dy: -6)
+    let f = NSRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)).insetBy(dx: -16, dy: -16)   // room for the head
     let w = NSPanel(contentRect: f, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     applySharing(w)
     w.level = .screenSaver; w.isOpaque = false; w.backgroundColor = .clear; w.ignoresMouseEvents = true; w.hasShadow = false
@@ -4215,21 +4220,23 @@ var leader: NSPanel?
     let v = NSView(frame: NSRect(origin: .zero, size: f.size)); v.wantsLayer = true
     let p = CGPoint(x: a.x - f.minX, y: a.y - f.minY), q = CGPoint(x: b.x - f.minX, y: b.y - f.minY), path = CGMutablePath()
     path.move(to: p); path.addLine(to: q)
+    let angle = atan2(q.y - p.y, q.x - p.x)   // an arrowhead at the target, drawn last so it lands as the line arrives
+    for delta in [-0.5, 0.5] { path.move(to: q); path.addLine(to: CGPoint(x: q.x - 14 * cos(angle + delta), y: q.y - 14 * sin(angle + delta))) }
     let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     let line = CAShapeLayer(); line.frame = v.bounds; line.path = path; line.fillColor = nil
     line.strokeColor = NSColor.black.cgColor; line.lineWidth = 3; line.lineCap = .round
-    line.strokeStart = still ? 0 : 1   // moving, it ends gone, leaving the mark to find
     let ink = CAGradientLayer(); ink.frame = v.bounds; ink.mask = line   // faint at the box, full at the target
-    ink.colors = [NSColor.systemBlue.withAlphaComponent(0.1).cgColor, NSColor.systemBlue.cgColor]
+    ink.colors = [NSColor.systemBlue.withAlphaComponent(0.35).cgColor, NSColor.systemBlue.cgColor]
     ink.startPoint = CGPoint(x: p.x / f.width, y: p.y / f.height); ink.endPoint = CGPoint(x: q.x / f.width, y: q.y / f.height)
     v.layer?.addSublayer(ink); w.contentView = v; w.orderFrontRegardless(); leader = w
     if !still {
         let head = CABasicAnimation(keyPath: "strokeEnd"); head.fromValue = 0; head.toValue = 1; head.duration = 0.45
-        let tail = CABasicAnimation(keyPath: "strokeStart"); tail.fromValue = 0; tail.toValue = 1; tail.beginTime = 0.25; tail.duration = 0.6; tail.fillMode = .backwards
-        let run = CAAnimationGroup(); run.animations = [head, tail]; run.duration = 0.85; run.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        line.add(run, forKey: "lead")
+        head.timingFunction = CAMediaTimingFunction(name: .easeOut); line.add(head, forKey: "lead")
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + (still ? 4 : 0.9)) { if leader === w { w.orderOut(nil); leader = nil } }
+    DispatchQueue.main.asyncAfter(deadline: .now() + (still ? 3 : 3.45)) {   // the whole arrow stays 3 s after it lands, then fades
+        guard leader === w else { return }
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.3; w.animator().alphaValue = 0 }) { if leader === w { w.orderOut(nil); leader = nil } }
+    }
     return true
 }
 
@@ -4380,7 +4387,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
     @objc func hideAgents() { Prefs.set("agentsHidden",!Prefs.bool("agentsHidden")) }
     @objc func openSetup() { onboarding.open() }
     @objc func reportFeedback() { settings.open(tab:"feedback") }
-    @objc func tipJar() { NSWorkspace.shared.open(kofi) }
+    @objc func tipJar() { openTipJar("menu") }
     @objc func tipsOn() { settings.apply("tips", true); settings.push() }
     @objc func quit() { NSApp.terminate(nil) }
 }
@@ -4771,7 +4778,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             guard let id = b["id"] as? String else { return }
             DispatchQueue.global().async { [weak self] in self?.helper(["--routine","remove",id]); DispatchQueue.main.async { self?.push() } }
         case "github": NSWorkspace.shared.open(URL(string: "https://github.com/SaarthurR/atticus-mac")!)
-        case "kofi": NSWorkspace.shared.open(kofi)
+        case "kofi": openTipJar("settings")
         case "resetHotkey":
             done((49, controlKey | optionKey, "⌃⌥Space"))   // same rollback and warning as a recorded shortcut
         case "preview":

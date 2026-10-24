@@ -140,7 +140,7 @@ print("hidden rewrite target kept")
         self.assertLess(pointer.index("accessibilityDisplayShouldReduceMotion"), pointer.index("l.add(pulse"))
         self.assertIn("if let box, lead(from: box, to: w.frame.insetBy(dx: 8, dy: 8)) {", pointer)
         lead = pointer[pointer.index("func lead("):]   # Reduce Motion: a still leader line, no running head
-        self.assertLess(lead.index("if !still {"), lead.index('line.add(run'))
+        self.assertLess(lead.index("if !still {"), lead.index('line.add(head'))
 
     def test_new_ask_clears_a_held_ring_without_hiding_the_new_answer(self):
         start = self.swift[self.swift.index("    func start(dictate: Bool)"):self.swift.index("    func heard(")]

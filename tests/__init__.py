@@ -5,6 +5,7 @@ import tempfile
 
 config = tempfile.TemporaryDirectory(prefix='atticus-test-config-')
 os.environ['ATTICUS_DIR'] = config.name
+os.environ['ATTICUS_POSTHOG_KEY'] = ''   # tests that clear os.environ also drop ATTICUS_DIR; with no key nothing reaches PostHog
 atexit.register(config.cleanup)
 
 

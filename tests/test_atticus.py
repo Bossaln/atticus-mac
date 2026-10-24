@@ -499,7 +499,9 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
             old = time.time() - 5 * 3600
             os.utime(os.path.join(d, 'kofi'), (old, old)); os.utime(os.path.join(d, 'tip'), (old, old))
             self.assertEqual(ask({'support': False}).count('Support: '), 0)
-            self.assertIn('Support: ', ask({'tips': False, 'support': True}))   # tips off, tip jar on
+            with patch.object(atticus, 'posthog') as sent:
+                self.assertIn('Support: ', ask({'tips': False, 'support': True}))   # tips off, tip jar on
+            sent.assert_called_once_with('support', {'action': 'shown', 'from': 'overlay'})
             self.assertNotIn('Support: ', ask({}))   # 4 h clock restarted: the plain tip is next
             os.utime(os.path.join(d, 'kofi'), (old, old))
             self.assertNotIn('Support: ', ask({'tips': False}))   # tips turned off before the tip jar existed: it stays off too
@@ -836,6 +838,13 @@ print('Ready.')
                 self.assertIn('choose Set Up', reply)
                 self.assertNotIn('fixture/internal.py', reply)
                 self.assertFalse(atticus.run.ok)
+
+    def test_every_client_leaves_run_state_main_reads(self):
+        for name in ('pi', 'devin'):
+            atticus.run.__dict__.clear()
+            with patch.object(atticus, 'client', return_value=name), patch.object(atticus, 'run_' + name, return_value=('x', 0, 0)):
+                atticus.run('task')
+            self.assertEqual((atticus.run.work, atticus.run.observed, atticus.run.handoffs), (False, [], []))
 
     def test_pi_does_not_start_before_confirmation(self):
         with tempfile.TemporaryDirectory() as root:

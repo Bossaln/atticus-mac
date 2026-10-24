@@ -3379,7 +3379,8 @@ def posthog(event, props=None, stamp=()):
     if not telemetry_enabled():
         return
     try:
-        body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': install_id(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION, **(props or {})}})
+        body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': install_id(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION,
+                                                                                                            'macos': platform.mac_ver()[0], 'client': client(), **(props or {})}})
         subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/' + (' && printf %s "$2" > "$3"' if stamp else ''),
                           'atticus-ping', body, *stamp],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)   # cancellation cannot kill it or slow the answer
@@ -3413,31 +3414,37 @@ def report(task, reply, ran, secs, why):
     """Settings → Help improve Atticus (off until the user says yes): a task that failed goes to the maker, cleaned."""
     if POSTHOG_KEY and pref('improve', False) and os.environ.get('ATTICUS_LIVE') != '1':
         posthog('task_failed', {'task': clean(task), 'reply': clean(reply), 'steps': [clean(c) for c in list(ran)[:12]], 'why': why,
-                                'secs': round(secs, 1), 'model': pref('model', 'haiku'), 'client': client(), 'macos': platform.mac_ver()[0]})
+                                'secs': round(secs, 1), 'model': pref('model', 'haiku')})
 
 
 def report_error(kind, **props):
     """Privacy-safe failures only: callers pass enums, indexes and code locations, never user text."""
     if telemetry_enabled():
-        posthog('error', {'kind': kind, 'macos': platform.mac_ver()[0], **props})
+        posthog('error', {'kind': kind, **props})
 
 
-def exception_error(exc_type, tb):
+def exception_error(exc_type, tb, value=None):
+    ours = None   # the last Atticus line on the way down: a crash inside subprocess.py still says which call failed
     while tb and tb.tb_next:
+        if tb.tb_frame.f_code.co_filename == ME: ours = tb
         tb = tb.tb_next
+    if tb and tb.tb_frame.f_code.co_filename == ME: ours = tb
     frame = tb.tb_frame if tb else None
+    errno = value.errno if isinstance(value, OSError) else None   # OSError's own field: never a custom attribute that could throw here
     report_error('exception', exception=getattr(exc_type, '__name__', 'Exception'),
                  file=os.path.basename(frame.f_code.co_filename) if frame else '',
-                 line=tb.tb_lineno if tb else 0, function=frame.f_code.co_name if frame else '')
+                 line=tb.tb_lineno if tb else 0, function=frame.f_code.co_name if frame else '',
+                 at_line=ours.tb_lineno if ours else 0, at_function=ours.tb_frame.f_code.co_name if ours else '',
+                 **({'errno': errno} if isinstance(errno, int) else {}))
 
 
 def install_exception_hooks():
     previous_sys, previous_thread = sys.excepthook, getattr(threading, 'excepthook', None)
     def system_hook(exc_type, value, tb):
-        exception_error(exc_type, tb)
+        exception_error(exc_type, tb, value)
         previous_sys(exc_type, value, tb)
     def thread_hook(args):
-        exception_error(args.exc_type, args.exc_traceback)
+        exception_error(args.exc_type, args.exc_traceback, args.exc_value)
         if previous_thread: previous_thread(args)
     sys.excepthook = system_hook
     if previous_thread: threading.excepthook = thread_hook
@@ -3476,7 +3483,7 @@ def ask_done(row):
                          'model': row.get('model', 'unknown'), 'secs': round(max(0, float(row.get('secs', 0))), 1),
                          'steps': len(steps) if isinstance(steps, (list, tuple)) else max(0, int(steps or 0)),
                          'tools': tool_kinds(row.get('ran', [])), 'status': status,
-                         'escalated': bool(row.get('escalated')), 'macos': platform.mac_ver()[0]})
+                         'escalated': bool(row.get('escalated'))})
     row['_telemetry_sent'] = True
 
 
@@ -3641,6 +3648,7 @@ def tip(reply, taught=''):
         return Path(stamp).write_text('0')
     if pref('support', pref('tips', True)) and time.time() - os.path.getmtime(kofi) > 4 * 3600:
         Path(kofi).touch()
+        posthog('support', {'action': 'shown', 'from': 'overlay'})
         return say('i', 'Support: ' + SUPPORT[int(time.time()) % len(SUPPORT)])
     n = int(Path(stamp).read_text() or 0)
     if not tips or time.time() - os.path.getmtime(stamp) < 6 * 3600:
@@ -5148,17 +5156,17 @@ class MainMove:
 
 def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=False, routing_retry=False):
     """One request through the configured client (the user's plan), streaming notes and steps. shots: [(path, label)] sent with it."""
-    if client() == 'devin':
-        return run_devin(task, shots, request=request)
-    if client() == 'pi':
-        return run_pi(task, shots, request=request)
-    main_only = main_only or main_delivery_required()
     run.cmds = run.ran = []
     run.error = ''
     run.ok = False
     run.handoff, run.handoffs = None, []
     run.observed = []
-    run.work = False
+    run.work = False   # set before the Devin/Pi paths too: main() reads run.work after every client
+    if client() == 'devin':
+        return run_devin(task, shots, request=request)
+    if client() == 'pi':
+        return run_pi(task, shots, request=request)
+    main_only = main_only or main_delivery_required()
     p = p or start_claude()
     if not p:
         say('!', 'setup')   # Atticus.app opens its setup window
@@ -5168,8 +5176,16 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
     content = user_content(task, shots, request)
     if main_only:
         content.insert(0, {'type': 'text', 'text': 'This request requires main-window delivery. Finish here; do not emit agent, steer, or agent-profile run directives.'})
-    p.stdin.write(json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n')
-    p.stdin.close()
+    message = json.dumps({'type': 'user', 'message': {'role': 'user', 'content': content}}) + '\n'
+    try:
+        p.stdin.write(message); p.stdin.close()
+    except (BrokenPipeError, ValueError):   # the warm worker quit before the ask (crash, sign-out, sleep): one fresh start
+        stop_claude(p); p = start_claude(getattr(p, 'atticus_model', None))
+        if not p:
+            say('!', 'setup')
+            return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
+        if getattr(p, 'ask', ''): save_request(p.ask, main_ask(task, request)[0])
+        p.stdin.write(message); p.stdin.close()
     p.waiting = threading.Event()
     if getattr(p, 'ask', '') and getattr(p, 'relaying', False) is not True and os.environ.get('ATTICUS_RELAY_ACTIVE') != str(os.getpid()):
         p.relaying = True
@@ -6987,6 +7003,8 @@ def main():
     if len(args) == 5 and args[:3] == ['--telemetry', 'error', 'worker_exit']:
         return report_error('worker_exit', worker=args[3] if args[3] in ('python', 'claude', 'devin', 'pi') else 'python',
                             exit=int(args[4]) if args[4].lstrip('-').isdigit() else -1)
+    if len(args) == 3 and args[:2] == ['--telemetry', 'support']:   # a Leave a Tip click in the app
+        return posthog('support', {'action': 'clicked', 'from': args[2] if args[2] in ('overlay', 'setup', 'settings', 'menu') else 'other'})
     if args == ['--draw', '--help']:
         return print(DRAW_HELP if pref('draw', True) else 'Screen drawings are off')
     if args[:1] == ['--draw']:
@@ -7541,7 +7559,7 @@ def main():
 
 
 if __name__ == '__main__':
-    install_exception_hooks()
+    if sys.argv[1:] != ['--selftest']: install_exception_hooks()   # a developer check run against their own settings is not a user crash
     if sys.argv[1:] == ['--selftest']:
         assert label('Bash', {'command': 'open -a "Visual Studio Code" x'}) == 'Opening Visual Studio Code'
         assert label('Bash', {'command': 'open "https://www.google.com/search?q=x"'}) == 'Opening google.com'

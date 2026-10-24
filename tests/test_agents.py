@@ -295,6 +295,15 @@ class AgentTests(unittest.TestCase):
             self.until(lambda:wait_for(output.getvalue()))
             return thread,output,p
 
+    def test_a_warm_worker_that_quit_is_started_again_once(self):
+        dead=subprocess.Popen([sys.executable,'-c','pass'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True);dead.wait();dead.ask=self.root.name;self.addCleanup(dead.stdout.close)
+        worker=Path(self.root.name)/'fresh.py';worker.write_text("import json,sys\njson.loads(sys.stdin.readline())\nprint(json.dumps({'type':'result','is_error':False,'total_cost_usd':.001,'result':'Fresh answer.'}),flush=True)\n")
+        fresh=subprocess.Popen([sys.executable,str(worker)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
+        fresh.ask=self.root.name;self.addCleanup(fresh.stdout.close)
+        with patch.object(atticus,'start_claude',return_value=fresh) as start,patch.object(atticus,'relay'),contextlib.redirect_stdout(io.StringIO()):
+            reply,_,_=atticus.run('Request: Fixture task',dead)
+        start.assert_called_once();self.assertEqual(reply,'Fresh answer.')
+
     def test_every_claude_route_can_move_and_other_clients_show_no_control(self):
         for prefs in ({'routing':'cheapest'},{'routing':'balanced'},{'routing':'capable','model':'opus'}):
             with self.subTest(**prefs):

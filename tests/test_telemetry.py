@@ -1,6 +1,7 @@
 """Daily capture stays anonymous and retries failed sends, without network access."""
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import tempfile
@@ -27,7 +28,8 @@ class TelemetryTests(unittest.TestCase):
                 payload = json.loads(args[4])
                 self.assertEqual(payload['event'], 'used')
                 self.assertEqual(payload['api_key'], 'fixture-token')
-                self.assertEqual(payload['properties'], {'$process_person_profile': False, 'version': atticus.APP_VERSION})
+                self.assertEqual(payload['properties'], {'$process_person_profile': False, 'version': atticus.APP_VERSION,
+                                                                  'macos': platform.mac_ver()[0], 'client': 'claude'})
                 self.assertEqual(set(payload), {'api_key', 'event', 'distinct_id', 'properties'})
                 worker = spawn(args, **kwargs)
                 worker.wait(timeout=5)
@@ -77,7 +79,7 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(payload['properties']['tools'], ['place', 'web'])
         self.assertEqual(payload['properties']['status'], 'ok')
         self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'path', 'model', 'secs', 'steps',
-                                                      'tools', 'status', 'escalated', 'macos'})
+                                                      'tools', 'status', 'escalated', 'macos', 'client'})
         self.assertNotIn('Private', json.dumps(payload))
 
     def test_ask_done_maps_terminal_states(self):
@@ -96,13 +98,26 @@ class TelemetryTests(unittest.TestCase):
                 atticus.exception_error(type(error), error.__traceback__)
             atticus.report_error('replay', shortcut='0123456789abcdef', failed_at=2)
         crash, replay = [json.loads(call.args[0][4]) for call in send.call_args_list]
-        self.assertEqual(set(crash['properties']), {'$process_person_profile', 'version', 'kind', 'macos',
-                                                    'exception', 'file', 'line', 'function'})
+        self.assertEqual(set(crash['properties']), {'$process_person_profile', 'version', 'kind', 'macos', 'client',
+                                                    'exception', 'file', 'line', 'function', 'at_line', 'at_function'})
         self.assertEqual(crash['properties']['exception'], 'RuntimeError')
         self.assertNotIn('private crash detail', json.dumps(crash))
         self.assertEqual(replay['properties']['kind'], 'replay')
         self.assertEqual(replay['properties']['shortcut'], '0123456789abcdef')
         self.assertEqual(replay['properties']['failed_at'], 2)
+
+    def test_a_crash_inside_the_standard_library_names_the_atticus_line_and_errno(self):
+        code = {}
+        exec(compile('import subprocess\ndef go():\n    subprocess.Popen(["/no/such/tool"])\n', atticus.ME, 'exec'), code)   # a frame that counts as atticus.py
+        with patch.object(atticus, 'report_error') as sent:
+            try:
+                code['go']()
+            except OSError as error:
+                atticus.exception_error(type(error), error.__traceback__, error)
+        props = sent.call_args.kwargs
+        self.assertEqual((props['at_function'], props['at_line'], props['errno']), ('go', 3, 2))
+        self.assertEqual(props['exception'], 'FileNotFoundError')
+        self.assertNotEqual(props['file'], 'atticus.py')
 
     def test_dictation_has_only_mode_counts_timing_and_outcome(self):
         with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
@@ -112,7 +127,7 @@ class TelemetryTests(unittest.TestCase):
         payload = json.loads(send.call_args.args[0][4])
         self.assertEqual(payload['event'], 'dictation')
         self.assertEqual(payload['properties']['secs'], 1.235)
-        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'mode', 'secs',
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'macos', 'client', 'mode', 'secs',
                                                       'cleanup_used', 'fell_back', 'timed_out', 'insert'})
 
     def test_the_ask_log_and_its_folder_are_private_even_on_older_installs(self):
