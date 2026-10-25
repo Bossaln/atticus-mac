@@ -18,7 +18,8 @@ function page(id){
  for(const p of d.querySelectorAll('.page'))assert(p.inert===(p!==active)&&p.getAttribute('aria-hidden')===String(p!==active),'Accessible state '+id+' / '+p.id);
 }
 async function go(id){d.querySelector(`.page.on [data-go="${id}"]`).click();await until(()=>d.querySelector('.page.on')?.id===id,'page '+id);page(id);
- for(const e of $(''+id).children){const r=e.getBoundingClientRect();if(!e.hidden)assert(r.left>=0&&r.right<=640&&r.top>=0&&r.bottom<=612,'Fits window '+id+' / '+(e.id||e.tagName))}
+ const p=$(id),top=p.getBoundingClientRect().top-p.scrollTop;   // tall pages scroll: every child sits inside the page's scroll range, never squeezed out of it
+ for(const e of p.children){const r=e.getBoundingClientRect();if(!e.hidden)assert(r.left>=0&&r.right<=640&&r.top>=top&&r.bottom<=top+p.scrollHeight,'Fits window '+id+' / '+(e.id||e.tagName))}
 }
 page('welcome');await go('perms');
 w.ob.plan({ok:false,need:'upgrade',client:'claude',text:'Atticus needs a paid Claude plan (Pro or Max).'});w.ob.server({apiBase:'',apiModel:''});assert($('client-alt').textContent==='Change provider','Plan row offers Change provider');
