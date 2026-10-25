@@ -134,6 +134,27 @@ class StreamTests(unittest.TestCase):
         _, _, shown = self.run_stream(message(ANSWER), ANSWER, env={'ATTICUS_UI': ''})
         self.assertEqual(shown, [])
 
+    def failed_early_start(self, commit, getppid=os.getppid, sleep=atticus.time.sleep):
+        p = Mock(); p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
+        p.stdout = map(json.dumps, [{'type': 'result', 'is_error': True, 'result': 'API Error: fixture', 'total_cost_usd': 0,
+                                     'usage': {'input_tokens': 0, 'output_tokens': 0}, 'modelUsage': {}}])   # ended before any model call
+        with patch.dict(os.environ, {'ATTICUS_UI': '1', 'ATTICUS_COMMIT': str(commit)}), patch.object(atticus.threading, 'Thread'), \
+             patch.object(atticus.threading, 'Timer'), patch.object(atticus.os, 'getppid', getppid), \
+             patch.object(atticus.time, 'sleep', sleep), contextlib.redirect_stdout(io.StringIO()) as out:
+            reply, _, _ = atticus.run('Request: fixture', p)
+        return reply, out.getvalue().splitlines()
+
+    def test_a_failed_early_start_opens_setup_only_after_the_transcript_is_confirmed(self):
+        commit = Path(self.root.name) / 'commit'
+        reply, lines = self.failed_early_start(commit, getppid=Mock(side_effect=[100, 101]))   # the app dropped this start unconfirmed
+        self.assertIn('Claude stopped', reply)
+        self.assertNotIn('! setup', lines)
+        _, lines = self.failed_early_start(commit, sleep=lambda _: commit.write_text('go'))   # the user lets go and these words are confirmed
+        self.assertEqual(lines.count('! setup'), 1)
+        with patch.dict(os.environ, {'ATTICUS_COMMIT': ''}), contextlib.redirect_stdout(io.StringIO()) as out:
+            atticus.say('!', 'setup')   # typed asks have no transcript to wait for
+        self.assertEqual(out.getvalue(), '! setup\n')
+
     def test_show_answers_setting_streams_as_they_arrive_or_shows_all_at_once(self):
         _, _, shown = self.run_stream(message(ANSWER), ANSWER)
         self.assertEqual(shown[-1], ANSWER)   # default: as they arrive

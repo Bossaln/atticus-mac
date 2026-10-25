@@ -958,7 +958,7 @@
     else setTimeout(press, 1200);
   });
 
-  paintPrefs(); go('welcome');
+  paintPrefs(); go(window.obStart || 'welcome');
 
   // The same orb as the overlay, breathing.
   try {

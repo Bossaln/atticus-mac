@@ -39,6 +39,17 @@ class BrainTests(unittest.TestCase):
             self.assertEqual({env[f'ANTHROPIC_DEFAULT_{m}_MODEL'] for m in ('HAIKU', 'SONNET', 'OPUS')}, {'deepseek-chat'})
             self.assertEqual(atticus.plan(), {'ok': True, 'need': '', 'text': 'Using your custom server, api.deepseek.com.', 'client': 'server'})
 
+    def test_unlaunchable_claude_is_setup_instead_of_a_crash(self):
+        with patch.object(atticus, 'start_claude', return_value=None), \
+             patch.object(atticus.subprocess, 'run', side_effect=PermissionError(13, 'private path')), \
+             patch.object(atticus, 'say'), patch.object(atticus, 'report_error') as error:
+            reply, steps, commands = atticus.run('fixture')
+            self.assertIn('Could not start Claude Code', reply)
+            self.assertNotIn('private path', reply)
+            self.assertEqual((steps, commands, atticus.run.why), (0, [], 'setup_needed'))
+            atticus.report_worker_failure('claude', 'haiku', atticus.run.why)
+            error.assert_called_once_with('setup', worker='claude', model='haiku', why='setup_needed')
+
     def test_custom_server_models_come_from_the_server(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer
         class Fake(BaseHTTPRequestHandler):   # DeepSeek-style: the Claude address ends in /anthropic, the list is at /models
@@ -422,6 +433,23 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                 self.assertEqual(log.call_args.args[1],said)
                 self.assertEqual(log.call_args.kwargs['attempt_usd'],[.001])
                 learn.assert_not_called()
+
+    def test_plan_limits_skip_the_retry_card(self):
+        for why, offered in (('rate_limited', False), ('stopped', True)):
+            with self.subTest(why=why):
+                brain = unittest.mock.Mock(return_value=('Claude: You’ve hit your weekly limit · resets 3pm', 0, []))
+                brain.ok = False; brain.cmds = brain.ran = brain.observed = []; brain.handoff = None; brain.handoffs = []; brain.work = False; brain.why = why
+                with patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, fast=lambda _: None,
+                                    front=lambda: ('Fixture', 'Scratch'), osa=lambda *a: '', screens=lambda: [],
+                                    selection_context=lambda: '', relevant_rules=lambda _: '', recent=lambda: [],
+                                    workflows=lambda *a: '', screen_for=lambda *a: None, wait_commit=lambda: True,
+                                    run=brain, start_ai=lambda *a: None, remember_turn=lambda *a: None), \
+                     patch.object(atticus, 'ask_user', return_value=None) as card, patch.object(atticus, 'log_turn'), \
+                     patch.object(atticus.threading, 'Thread'), patch.dict(os.environ, {'ATTICUS_UI': '1', 'ATTICUS_ASK': atticus.DIR}), \
+                     patch('sys.argv', ['atticus.py', 'Fixture task']), patch('sys.stdout', io.StringIO()) as out:
+                    atticus.main()
+                self.assertEqual(card.called, offered)
+                self.assertIn('weekly limit', out.getvalue())
 
     def test_partial_request_handoff_keeps_one_original_log_row(self):
         brain=unittest.mock.Mock(return_value=('',None,[]));brain.handoff={'accepted':True};brain.handoffs=[brain.handoff];brain.ran=[];brain.ok=True
@@ -1561,6 +1589,19 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
                 self.assertNotIn(detail, reply)
                 self.assertNotIn('/private/fixture', reply)
                 self.assertNotIn('abcdefghijklmnopqrstuvwxyz123456', atticus.run.error)
+
+    def test_plan_limits_show_claudes_own_words_instead_of_setup(self):
+        for detail, shown in (('You’ve hit your weekly limit · resets 3pm', 'You’ve hit your weekly limit · resets 3pm'),
+                              ('Opus limit reached, try Sonnet', 'Opus limit reached, try Sonnet'),
+                              ('Claude AI usage limit reached|1760000000', 'Claude AI usage limit reached')):
+            with self.subTest(detail=detail):
+                p = unittest.mock.Mock()
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
+                p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': detail})]
+                with patch.object(atticus, 'say') as say:
+                    reply, _, _ = atticus.run('test', p)
+                self.assertEqual((reply, atticus.run.why), ('Claude: ' + shown, 'rate_limited'))
+                self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
 
     def test_terminal_error_text_uses_friendly_mapping_and_copy_details(self):
         for detail, expected in [('HTTP 429 rate limit exceeded', 'rate-limited'),

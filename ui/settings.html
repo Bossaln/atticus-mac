@@ -324,7 +324,7 @@
       <div class="row"><div class="t"><b>Shortcut opens</b></div><div class="seg" data-k="input"><button data-v="voice">Voice</button><button data-v="type">Typing</button></div></div>
       <div class="row"><div class="t"><b id="talklabel">Shortcut behavior</b><span id="talkhint">Esc cancels.</span></div><div class="seg" data-k="talkMode" role="group" aria-labelledby="talklabel"><button data-v="hold">Hold to talk</button><button data-v="toggle">Press to toggle</button></div></div>
     </div>
-    <h3>Voice</h3>
+    <h3>Dictation</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Microphone</b></div><select data-k="microphone"></select></div>
       <div class="row"><div class="t"><b>Speech model</b><span>Speech stays on this Mac. <i class="info" title="Speech: free, English (US), on this Mac. Dictation: the model your keyboard’s mic uses.">i</i></span></div><div class="seg" data-k="speechModel"><button data-v="speech">Speech</button><button data-v="dictation">Dictation</button></div></div>
@@ -424,7 +424,7 @@
     <h3>Privacy</h3>
     <div class="group">
       <div class="row"><div class="t"><b>Look at my screen</b><span>Only when you mean it, like “this”. <i class="info" title="The picture goes with that one ask.">i</i></span></div><div class="seg" data-k="screen"><button data-v="auto">Automatic</button><button data-v="never">Never</button></div></div>
-      <div class="row"><div class="t"><b>Hide from screen sharing</b></div><label class="sw"><input type="checkbox" data-k="hideWhenSharing"></label></div>
+      <div class="row"><div class="t"><b>Hide from screen sharing</b><span id="sharingUnavailable" hidden>On this macOS version, Atticus windows can appear in screen sharing.</span></div><label class="sw"><input type="checkbox" data-k="hideWhenSharing"></label></div>
       <div class="row"><div class="t"><b>Count me as a user</b><span>Anonymous feature, timing and error counts. <i class="info" title="A random ID, with no task text, dictated words, files or screen content.">i</i></span></div><label class="sw"><input type="checkbox" data-k="stats"></label></div>
       <div class="row"><div class="t"><b>Help improve Atticus</b><span>Anonymous reports when a task fails. <i class="info" title="Sends what you asked, the steps it took and why. Emails, numbers, file paths and anything typed for you are removed first.">i</i></span></div><label class="sw"><input type="checkbox" data-k="improve"></label></div>
     </div>
@@ -966,6 +966,7 @@
       if (d.icon) $('icon').src = $('bigicon').src = d.icon;
       $('ver').textContent = $('aboutver').textContent = d.version ? 'Version ' + d.version : 'Atticus';
       $('autoUpdateRow').hidden = $('checkUpdate').hidden = !!d.managedUpdates;
+      $('sharingUnavailable').hidden = !d.sharingUnavailable;
       $('updateTitle').textContent = d.managedUpdates ? 'Updates are managed by Nix' : 'Check for updates';
       $('upstatus').textContent = d.update || 'Never checked this session.';
       if (d.mics) this.mics(d.mics);

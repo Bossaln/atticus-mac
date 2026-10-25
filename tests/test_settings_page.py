@@ -67,6 +67,14 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return json.loads(p.stdout.strip().splitlines()[-1])
 
+    def test_sharing_compatibility_notice_preserves_saved_choice(self):
+        out = self.page("""st.load({prefs:{hotkeyLabel:'⌃⌥Space',hideWhenSharing:true},sharingUnavailable:true});
+            const before=[!$('sharingUnavailable').hidden,document.querySelector('[data-k=hideWhenSharing]').checked];
+            st.load({prefs:{hotkeyLabel:'⌃⌥Space',hideWhenSharing:false},sharingUnavailable:false});
+            return [before,$('sharingUnavailable').hidden,document.querySelector('[data-k=hideWhenSharing]').checked];""")
+        self.assertEqual(out['result'], [[True, True], True, False])
+        self.assertNotIn({'do': 'set', 'k': 'hideWhenSharing', 'v': False}, out['posts'])
+
     def test_row_lines_stay_short(self):
         page = (ROOT / 'ui/settings.html').read_text()
         lines = [re.sub(r'<i class="info"[^>]*>i</i>|<[^>]+>', '', m).strip() for m in re.findall(r'</b><span[^>]*>(.*?)</span></div>', page) if '${' not in m]

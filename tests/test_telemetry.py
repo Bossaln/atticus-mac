@@ -129,7 +129,8 @@ class TelemetryTests(unittest.TestCase):
                  ('400: model does not support tools', True, 'server_rejected'),
                  ('422: incompatible request', True, 'server_rejected'),
                  ('OAuth session expired', False, 'signed_out'),
-                 ('HTTP 429', False, 'rate_limited'), ('network connection failed', False, 'offline')]
+                 ('HTTP 429', False, 'rate_limited'), ('You’ve hit your weekly limit · resets 3pm', False, 'rate_limited'), ('network connection failed', False, 'offline')]
+        self.assertEqual(atticus.failure_why('Context limit reached · /compact or /clear to continue'), 'stopped')   # not a plan limit
         with patch.object(atticus, 'report_error') as sent:
             for detail, custom, why in cases:
                 self.assertEqual(atticus.failure_why(detail, custom), why)
@@ -170,6 +171,22 @@ class TelemetryTests(unittest.TestCase):
             self.assertTrue(marker.exists())
             with patch.object(Path, 'touch', side_effect=FileNotFoundError):
                 self.assertIsNone(atticus.ask_user({'q': 'Send?', 'cmd': 'fixture'}, 0))
+
+    def test_question_after_ask_cleanup_is_cancelled_without_publishing_a_card(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(atticus, 'DIR', root), \
+             patch.dict(os.environ, {'ATTICUS_ASK': str(Path(root, 'removed-ask'))}), \
+             patch.object(atticus, 'private_json') as publish:
+            directory = Path(root, 'removed-ask')
+            directory.mkdir()
+            open_lock = os.open
+            def cancelled_before_lock(path, flags, mode):
+                directory.rmdir()
+                return open_lock(path, flags, mode)
+            with patch.object(atticus.os, 'open', side_effect=cancelled_before_lock):
+                self.assertIsNone(atticus.ask_user({'q': 'Send?', 'cmd': 'fixture'}, 60))
+            self.assertIsNone(atticus.ask_user({'q': 'Send?', 'cmd': 'fixture'}, 60))
+            publish.assert_not_called()
+            self.assertFalse(Path(root, 'removed-ask').exists())
 
     def test_main_crash_is_reported_once_with_the_handled_exit_status(self):
         with patch.object(atticus, 'main', side_effect=RuntimeError('private detail')), \

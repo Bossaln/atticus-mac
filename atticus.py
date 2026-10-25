@@ -836,7 +836,8 @@ def ask_user(j, secs):
             except FileNotFoundError: pass   # the cancelled ask's owner already removed its folder
         return answer
     deadline = time.monotonic() + secs
-    fd = os.open(os.path.join(d, 'permission.lock'), os.O_RDWR | os.O_CREAT, 0o600)
+    try: fd = os.open(os.path.join(d, 'permission.lock'), os.O_RDWR | os.O_CREAT, 0o600)
+    except FileNotFoundError: return None   # the request owner already removed the cancelled ask
     with os.fdopen(fd, 'r+') as lock:
         # Parallel tool hooks must never overwrite each other's card or consume each other's answer.
         while True:
@@ -3434,11 +3435,14 @@ def report_error(kind, **props):
         posthog('error', {'kind': kind, **props})
 
 
+PLAN_LIMIT = r'\b(?<!context )limit\b.*\b(?:resets?|reached)\b|\bhit your\b.*\blimit\b'   # Claude plan limits ("You've hit your weekly limit · resets 3pm")
+
+
 def failure_why(detail, custom=False):
     """Classify backend errors, never the user's request or the model's ordinary answer."""
     for why, pattern in (
         ('signed_out', r'\b(?:o?auth(?:enticate|entication|orization)?|unauthori[sz]ed)\b|\b401\b|invalid (?:api )?key|not logged in|sign.?in'),
-        ('rate_limited', r'rate.?limit|usage limit|too many requests|\b429\b'),
+        ('rate_limited', rf'rate.?limit|usage limit|{PLAN_LIMIT}|too many requests|\b429\b'),
         ('offline', r'network|connect|dns|timed? ?out|timeout'),
         ('unavailable', r'overload|unavailable|service error|\b5\d\d\b'),
         ('sandbox', r'sandbox'),
@@ -3531,6 +3535,7 @@ def ask_done(row):
 
 
 def say(tag, text):   # one line per message; an answer's own line breaks (lists, display math) travel as U+2028
+    if (tag, text) == ('!', 'setup') and not wait_commit(): return   # a request started while the user talks must not open Setup mid-hold
     if tag not in ('✓', '…'): text = ' '.join(text.split())
     else:   # lines inside ``` fences keep their spacing (code, text diagrams)
         fence, lines = False, []
@@ -3726,6 +3731,8 @@ def claude_plan():
         s = json.loads(subprocess.run(['claude', 'auth', 'status'], capture_output=True, text=True, timeout=20).stdout)
     except FileNotFoundError:
         return {'ok': False, 'need': 'install', 'text': 'Claude Code is not installed.'}
+    except OSError:
+        return {'ok': False, 'need': 'install', 'text': 'Could not start Claude Code. Reinstall it and try again.'}
     except (ValueError, subprocess.TimeoutExpired):
         return {'ok': False, 'need': 'login', 'text': 'Could not read your Claude sign-in.'}
     if not s.get('loggedIn'):
@@ -5443,7 +5450,10 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 say('!', 'setup')
                 reply = 'Your Claude sign-in expired. Open Atticus Settings to sign in again.'
         elif run.why == 'rate_limited':
-            reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
+            # a plan limit: Claude's own words say which limit, when it resets and what to try
+            plan_limit = '' if custom or not result_error else next((l for l in reply.splitlines() if re.search(PLAN_LIMIT, l, re.I) and not l.startswith('API Error')), '')
+            plan_limit = ' '.join(re.sub(r'\|\d+\s*$', '', plan_limit).split())[:200]   # older Claude Code appends "|<reset epoch>"
+            reply = f'Claude: {plan_limit}' if plan_limit else ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
         elif run.why == 'offline':
             reply = ('Could not connect to your custom server. Check its address and try again.' if custom else
                      'Claude could not connect. Check your internet connection and try again.')
@@ -7582,7 +7592,7 @@ def main():
         run.ran = previous + run.ran
         reply, cost, steps = again or reply, None if cost is None or more is None else cost + more, steps + extra
         if handed_off(): return
-    elif not run.ok and os.environ.get('ATTICUS_ASK'):
+    elif not run.ok and run.why not in ('rate_limited', 'signed_out', 'setup_needed') and os.environ.get('ATTICUS_ASK'):   # retrying can't lift a plan limit or sign-in
         if warm:
             os.environ['ATTICUS_RELAY_ACTIVE'] = str(os.getpid())
             threading.Thread(target=relay, args=(None, os.environ['ATTICUS_ASK']), daemon=True).start()
