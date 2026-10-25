@@ -171,6 +171,26 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
         self.assertEqual(reply, 'Your custom server rejected its credentials. Check its key in Settings.')
         self.assertFalse(any(call.args[:2] == ('!', 'setup') for call in say.call_args_list))
 
+    def test_custom_server_retries_an_image_rejection_without_images(self):
+        class Input(io.StringIO):
+            def close(self): pass
+        def worker(result, failed):
+            p = unittest.mock.Mock(ask='', returncode=int(failed), errors=io.StringIO(), atticus_model='haiku')
+            p.stdin = Input()
+            p.stdout = [json.dumps({'type': 'result', 'result': result, 'is_error': failed, 'total_cost_usd': 0})]
+            return p
+        shot = self.root / 'screen.jpg'
+        shot.write_bytes(b'fixture')
+        first = worker('API Error: 400 Multimodal data provided, but model does not support multimodal requests.', True)
+        retry = worker('Done without the picture.', False)
+        with patch.object(atticus, 'server', return_value={'ANTHROPIC_BASE_URL': 'fixture'}), \
+             patch.object(atticus, 'start_claude', return_value=retry) as start, patch.object(atticus, 'say'):
+            reply, _, _ = atticus.run('Arrange the windows', first, [(str(shot), 'Screen 1')])
+        start.assert_called_once_with('haiku')
+        self.assertEqual(reply, 'Done without the picture.')
+        self.assertIn('image', [b['type'] for b in json.loads(first.stdin.getvalue())['message']['content']])
+        self.assertNotIn('image', [b['type'] for b in json.loads(retry.stdin.getvalue())['message']['content']])
+
     def test_routing_migrates_legacy_choices_and_honors_one_mode(self):
         cases = [({}, 'balanced'), ({'escalate': False}, 'cheapest'),
                  ({'escalateAuto': False}, 'cheapest'), ({'model': 'sonnet'}, 'capable'),
@@ -1792,14 +1812,24 @@ class WatchAndBudgetTests(unittest.TestCase):
             atticus.set_switch('safe mode', 'on')
         self.assertEqual(ask.call_args.args[0], {'set': 'safe', 'value': True})
         for words, key in [('the drawing setting', 'draw'), ('read answers aloud', 'speak'), ('safe mode', None)]:
-            with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch('sys.stdout', new_callable=io.StringIO):
+            with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, \
+                 patch.object(atticus.subprocess, 'run'), patch('sys.stdout', new_callable=io.StringIO):
                 atticus.set_switch(words, 'off')
             self.assertEqual(ask.call_args.args[0] if ask.called else None, key and {'set': key, 'value': False})
-        with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, \
+        with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch.object(atticus.subprocess, 'run'), \
              patch('sys.stdout', new_callable=io.StringIO) as out:
             atticus.set_switch('AI client', 'devin')
         ask.assert_not_called()
-        self.assertIn('Only the user', out.getvalue())
+        self.assertIn('Only you', out.getvalue())
+
+    def test_unavailable_voice_setting_opens_settings(self):
+        with patch.object(atticus.subprocess, 'run') as opened, patch.object(atticus, 'ask_user') as ask, \
+             patch('sys.stdout', new_callable=io.StringIO) as out:
+            atticus.set_switch('key binding', 'off')
+        ask.assert_not_called()
+        opened.assert_called_once_with(['open', '-a', 'Atticus'], capture_output=True)
+        self.assertIn('Atticus Settings is open; change it there', out.getvalue())
+        self.assertIn('Unsupported: open -a Atticus; say change it there', atticus.SYSTEM)
 
     def test_unknown_command_never_shows_raw_shell(self):
         self.assertEqual(atticus.label('Bash', {'command': 'cat > /private/var/folders/x/prompt.txt <<EOF'}), 'Working on it')

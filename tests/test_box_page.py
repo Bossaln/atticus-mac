@@ -35,6 +35,22 @@ ui.listen(); ui.agentSteered({id: 'b1', title: 'Ebikes', steer: {text: 'under $1
 out.steerAndNew = ack();
 ui.listen(); ui.agentStarted({id: 'c1', title: 'Ebikes', status: 'running'}); ui.agentStarted({id: 'd1', title: 'Helmets', status: 'queued'}); out.two = ack();
 ui.listen(); ui.agentStarted({id: 'e1', title: 'Tents', status: 'queued'}); ui.agentStarted({id: 'f1', title: 'Stoves', status: 'running'}); ui.agentStarted({id: 'g1', title: 'Maps', status: 'running'}); out.mix = ack();
+ui.reset(); out.turns = [];
+const thread = document.getElementById('thread');
+const inView = e => { const r=e.getBoundingClientRect(), t=thread.getBoundingClientRect(); return r.height>0 && r.top>=t.top && r.bottom<=t.bottom+1; };
+for (let i=0;i<10;i++) {
+  ui.listen(true); ui.words(i===1?'Save it as a shortcut':'Change the setting'); if(i%2===0)ui.think();
+  ui.line('▸ Working on the request'); ui.line('… Here is the answer so far and'); settle();
+  const turn=thread.lastElementChild;
+  out.turns.push([inView(turn.querySelector('.elapsed')), inView(turn.querySelector('.step.live')), inView(turn.querySelector('.elapsed span')), turn.querySelector('.elapsed span').textContent, turn.querySelectorAll('.elapsed').length]);
+  ui.line('✓ Finished the request.'); if(i===1)ui.line('i Learned: change the setting'); ui.finished(); settle();
+}
+ui.line('i Support: Atticus is free, leave a tip'); settle();
+const support=document.querySelector('.tip.kofi'), link=support.querySelector('button:not(.off)');
+link.scrollIntoView(); const lr=link.getBoundingClientRect(), bg=getComputedStyle(link).backgroundColor;
+out.support=[link.tagName, ui.pointer([lr.x+lr.width/2,lr.y+lr.height/2]), getComputedStyle(link).cursor]; settle();
+out.support.push(bg!==getComputedStyle(link).backgroundColor);
+link.click(); out.support.push(!support.isConnected); ui.pointer([]);
 ui.dictate(true); ui.learned('Atticus'); const dn = document.getElementById('dn');
 out.learned = [dn.textContent, getComputedStyle(dn).display, dn.className];
 return out;
@@ -76,6 +92,9 @@ class BoxPageTests(unittest.TestCase):
         self.assertTrue(out['math'][5])
         self.assertEqual(out['two'], 'I started an agent on “Ebikes”. I’ll ping you when it’s done. Queued an agent for “Helmets”. It starts when another one finishes.')   # the queued one is not called started
         self.assertEqual(out['mix'], 'Queued an agent for “Tents”. It starts when another one finishes. I started agents on “Stoves” and “Maps”. I’ll ping you when they’re done.')
+        self.assertEqual(out['turns'], [[True, True, True, 'Working on the request', 1]] * 10)
+        self.assertEqual(out['support'], ['BUTTON', True, 'pointer', True, True])
+        self.assertTrue(any(isinstance(p, dict) and p.get('kofi') for p in got['posts']))
         self.assertEqual(out['learned'], ['Learned “Atticus” Undo', 'flex', 'dn tick'])
 
 

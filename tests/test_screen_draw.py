@@ -205,6 +205,26 @@ class DrawingTests(unittest.TestCase):
         snapshot = json.loads((self.root/'draw-screens.json').read_text())
         self.assertEqual((snapshot['target'], snapshot['screens']['1']['pixels']), ({'windowID': '7'}, [1280, 800]))
 
+    def test_look_keeps_screen_mappings_when_target_lookup_fails(self):
+        def run(args, **_):
+            if args[1:2] == ['--look']:
+                Path(args[-1]).write_bytes(b'x')
+            return subprocess.CompletedProcess(args, 0, stdout='pixelWidth: 1280\npixelHeight: 800\n')
+        for error in (ValueError('No visible target window'), subprocess.TimeoutExpired('target', 2), OSError('unavailable')):
+            with self.subTest(error=type(error).__name__), patch.dict(os.environ, {'ATTICUS_ASK':str(self.root)}), \
+                 patch.object(atticus, 'screens', return_value=[('Display',0,0,1440,900,True)]), \
+                 patch.object(atticus, 'draw_target', side_effect=error), patch.object(atticus.subprocess, 'run', run):
+                self.assertEqual(len(atticus.look(cleanup=False)), 1)
+                snapshot = json.loads((self.root/'draw-screens.json').read_text())
+                self.assertEqual(snapshot, {'screens':{'1':{'frame':[0,0,1440,900],'pixels':[1280,800]}}, 'target':None})
+                def shown(lines):
+                    Path(json.loads(lines[0][2:])['receipt']).write_text('shown')
+                with patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'emit', side_effect=shown) as emit:
+                    self.assertIn('Guide shown', atticus.draw({'steps':[{'screen':1,'say':'Look here.','shapes':[{'kind':'pointer','at':[10,10]}]}]}))
+                    self.assertIsNone(json.loads(emit.call_args.args[0][0][2:])['target'])
+                    with self.assertRaisesRegex(ValueError, '--look again'):
+                        atticus.draw({'steps':[{'target':'Control','say':'Look here.','shapes':[{'kind':'rect'}]}]})
+
     def test_ax_draw_refreshes_the_map_in_the_look_target(self):
         target={'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
         (self.root/'draw-screens.json').write_text(json.dumps({
@@ -401,7 +421,7 @@ func applySharing(_ window: NSWindow) { window.sharingType = .readOnly }
 __DRAWING__
 let app = NSApplication.shared; app.setActivationPolicy(.regular)
 let window = NSWindow(contentRect:CGRect(x:120,y:100,width:850,height:560),styleMask:[.titled,.closable],backing:.buffered,defer:false)
-window.title = "Atticus teaching fixture"; window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named:.darkAqua)
+window.title = "Atticus teaching fixture"; window.isReleasedWhenClosed = false; window.animationBehavior = .none; window.appearance = NSAppearance(named:.darkAqua)
 window.backgroundColor = NSColor(calibratedWhite:0.12,alpha:1)
 let title = NSTextField(labelWithString:"Learn by doing"); title.textColor = .white; title.font = .systemFont(ofSize:26,weight:.semibold); title.frame = CGRect(x:40,y:475,width:740,height:40); window.contentView!.addSubview(title)
 let body = NSTextField(labelWithString:"A² + B² = C²"); body.textColor = .white; body.font = .systemFont(ofSize:32,weight:.medium); body.frame = CGRect(x:55,y:300,width:500,height:55); window.contentView!.addSubview(body)
@@ -689,6 +709,12 @@ click(buttons(last).first { $0.title == "Back" }!); click(buttons(last).first { 
 precondition(events == ["next","close","back","next"],"Controls did not reach the guide: \(events)")
 let single = callout("Click Share.",1,1)
 precondition(labels(single).isEmpty && buttons(single).map(\.title) == ["Done"],"A one-step guide shows step controls")
+for words in ["a² + b² = c²", "Click Share.", "Complete the square: add 9 to both sides.", "First line\nSecond line"] {
+    let card = callout(words,1,3), scroll = card.subviews.compactMap { $0 as? NSScrollView }.first!
+    let body = scroll.documentView as! NSTextView
+    precondition(body.frame.height <= scroll.contentSize.height,"Short caption needs scrolling: \(words)")
+    precondition(body.layoutManager!.usedRect(for:body.textContainer!).maxY <= scroll.contentSize.height,"Short caption is clipped")
+}
 let long = callout(String(repeating:"A readable instruction needs enough words to wrap. ",count:20),2,4)
 let scroll = long.subviews.compactMap { $0 as? NSScrollView }.first!, body = scroll.documentView as! NSTextView
 body.layoutManager!.ensureLayout(for:body.textContainer!)
@@ -711,8 +737,9 @@ precondition(!pickView.hits.contains { $0.shape == 3 },"Text drew outside its bo
 pickView.highlight((2,1)); precondition(pickView.layer!.sublayers!.filter { $0.name == "pick" }.count == 1,"The selected mark has no highlight")
 pickView.highlight(nil); precondition(!pickView.layer!.sublayers!.contains { $0.name == "pick" })
 
+for size in ["s","m","l"] { precondition(ScreenDrawing.textSize(size,display:CGRect(x:0,y:0,width:6000,height:4000)) <= 32,"Drawn text is oversized") }
 let laptop = ScreenDrawing.textSize(nil,display:CGRect(x:0,y:0,width:1512,height:982)), monitor = ScreenDrawing.textSize(nil,display:CGRect(x:0,y:0,width:1920,height:1080))
-precondition(laptop >= 26 && laptop <= 32 && monitor >= 29 && monitor <= 34 && ScreenDrawing.textSize("l",display:.zero) > ScreenDrawing.textSize("s",display:.zero),"Text is not readable: \(laptop) \(monitor)")
+precondition(laptop >= 22 && laptop <= 28 && monitor >= 22 && monitor <= 28 && ScreenDrawing.textSize("l",display:.zero) > ScreenDrawing.textSize("s",display:.zero),"Text is not readable: \(laptop) \(monitor)")
 if let main = NSScreen.screens.first {
     let d = CGDisplayBounds(main.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as! CGDirectDisplayID)
     let near = CGRect(x:d.minX+80,y:d.minY+200,width:200,height:60)

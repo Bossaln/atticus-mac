@@ -523,7 +523,7 @@ Tools:
 Earlier supplies follow-ups. "this"/"here" = front window; "it" after a task = Last task window. Answer/draw from open content (video, page, doc) unless told not to.
 Memory: follow rules. Recall/forget X: --me find, then drop a fact or {FORGET} the exact rule. Save personal facts: {ABOUT} <category> "<kind>" "<exact words from now/Earlier>"; how-tos: {REMEMBER} "<rule>".
 Shortcuts: "when I say X, do Y" in any words: run and verify Y, then end with [shortcut X], X in the user's exact words. Atticus saves the verified actions and tells the user; never save it yourself (shortcut or rule) or say it is saved.
-Own settings: {SET} "<setting name>" on|off|<option>, never click in Settings. Show Settings: open -a Atticus.
+Settings: {SET} "<name>" on|off|<option>. Unsupported: open -a Atticus; say change it there. Never click.
 Corrections: fix the task, then save one short user preference, not app/site-specific workarounds.
 If Context has a Previous learned shortcut and the current request reports it failed, redo its task and include [unlearn]; else ignore it.
 NEVER_RISKY
@@ -898,15 +898,18 @@ def set_switch(words, on):
     """{SET}: the setting whose name shares the most words with what the user said (first 3 letters, so "asking" finds "Ask").
     on: on|off for a switch, or one of a choice setting's options."""
     stem = lambda t: {w[:3] for w in re.findall(r'[a-z]+', t.lower()) if w not in ('the', 'me', 'my', 'on', 'off', 'setting', 'in', 'a')}
+    def unavailable(message='That setting is not available by voice. Atticus Settings is open; change it there.'):
+        subprocess.run(['open', '-a', 'Atticus'], capture_output=True)
+        print(message)
     if on not in ('on', 'off'):
         rows = picks()
         k = max(rows, key=lambda k: len(stem(words) & stem(rows[k][0])) * 2 + len(stem(on) & stem(' '.join(rows[k][1]))))
         name, options = rows[k]
         o = max(options, key=lambda o: len(stem(on) & stem(o + ' ' + options[o])))
         if not stem(words) & stem(name) or not stem(on) & stem(o + ' ' + options[o]):
-            return print('No such setting. Choices: ' + '; '.join(f'{n}: {", ".join(o)}' for n, o in rows.values()) + '. Switches (on|off): ' + ', '.join(switches().values()))
+            return unavailable()
         if k == 'client':
-            return print('Only the user can change the AI client in Settings.')
+            return unavailable('Only you can change the AI client. Atticus Settings is open; change it there.')
         if os.environ.get('ATTICUS_ASK'):
             ask_user({'set': k, 'value': options[o]}, 5)
         else:
@@ -915,9 +918,9 @@ def set_switch(words, on):
     rows = switches()
     k = max(rows, key=lambda k: len(stem(words) & stem(rows[k])))
     if not stem(words) & stem(rows[k]):
-        return print('No such switch. Switches: ' + ', '.join(rows.values()) + '. Choices: ' + '; '.join(f'{n}: {", ".join(o)}' for n, o in picks().values()))
+        return unavailable()
     if k == 'safe' and on == 'off':   # the AI may make Atticus safer, never less safe: a web page could ask it to
-        return print('Only the user can turn Safe mode off: Settings > Account & Access > Safety. It is still on.')
+        return unavailable('Only you can turn Safe mode off. Atticus Settings is open; change it under Account & Access → Safety.')
     if os.environ.get('ATTICUS_ASK'):
         ask_user({'set': k, 'value': on == 'on'}, 5)
     else:
@@ -2225,7 +2228,9 @@ def look(cleanup=True, window=None):
         snapshot = os.path.join(os.environ.get('ATTICUS_ASK', DIR), 'draw-screens.json')
         try:
             if not mappings: raise ValueError('No captured displays')
-            private_json(snapshot, {'screens': mappings, 'target': target.result()})
+            try: anchor = target.result()
+            except (OSError, ValueError, subprocess.TimeoutExpired): anchor = None
+            private_json(snapshot, {'screens': mappings, 'target': anchor})
         except (OSError, ValueError, subprocess.TimeoutExpired):
             try: os.remove(snapshot)
             except OSError: pass
@@ -5419,6 +5424,11 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         detail = '\n'.join(filter(None, [reply if result_error else '', p.errors.read(2000).strip()]))
         run.error = clean(detail)
         custom = bool(server())
+        if custom and shots and re.search(r'\bmultimodal\b', detail, re.I):
+            if callable(getattr(getattr(p, 'stdout', None), 'close', None)): p.stdout.close()
+            if callable(getattr(getattr(p, 'errors', None), 'close', None)): p.errors.close()
+            return run(task, start_claude(getattr(p, 'atticus_model', None)), (), auto_work,
+                       request=request, main_only=main_only, routing_retry=routing_retry)
         run.why = failure_why(detail, custom)
         if custom and run.why == 'stopped':
             selected, available = str(pref('apiModel', '')).strip(), models()

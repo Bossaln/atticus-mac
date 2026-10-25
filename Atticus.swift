@@ -961,7 +961,8 @@ final class DrawingView: NSView {
                     let font = NSFont.systemFont(ofSize:["s":12,"m":15,"l":19][shape.size ?? "m"] ?? 15,weight:.semibold)
                     let attributes: [NSAttributedString.Key:Any] = [.font:font,.foregroundColor:light ? NSColor.black : NSColor.white]
                     let text = NSAttributedString(string:shape.text ?? "",attributes:attributes)
-                    let textSize = text.size(), size = CGSize(width:min(bounds.width-12,textSize.width+16),height:textSize.height+10)
+                    let measured = text.boundingRect(with:CGSize(width:bounds.width-30,height:.greatestFiniteMagnitude),options:[.usesLineFragmentOrigin,.usesFontLeading]).size
+                    let textSize = CGSize(width:ceil(measured.width)+2,height:ceil(measured.height)), size = CGSize(width:textSize.width+16,height:textSize.height+10)
                     // a label set near a mark but off it sits right beside that mark; with an arrow or line it stays where the model put it
                     let edges = shapes.contains { ["arrow","line","path"].contains($0.kind) } ? [] : targets.map { CGPoint(x:min(max(point.x,$0.minX),$0.maxX),y:min(max(point.y,$0.minY),$0.maxY)) }
                     let near = edges.min { hypot($0.x-point.x,$0.y-point.y) < hypot($1.x-point.x,$1.y-point.y) }
@@ -970,7 +971,7 @@ final class DrawingView: NSView {
                     let bg = CAShapeLayer(); bg.path = CGPath(roundedRect:box,cornerWidth:7,cornerHeight:7,transform:nil); bg.fillColor = (light ? color : color.blended(withFraction:0.2,of:.black) ?? color).cgColor
                     add(bg,box); hit(CGPath(rect:box,transform:nil),i)
                     let label = CATextLayer(); label.string = text; label.contentsScale = window?.backingScaleFactor ?? 2
-                    label.frame = CGRect(x:box.minX+8,y:box.midY-textSize.height/2,width:box.width-16,height:textSize.height); label.truncationMode = .end
+                    label.frame = CGRect(x:box.minX+8,y:box.midY-textSize.height/2,width:box.width-16,height:textSize.height); label.isWrapped = true
                     add(label,box); continue
                 }
                 let p = local(ScreenDrawing.beside(point,targets))
@@ -998,11 +999,22 @@ final class DrawingCalloutView: NSView {
     static let font = NSFont.systemFont(ofSize:14,weight:.medium), notch: CGFloat = 7, margin: CGFloat = 12
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    static func body(_ text: String, width: CGFloat) -> NSTextView {
+        let view = NSTextView(frame:CGRect(x:0,y:0,width:width,height:0))
+        view.string = text; view.font = font; view.textColor = .white; view.drawsBackground = false
+        view.isEditable = false; view.isSelectable = true; view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.containerSize = NSSize(width:width,height:.greatestFiniteMagnitude)
+        view.layoutManager!.ensureLayout(for:view.textContainer!)
+        view.setFrameSize(NSSize(width:width,height:ceil(view.layoutManager!.usedRect(for:view.textContainer!).height)))
+        return view
+    }
     static func size(_ text: String, total: Int) -> CGSize {   // the card alone, without notch or shadow margin
-        let measured: CGSize = text.isEmpty ? .zero : (text as NSString).boundingRect(with:CGSize(width:300,height:CGFloat.greatestFiniteMagnitude),
+        let measured = (text as NSString).boundingRect(with:CGSize(width:300,height:CGFloat.greatestFiniteMagnitude),
             options:[.usesLineFragmentOrigin,.usesFontLeading],attributes:[.font:font]).size
-        let body = text.isEmpty ? 0 : min(240,ceil(measured.height)) + 12
-        return CGSize(width:max(total > 1 ? 232 : 180,ceil(measured.width)+33), height:14 + (total > 1 ? 24 : 0) + body + 26 + 14)
+        let width = max(total > 1 ? 232 : 180,ceil(measured.width)+34)
+        let height = text.isEmpty ? 0 : min(240,body(text,width:width-32).frame.height) + 12
+        return CGSize(width:width, height:14 + (total > 1 ? 24 : 0) + height + 26 + 14)
     }
     static func bubble(_ card: CGRect, side: NSRectEdge?, tip: CGFloat) -> CGPath {   // flipped coordinates; tip runs along the facing edge
         let p = CGMutablePath(), r: CGFloat = 12, n = notch
@@ -1044,13 +1056,8 @@ final class DrawingCalloutView: NSView {
             let height = card.maxY - 14 - 26 - 12 - y
             let scroll = NSScrollView(frame:CGRect(x:card.minX+16,y:y,width:card.width-32,height:height))
             scroll.drawsBackground = false; scroll.borderType = .noBorder; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
-            let body = NSTextView(frame:CGRect(origin:.zero,size:scroll.contentSize))
-            body.string = text; body.font = Self.font; body.textColor = .white; body.drawsBackground = false
-            body.isEditable = false; body.isSelectable = true; body.textContainerInset = .zero; body.isVerticallyResizable = true
-            body.textContainer?.lineFragmentPadding = 0
-            body.textContainer?.containerSize = NSSize(width:scroll.contentSize.width,height:.greatestFiniteMagnitude)
-            body.textContainer?.widthTracksTextView = true; body.autoresizingMask = [.width]
-            scroll.documentView = body; addSubview(scroll)
+            scroll.scrollerStyle = .overlay
+            scroll.documentView = Self.body(text,width:scroll.contentSize.width); addSubview(scroll)
             y += height + 12
         }
         let last = step >= total
@@ -1101,8 +1108,8 @@ final class ScreenDrawing {
         guard let r = request, let data = try? JSONEncoder().encode(r.steps), let steps = try? JSONSerialization.jsonObject(with:data) else { return nil }
         return ["steps":steps, "shown":index+1]
     }
-    // Readable from a normal distance: about 29 points on a laptop, 32 on a 1080p monitor; s and l scale it.
-    static func textSize(_ size: String?, display: CGRect) -> CGFloat { max(22,min(40,display.height/34)) * (["s":0.75,"l":1.4][size ?? ""] ?? 1) }
+    // Keep board text readable without oversized type on large displays.
+    static func textSize(_ size: String?, display: CGRect) -> CGFloat { min(32,max(22,min(28,display.height/40)) * (["s":0.8,"l":1.2][size ?? ""] ?? 1)) }
     // Every text line of the guide on one panel, laid out once so it grows in place: at the first line's `at`, else beside the other marks.
     static let colors: [String:NSColor] = ["red":.systemRed, "blue":.systemBlue, "green":.systemGreen, "yellow":.systemYellow, "white":.white]
     static func board(_ steps: [DrawingStep], near: CGRect) -> (frame: CGRect, pad: CGFloat, lines: [BoardLine])? {

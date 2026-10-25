@@ -19,12 +19,14 @@
   .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 16px; color: var(--fg2); font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
   .elapsed .redo { margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
   .elapsed .redo:is(:hover,.hot) { color: #f5f5f7; }
+  .elapsed span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .elapsed b { color: var(--fg2); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, var(--fg2) 0%, #fff 45%, var(--fg2) 90%); background-size: 200% 100%;
     -webkit-background-clip: text; color: transparent; animation: in .35s var(--ease) both, shimmer 1.5s linear infinite; }
 
-  #thread { container-type: inline-size; max-height: 420px; min-height: 0; overflow-y: auto; scroll-behavior: smooth; padding-top: 2px;
+  /* Automatic following must be immediate: repeated live updates keep restarting a smooth scroll below the current turn. */
+  #thread { container-type: inline-size; max-height: 420px; min-height: 0; overflow-y: auto; padding-top: 2px;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 100%); }
   #thread::-webkit-scrollbar { width: 0; }
   #thread:empty { display: none; }
@@ -248,6 +250,10 @@
   .ok.offer p { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--fg2); }
   .ok.offer .details { display: block; margin: 9px auto 0; height: auto; flex: none; border-radius: 0; background: none; box-shadow: none; }
   .tip.kofi { cursor: pointer; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.16); } .tip.kofi::before { color: #ff375f; }   /* quiet: no accent, it's an ask not a hint */
+  .tip.kofi .support { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; border-radius: 4px; }
+  .tip.kofi:is(:hover,.hot) { background: rgba(10,132,255,.22); box-shadow: inset 0 0 0 1px #64d2ff; }
+  .tip.kofi .support:is(:hover,.hot) { background: rgba(10,132,255,.2); }
+  .tip.kofi .support:focus-visible { outline: 2px solid #64d2ff; outline-offset: 3px; }
   .tip.gone { opacity: 0; transform: translateY(-4px); transition: opacity .4s, transform .4s; }
 
   /* memory receipt: one quiet row under an answer that remembered or forgot something. Click: it opens in place; click an item: Settings → Memory there */
@@ -529,6 +535,7 @@
   const markShot = () => { const img = bar.querySelector('img'); return bar.classList.contains('has') && !img.hidden && img.src; };   // the crop the next ask carries into its bubble
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
+    const label = part('elapsed')?.querySelector('span'); if (label) label.textContent = s;
     if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
     $('status').className = live ? 'live' : '';
     $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
@@ -676,14 +683,14 @@
     clockPaint();
     clockFrame = requestAnimationFrame(clockTick);
   };
-  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); clockStart = clockHeld = null; };
+  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); clockStart = clockHeld = null; if (clock) clock.querySelector('span').textContent = ''; };
   const clockHold = () => { if (clockStart === null) return; cancelAnimationFrame(clockFrame); clockPaint(); clockHeld = performance.now() - clockStart; clockStart = null; };
   const clockGo = () => { if (clockHeld === null) return; clockStart = performance.now() - clockHeld; clockHeld = null; clockTick(); };
   const clockBegin = () => {
     if (clockStart !== null || clockHeld !== null || !turn()) return;
     clock = document.createElement('div'); clock.className = 'elapsed';
     clock.title = 'Time Atticus spent working. Waiting for your pick or approval is not counted.';
-    clock.innerHTML = '<b></b>';
+    clock.innerHTML = '<b></b><span>Thinking…</span>';
     turn().append(clock); clockStart = performance.now(); clockTick();
   };
 
@@ -895,12 +902,13 @@
       let top = null;   // a streamed answer: the box keeps its start in view and never chases the bottom
       if (tag !== '…' && tag !== '✓') unstream();
       if (tag === '…') {   // the answer as it arrives; ✓ replaces it
-        const a = part('a'); if (a && !a.dataset.answer) { if (!s) unstream(); else { reveal(a, shut(s.replace(/\u2028/g, '\n').replace(/\S+$/, '')), a.classList.contains('streaming')); a.classList.add('streaming'); top = a; } }   // its last word may still be arriving
+        const a = part('a'); if (a && !a.dataset.answer) { clockBegin(); if (!s) unstream(); else { reveal(a, shut(s.replace(/\u2028/g, '\n').replace(/\S+$/, '')), a.classList.contains('streaming')); a.classList.add('streaming'); top = a; } }   // its last word may still be arriving
       }
       else if (tag === '▣') { try { miniUpdate(JSON.parse(s)); } catch {} }
       else if (tag === '@') miniPoint(s);
       else if (tag === '·') status(s, true);
       else if (tag === '▸') {
+        clockBegin();   // speculative and instant work can arrive before native calls think()
         settle();
         const st = part('steps'), last = st.lastElementChild, verb = t => t.split(/[\s→]/)[0];
         if (last?.classList.contains('step') && verb(last.textContent) === verb(s)) { last.classList.add('live'); last.firstChild.textContent = s; }   // the same kind of step again (scroll, scroll): one row that updates, not a list
@@ -930,6 +938,7 @@
       } else if (tag === 'i' && turn()) {
         const learned = s.startsWith('Learned: '), kofi = s.startsWith('Support: '), d = document.createElement('div');   // "Learned" when it saved a rule, the Ko-fi line, else "Tip"
         d.className = 'tip' + (learned ? ' learned' : kofi ? ' kofi' : ''); d.dataset.k = learned ? 'Learned' : kofi ? '♥' : 'Tip'; d.textContent = learned || kofi ? s.slice(9) : s;
+        if (kofi) { const b = document.createElement('button'); b.className = 'support'; b.textContent = d.textContent; d.replaceChildren(b); b.onclick = () => { post({ kofi: true }); d.remove(); fit(); }; }
         if (!learned) { const o = document.createElement('button'); o.className = 'off'; o.textContent = kofi ? 'Turn off' : 'Turn off tips'; d.append(o); }
         turn().append(d);
         setTimeout(() => { d.classList.add('gone'); setTimeout(() => { d.remove(); fit(); }, 400); }, 9000);   // never sticks around
@@ -971,7 +980,7 @@
     compose(on) { comp(on, on); },
     draft(t) { $('ask').value = t; comp(true, true); },
     tap([x, y]) {   // a click on the box, not a drag: on the answer = copy it, anywhere else = type
-      const el = document.elementFromPoint(x, y), b = el?.closest('a[href], .ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .shot, #pointbar button, .redo, #agents-pill, .dn button');
+      const el = document.elementFromPoint(x, y), b = el?.closest('a[href], .ok button, .ok, .pk button, .pk, .rewrite button, .mini-view, .mem-i, .mem-h, .mem, .shot, #pointbar button, .redo, #agents-pill, .dn button, .tip .support');
       const field = el?.closest('.ok input, .ok textarea, .pk input, .pk textarea');   // "Something else…": a text field in a card takes the cursor
       if (field) return field.focus();
       if (b) return b.click();

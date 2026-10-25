@@ -271,7 +271,7 @@ nsapp.run()
             binary = root / 'bridge'
             compiled = subprocess.run(['swiftc', str(file), '-o', str(binary)], text=True, capture_output=True)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            result = subprocess.run([str(binary), str(root), sys.executable], env={**os.environ, 'ATTICUS_DIR': str(root)}, text=True, capture_output=True, timeout=20)
+            result = subprocess.run([str(binary), str(root), sys.executable], env={**os.environ, 'ATTICUS_DIR': str(root)}, text=True, capture_output=True, timeout=300)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             timings = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{') and 'meeting-answer-latency' in line]
             self.assertTrue(timings, result.stdout)

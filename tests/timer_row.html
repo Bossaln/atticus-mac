@@ -24,6 +24,33 @@ try {
   if (current.querySelector('.q')?.textContent !== 'Why is the sky blue?') throw Error('question is not in the new turn');
   if (!current.querySelector('.elapsed')?.offsetHeight) throw Error('new ask has no visible timer row');
   if (current.querySelector('.step')?.textContent !== 'Thinking it through' || !current.querySelector('.step').offsetHeight) throw Error('new ask has no visible step line');
+  ui.reset();
+  const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const thread = d.getElementById('thread');
+  for (let i = 0; i < 10; i++) {
+    ui.listen(true); ui.words(i === 1 ? 'Save it as a shortcut' : 'Change the setting');
+    if (i % 2 === 0) ui.think();   // instant/speculative work can emit a step before think()
+    ui.line('▸ Changing the setting');
+    await tick(450);
+    const current = thread.lastElementChild, timer = current.querySelector('.elapsed b'), label = current.querySelector('.elapsed span'), step = current.querySelector('.step.live');
+    if (!timer) throw Error(`turn ${i}: step arrived without a timer`);
+    results.dataset.lastCheck = `turn ${i}: live step with timer ${timer.textContent}`;
+    const before = parseFloat(timer.textContent);
+    for (let n = 0; n < 20 && !(parseFloat(timer.textContent) > before); n++) await tick(50);
+    if (!(parseFloat(timer.textContent) > before)) throw Error(`turn ${i}: timer did not tick while the step was live`);
+    const visible = e => { const r = e.getBoundingClientRect(), t = thread.getBoundingClientRect(); return r.height > 0 && r.top >= t.top && r.bottom <= t.bottom + 1; };
+    if (!label || label.textContent !== 'Changing the setting') throw Error(`turn ${i}: missing adjacent work status`);
+    if (!visible(timer) || !visible(label) || !visible(step)) throw Error(`turn ${i}: live timer, adjacent status or step outside viewport`);
+    ui.think();   // a later native think must keep the existing timer
+    if (label.textContent !== 'Thinking…') throw Error(`turn ${i}: missing adjacent thinking status`);
+    if (current.querySelectorAll('.elapsed').length !== 1) throw Error(`turn ${i}: duplicate timer`);
+    ui.line('… The setting is changed and'); await tick(100);
+    if (!visible(timer) || !visible(label) || label.textContent !== 'Thinking…') throw Error(`turn ${i}: timer/status row lost while streaming`);
+    ui.line('✓ Changed the setting.');
+    if (i === 1) ui.line('i Learned: change the setting');
+    ui.finished(); const stopped = timer.textContent; await tick(70);
+    if (timer.textContent !== stopped) throw Error(`turn ${i}: completed timer kept ticking`);
+  }
   results.className = 'pass'; results.textContent = 'Timer row regression passed';
 } catch (error) {
   results.className = 'fail'; results.textContent = error.stack || String(error);
