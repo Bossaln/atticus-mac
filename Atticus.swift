@@ -3234,7 +3234,7 @@ final class App: NSObject, WKScriptMessageHandler {
                 buffer += d
                 while let i = buffer.firstIndex(of: 10) {
                     let line = String(decoding: buffer[..<i], as: UTF8.self); buffer.removeSubrange(...i)
-                    if line == "! setup" { onboarding.open(); continue }   // Claude not installed, signed out or no plan
+                    if line == "! setup" { onboarding.open(automatic: true); continue }   // Claude not installed, signed out or no plan
                     if line == "! feedback" { Atticus.settings.open(tab:"feedback"); continue }
                     if line == "! improve" { self.js("improve"); continue }   // the one-time "help make Atticus better?" card
                     if line.hasPrefix("▣ "), let value = try? JSONSerialization.jsonObject(with:Data(line.dropFirst(2).utf8)) as? [String:Any] { if Prefs.d["miniScreen"] as? Bool ?? true { self.mini.receive(value) }; continue }
@@ -3904,11 +3904,13 @@ final class RoutineWake {
 // Shows until finished once; to see it again: defaults delete com.atticus.app onboarded, then restart the app.
 final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     var win: NSWindow?, web: WKWebView?, timer: Timer?
-    var checkingPlan = false
+    var checkingPlan = false, setupShown = false
     var screenInitiallyGranted = false, screenGrantedDuringSetup = false
     let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
 
-    func open() {
+    func open(automatic: Bool = false) {
+        if automatic && setupShown { return }
+        setupShown = true   // closing setup is a choice; repeated failed asks must not reopen it
         guard win == nil else { win?.makeKeyAndOrderFront(nil); return }
         screenInitiallyGranted = CGPreflightScreenCaptureAccess(); screenGrantedDuringSetup = false
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 640),
@@ -3982,6 +3984,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         Onboarding.plan { [weak self] c in
             let need = c["need"] as? String ?? ""
             let devin = (c["client"] as? String) == "devin", pi = (c["client"] as? String) == "pi", server = (c["client"] as? String) == "server"
+            if need.isEmpty, c["ok"] as? Bool == false { Atticus.settings.open(); return }
             if need == "upgrade" { NSWorkspace.shared.open(URL(string: "https://claude.ai/upgrade")!); return }
             let cmd = need == "install"
                 ? devin ? "curl -fsSL https://cli.devin.ai/install.sh | bash && devin auth login"
@@ -7266,7 +7269,7 @@ let agentsUI = AgentPanels()
 let routineWake = RoutineWake()
 let onboarding = Onboarding()
 if !UserDefaults.standard.bool(forKey: "onboarded") { DispatchQueue.main.async { onboarding.open() } }
-else { Onboarding.plan { c in if c["ok"] as? Bool != true { onboarding.open() } } }   // set up once, but Claude signed out since
+else { Onboarding.plan { c in if c["ok"] as? Bool != true { onboarding.open(automatic: true) } } }   // set up once, but Claude signed out since
 var specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
              EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))]
 InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in

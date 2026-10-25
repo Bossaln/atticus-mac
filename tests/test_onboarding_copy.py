@@ -41,7 +41,7 @@ for (const [label, keys] of Object.entries(want)) if (JSON.stringify(capsOf(labe
         self.assertIn("'Agent · done'", loop)
 
     def test_point_demo_runs_the_leader_line_before_the_ring(self):
-        loop = self.page.split('async point()', 1)[1].split('async pointer()', 1)[0]
+        loop = self.page.split('async point()', 1)[1].split('async done()', 1)[0]
         self.assertLess(loop.index('lead();'), loop.index("ring.classList.add('on')"))   # the ring shows as the line arrives, as on screen
         self.assertIn('id="pt-lead"', self.page)
         self.assertIn('stop-color="#0a84ff"', self.page)   # blue, like the app's leader
@@ -63,6 +63,25 @@ for (const [label, keys] of Object.entries(want)) if (JSON.stringify(capsOf(labe
         self.assertIn("['claude', 'AI Provider', 'Checking…',", self.page)   # Devin, Pi and server users never read "Claude" first
         self.assertNotIn('Checking your Claude sign-in', self.page)
         self.assertIn("$('wk-brain').hidden = $('wk-plan').hidden = provider === 'server'", self.page)   # no plan to choose on a custom server
+
+    def test_failed_asks_only_open_setup_automatically_once_per_launch(self):
+        swift = (ROOT / 'Atticus.swift').read_text()
+        opening = swift.split('    func open(automatic: Bool = false) {', 1)[1].split('        screenInitiallyGranted', 1)[0]
+        self.assertIn('if automatic && setupShown { return }', opening)
+        self.assertLess(opening.index('if automatic && setupShown'), opening.index('setupShown = true'))
+        self.assertLess(opening.index('setupShown = true'), opening.index('guard win == nil'))
+        self.assertIn('setupShown = false', swift)
+        self.assertEqual(swift.count('setupShown = true'), 1)
+        self.assertIn('if line == "! setup" { onboarding.open(automatic: true); continue }', swift)
+        self.assertIn('case "setup": onboarding.open()', swift)   # explicit setup stays available after dismissal
+        self.assertIn('if !UserDefaults.standard.bool(forKey: "onboarded") { DispatchQueue.main.async { onboarding.open() } }', swift)
+        self.assertIn('else { Onboarding.plan { c in if c["ok"] as? Bool != true { onboarding.open(automatic: true) } } }', swift)
+
+    def test_setup_opens_settings_for_invalid_configuration_before_signin(self):
+        swift = (ROOT / 'Atticus.swift').read_text()
+        fix = swift.split('    func fixPlan() {', 1)[1].split('    func tried()', 1)[0]
+        self.assertIn('if need.isEmpty, c["ok"] as? Bool == false { Atticus.settings.open(); return }', fix)
+        self.assertLess(fix.index('if need.isEmpty'), fix.index('let cmd ='))
 
     def test_setup_checks_one_provider_process_at_a_time(self):
         swift = (ROOT / 'Atticus.swift').read_text()

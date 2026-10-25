@@ -49,7 +49,7 @@ SCENES = [
     ('settings-feedback', "st.tab('feedback');up()"),
 ]
 SCENES = [(n, js.replace('MEETINGS_JSON', json.dumps(MEETINGS)).replace('APPS_JSON', json.dumps(APPS))) for n, js in SCENES]
-SETUP_PAGES = ['try', 'mac', 'learn', 'text', 'dictate', 'point', 'work', 'meeting']   # setup's feature pages, in order
+SETUP_PAGES = ['try', 'mac', 'text', 'dictate', 'point', 'work', 'meeting']   # setup's feature pages, in order
 
 # By window ID: a stray system prompt in the VM cannot cover the shot.
 SNAP = r'''func snap(_ name:String,_ w:NSWindow){w.sharingType = .readOnly;let p=Process();p.executableURL=URL(fileURLWithPath:"/usr/sbin/screencapture");p.arguments=["-x","-o","-l\(w.windowNumber)",out+"/"+name+".png"];try! p.run();p.waitUntilExit();print("shot \(name)")}

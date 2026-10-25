@@ -5218,7 +5218,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         c = plan()
         run.why = 'signed_out' if c.get('need') == 'login' else 'setup_needed'
         say('!', 'setup')   # Atticus.app opens its setup window
-        return c['text'] + ' Atticus setup is open to fix it.', 0, []
+        return c['text'] + ' Open Atticus Settings to finish setup.', 0, []
     if getattr(p, 'ask', ''):
         save_request(p.ask, main_ask(task, request)[0])
     content = user_content(task, shots, request)
@@ -5236,7 +5236,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 c = plan()
                 run.why = 'signed_out' if c.get('need') == 'login' else 'setup_needed'
                 say('!', 'setup')
-                return c['text'] + ' Atticus setup is open to fix it.', 0, []
+                return c['text'] + ' Open Atticus Settings to finish setup.', 0, []
             if getattr(p, 'ask', ''): save_request(p.ask, main_ask(task, request)[0])
     p.waiting = threading.Event()
     if getattr(p, 'ask', '') and getattr(p, 'relaying', False) is not True and os.environ.get('ATTICUS_RELAY_ACTIVE') != str(os.getpid()):
@@ -5435,13 +5435,13 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
             if selected and available and selected not in available: run.why = 'model_missing'
         if not c['ok']:
             run.why = 'signed_out' if c.get('need') == 'login' else 'setup_needed'
-            reply = c['text'] + ' Atticus setup is open to fix it.'
+            reply = c['text'] + ' Open Atticus Settings to finish setup.'
         elif run.why == 'signed_out':
             if custom:
                 reply = 'Your custom server rejected its credentials. Check its key in Settings.'
             else:
                 say('!', 'setup')
-                reply = 'Your Claude sign-in expired. Atticus setup is open to sign in again.'
+                reply = 'Your Claude sign-in expired. Open Atticus Settings to sign in again.'
         elif run.why == 'rate_limited':
             reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
         elif run.why == 'offline':
@@ -5454,7 +5454,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         else:
             say('!', 'setup')
             reason = ' '.join(clean(detail).split()) or f'exit code {p.returncode}'
-            reply = f'{"Your custom server" if custom else "Claude"} stopped: {reason}. Atticus setup is open; choose Set Up, then try again.'
+            reply = f'{"Your custom server" if custom else "Claude"} stopped: {reason}. Open Atticus Settings, choose Set Up, then try again.'
     if auto_work and reply.endswith('[done]'):   # accepted from older warmed prompts during an update
         reply = reply[:-6].rstrip()
     # a step that failed and was then done another way is dropped, so the way that worked can still be learned
@@ -5478,7 +5478,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
             reply = 'Claude returned an empty answer. Please try again.'
         else:
             say('!', 'setup')
-            reply = 'Claude’s helper exited without returning a result. Atticus setup is open; choose Set Up, then try again.'
+            reply = 'Claude’s helper exited without returning a result. Open Atticus Settings, choose Set Up, then try again.'
     blocked = re.search(r'\b(block(?:ed)?|denied|not allowed|permission)\b|hook', run.error, re.I) or re.search(r'\btool\b.{0,30}\bblocked\b', reply, re.I)
     if last_failed and blocked and run.error.casefold() not in reply.casefold():
         reply = (reply.rstrip() + ' Tool reported: ' + run.error).strip()
@@ -5506,7 +5506,7 @@ def run_devin(task, shots=(), request=None):
     if not shutil.which('devin'):
         run.why = 'setup_needed'
         say('!', 'setup')   # Atticus.app opens its setup window
-        return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
+        return plan()['text'] + ' Open Atticus Settings to finish setup.', 0, []
     if not wait_commit():
         run.why = 'cancelled'
         return 'The request was cancelled before the transcript was confirmed.', 0, []
@@ -5561,10 +5561,10 @@ def run_devin(task, shots=(), request=None):
         run.why = failure_why(detail) if c['ok'] else 'setup_needed'
         if not c['ok']:
             if c.get('need') == 'login': run.why = 'signed_out'
-            reply = c['text'] + ' Atticus setup is open to fix it.'
+            reply = c['text'] + ' Open Atticus Settings to finish setup.'
         else:
             say('!', 'setup')
-            reply = f'Devin stopped: {clean(detail) or f"exit code {p.returncode}"}. Atticus setup is open; choose Set Up, then try again.'
+            reply = f'Devin stopped: {clean(detail) or f"exit code {p.returncode}"}. Open Atticus Settings, choose Set Up, then try again.'
     success = bool(reply and not p.returncode and not timed_out)
     if not deleted:
         warning = 'Atticus could not delete Devin’s saved session. Remove it in Devin before continuing.'
@@ -5587,7 +5587,7 @@ def run_pi(task, shots=(), request=None):
     if not pi:
         run.why = 'setup_needed'
         say('!', 'setup')
-        return plan()['text'] + ' Atticus setup is open to fix it.', 0, []
+        return plan()['text'] + ' Open Atticus Settings to finish setup.', 0, []
     if not wait_commit():
         run.why = 'cancelled'
         return 'The request was cancelled before the transcript was confirmed.', 0, []
@@ -5614,6 +5614,7 @@ def run_pi(task, shots=(), request=None):
     signal.signal(signal.SIGTERM, lambda *_: (stop_claude(p), stop_workers()))
     p.relay_thread = threading.Thread(target=relay, args=(p,), daemon=True); p.relay_thread.start()
     reply, cost, failed, timed_out = '', 0, False, [False]
+    model_error, aborted = '', False
     def expire():
         timed_out[0] = True
         stop_claude(p)
@@ -5628,6 +5629,9 @@ def run_pi(task, shots=(), request=None):
             else:
                 message = event.get('message')
                 if event.get('type') != 'message_end' or not isinstance(message, dict) or message.get('role') != 'assistant': continue
+                aborted = message.get('stopReason') == 'aborted'
+                model_error = (message.get('errorMessage') or 'Request failed') if message.get('stopReason') == 'error' else ''
+                if not isinstance(model_error, str): model_error = 'Request failed'
                 content = message.get('content', [])
                 if isinstance(content, str): reply = without_handoff_line(content)
                 elif isinstance(content, list): reply = without_handoff_line(''.join(block.get('text', '') for block in content if isinstance(block, dict) and block.get('type') == 'text' and isinstance(block.get('text'), str)))
@@ -5643,25 +5647,33 @@ def run_pi(task, shots=(), request=None):
     steps = [row.get('step', '') for row in rows if row.get('step')]
     cmds = [row['input']['command'] for row in rows if row.get('tool') == 'exec' and row.get('input', {}).get('command')]
     run.ran = cmds
-    run.cmds = [] if failed or p.returncode or timed_out[0] or not reply else cmds
-    run.ok = bool(reply and not failed and not p.returncode and not timed_out[0])
+    errors.seek(0); detail = model_error or errors.read(2000).strip()
+    run.cmds = [] if failed or p.returncode or timed_out[0] or model_error or aborted or not reply else cmds
+    run.ok = bool(reply and not failed and not p.returncode and not timed_out[0] and not model_error and not aborted)
     if timed_out[0]:
         run.why = 'timed_out'
         reply = 'Pi timed out before finishing. Please try again.'
-    elif p.returncode:
-        errors.seek(0); detail = errors.read(500).strip()
+    elif aborted:
+        run.why = 'cancelled'
+        reply = 'The Pi request was cancelled.'
+    elif p.returncode or model_error or (not reply and detail):
         run.error = clean(detail)
         run.why = failure_why(detail)
         if run.why == 'stopped' and re.search(r'auth|credential|model|provider|login', detail, re.I): run.why = 'provider_needed'
-        if run.why in ('signed_out', 'provider_needed'):
-            say('!', 'setup')
-            reply = 'Pi needs a provider and model. Atticus setup is open to fix it.'
+        reason = clean(detail) or f'exit code {p.returncode}'
+        if run.why == 'rate_limited':
+            reply = f'Pi stopped: {reason}. Pi is temporarily rate-limited. Please try again in a moment.'
+        elif run.why == 'offline':
+            reply = f'Pi stopped: {reason}. Pi could not connect. Check your internet connection and try again.'
+        elif run.why == 'unavailable':
+            reply = f'Pi stopped: {reason}. Pi is temporarily unavailable. Please try again.'
         else:
             say('!', 'setup')
-            reply = f'Pi stopped: {clean(detail) or f"exit code {p.returncode}"}. Atticus setup is open; choose Set Up, then try again.'
+            reply = f'Pi stopped: {reason}. Open Atticus Settings, choose Set Up, then try again.'
     elif not reply and failed:
         run.why = 'tool_failed'
         reply = 'The last Pi tool failed, so I could not verify that the request was completed. Please try again.'
+    if not reply and not run.why: run.why = 'no_reply'
     if p.stdout:
         p.stdout.close()
     errors.close()

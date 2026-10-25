@@ -120,12 +120,44 @@
     box-shadow: 0 0 0 .5px rgba(0,0,0,.3), 0 0 0 4px rgba(40,200,64,.16), 0 0 24px rgba(40,200,64,.4); transition-duration: .35s; }
   #hint { margin-top: 22px; height: 18px; font-size: 13px; color: var(--fg3); transition: color .3s; }
   #hint.yes { color: var(--green); }
-  /* done: the check pops and draws each time the page comes on */
-  #done-check { width: 64px; height: 64px; margin-bottom: 18px; filter: drop-shadow(0 6px 18px rgba(40,200,64,.35)); }
+  /* done: setup's status, then things to say blooming out of the orb, then off you go */
+  #done { padding: 22px 32px 18px; }
+  #done-status { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 11px 0 5px; border-radius: 12px; font: 500 12px system-ui; color: var(--fg2);
+    background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); }
+  #done-status.warn { padding-left: 10px; color: #c93400; } #done-status.warn #done-check { display: none; }
+  #done-status.warn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #ff9f0a; }
+  @media (prefers-color-scheme: dark) { #done-status.warn { color: #ff9f0a; } }
+  #done-check { width: 16px; height: 16px; }
   #done-check circle { fill: var(--green); transform-origin: center; transform: scale(.3); opacity: 0; }
-  #done-check path { fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 14; stroke-dashoffset: 14; }
+  #done-check path { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 14; stroke-dashoffset: 14; }
   #done.on #done-check circle { animation: pop .55s .1s var(--spring) forwards; }
   #done.on #done-check path { animation: draw .4s .4s var(--ease) forwards; }
+  #ideas { position: relative; width: 100%; max-width: 576px; height: 294px; margin-top: 16px; flex: none; }
+  #core { position: absolute; left: 50%; top: 147px; width: 108px; height: 108px; margin: -54px 0 0 -54px; }
+  #core::before { content: ""; position: absolute; inset: -70px; border-radius: 50%; background: radial-gradient(closest-side, var(--glow), transparent); animation: drift 7s ease-in-out infinite; }
+  #core::after { content: ""; position: absolute; inset: -22px; border-radius: 50%; box-shadow: inset 0 0 0 .5px var(--line); }
+  #orb-done { position: relative; width: 108px; height: 108px; }
+  #ideas ul { margin: 0; padding: 0; list-style: none; }
+  .idea { position: absolute; left: 50%; top: 147px; opacity: 0; transform: translate(-50%, -50%) scale(.4);
+    transition: left .9s var(--out), top .9s var(--out), transform .9s var(--out), opacity .5s var(--ease); transition-delay: calc(.15s + var(--i) * .045s); }
+  #done.on .idea { left: var(--x); top: var(--y); opacity: 1; transform: translate(-50%, -50%); }
+  .idea > span { display: flex; align-items: center; gap: 7px; height: 30px; box-sizing: border-box; padding: 0 12px 0 5px; border-radius: 15px; white-space: nowrap;
+    font: 12.5px system-ui; color: var(--fg); background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 1px 2px rgba(0,0,0,.04), 0 6px 18px rgba(0,0,0,.06);
+    animation: bob 7s ease-in-out infinite; animation-delay: calc(var(--i) * -.8s); transition: box-shadow .4s var(--ease), translate .4s var(--out); }
+  .idea.left > span { border-bottom-right-radius: 5px; } .idea.right > span { border-bottom-left-radius: 5px; }   /* the corner nearest the orb, like a message sent to it */
+  .idea b { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--c); transition: transform .4s var(--spring); }
+  .idea svg { width: 12px; height: 12px; fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .idea kbd { margin: 0 1px; padding: 1px 5px; border-radius: 4px; font: 500 11px system-ui; color: var(--fg);
+    background: linear-gradient(var(--key-top), var(--key-bot)); box-shadow: 0 0 0 .5px var(--key-edge), 0 1px 0 var(--key-edge); }
+  .idea.hi > span, .idea > span:hover { translate: 0 -3px; background: var(--field); box-shadow: inset 0 0 0 .5px var(--line), 0 2px 4px rgba(0,0,0,.05), 0 12px 28px rgba(0,0,0,.12); }
+  @media (prefers-color-scheme: dark) { .idea.hi > span, .idea > span:hover { background: rgba(255,255,255,.13); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.14), 0 12px 28px rgba(0,0,0,.35); } }
+  .idea.hi b, .idea > span:hover b { transform: scale(1.12); }
+  @keyframes bob { 50% { transform: translateY(-3px); } }
+  #done h1 { margin: 14px 0 6px; font-size: 32px; } #done h1 span { color: var(--fg3); }
+  #done p.sub { max-width: 520px; } #done .btn { margin-top: 18px; }
+  #done .done-note { margin-top: 10px; }
+  .page.on .r:nth-child(6) { transition-delay: .35s; }
+  @media (prefers-reduced-motion: reduce) { .idea { transition-delay: 0s; } #core::before { animation: none; } }
   /* feature pages: a short looping preview, one thing to try, then Next or Skip */
   .kicker { font: 600 11px system-ui; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
   .stage { position: relative; width: min(420px, 100%); flex: none; height: 178px; margin-top: 22px; border-radius: 16px; overflow: hidden; text-align: left;
@@ -276,23 +308,6 @@
   #wb-card .hd { display: flex; justify-content: space-between; font-size: 10.5px; color: #8e8e93; }
   #wb-card p { margin: 0; font-size: 11px; line-height: 1.35; max-height: 0; opacity: 0; overflow: hidden; transition: max-height .5s var(--out), opacity .4s var(--ease), margin .5s var(--out); }
   #wb-card p.on { max-height: 45px; opacity: 1; margin-top: 5px; }
-  /* pointer preview: the user circles a spot, the box keeps it as a chip, the question goes with it */
-  #pa-win { position: absolute; left: 22px; top: 16px; bottom: 16px; width: 230px; border-radius: 10px; background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); overflow: hidden; }
-  #pa-win .tb { height: 22px; display: flex; gap: 5px; align-items: center; padding-left: 9px; border-bottom: .5px solid var(--line); }
-  #pa-win .tb i { width: 7px; height: 7px; border-radius: 50%; background: rgba(127,127,127,.4); }
-  #pa-win pre { margin: 0; padding: 10px 12px; font: 11px/1.7 ui-monospace, Menlo, monospace; color: var(--fg2); }
-  #pa-mark { position: absolute; left: 0; top: 0; fill: none; stroke: #ff375f; stroke-width: 2.5; stroke-linecap: round; }
-  #pa-mark ellipse { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset .8s var(--ease); } #pa-mark.on ellipse { stroke-dashoffset: 0; }
-  #pa-box { right: 22px; top: 22px; width: 150px; padding: 9px 11px; box-sizing: border-box; }
-  #pa-row { display: flex; align-items: center; min-height: 22px; padding-bottom: 7px; margin-bottom: 7px; border-bottom: .5px solid rgba(255,255,255,.12); font-size: 10.5px; color: #a1a1a6; }
-  #pa-chip { display: flex; align-items: center; gap: 6px; color: #f5f5f7; } #pa-chip i { font-style: normal; color: #8e8e93; }
-  #pa-chip b { position: relative; width: 34px; height: 22px; border-radius: 4px; background: rgba(255,255,255,.12); }
-  #pa-chip b::after { content: ""; position: absolute; inset: 6px 4px; border: 1.5px solid #ff375f; border-radius: 50%; }
-  #pa-q { flex: 1; min-width: 0; color: #8e8e93; } #pa-q.on { color: #f5f5f7; } #pa-a { margin-top: 5px; }
-  #pa-ask { display: flex; align-items: center; gap: 4px; }
-  #pa-ask i { flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.14); transition: background .3s var(--ease), transform .3s var(--spring); }
-  #pa-ask i.on { background: rgba(10,132,255,.55); } #pa-ask i.press { transform: scale(.88); background: #3d9bff; }
-  #pa-ask svg { width: 10px; height: 10px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   /* mac preview: two windows snap side by side, then music starts */
   .mw { position: absolute; top: 16px; height: 110px; border-radius: 8px; background: var(--card); box-shadow: inset 0 0 0 .5px var(--line), 0 4px 12px rgba(0,0,0,.12);
     overflow: hidden; transition: left .6s var(--out), width .6s var(--out), top .6s var(--out), height .6s var(--out); }
@@ -321,8 +336,6 @@
   .says button:focus-visible { outline: 2px solid rgba(10,132,255,.5); outline-offset: 1px; }
   [hidden] { display: none !important; }
   @keyframes blink { 50% { opacity: .35; } }
-  .tips { display: flex; gap: 18px; justify-content: center; margin-top: 20px; font-size: 12px; color: var(--fg3); }
-  .tips kbd { font: 500 11px system-ui; padding: 1px 6px; border-radius: 4px; background: var(--card); box-shadow: inset 0 0 0 .5px var(--line); color: var(--fg2); }
 
   #dots { position: absolute; bottom: 24px; left: 0; right: 0; display: flex; gap: 6px; justify-content: center; }
   #dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--fg3); opacity: .35; transition: width .45s var(--out), opacity .3s; }
@@ -333,10 +346,12 @@
   @keyframes pop { from { transform: scale(.3); opacity: 0; } to { transform: none; opacity: 1; } }
   @keyframes draw { to { stroke-dashoffset: 0; } }
   @media (max-width: 520px) {
-    .page { padding: 36px 24px; }
+    .page, #done { padding: 36px 24px; }
     #work .row, .mt-row, .subrow { flex-wrap: wrap; }
     #work .seg, .subrow .seg { margin-left: auto; }
-    .tips { flex-wrap: wrap; }
+    #ideas { height: auto; } #core { display: none; }
+    #ideas ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+    .idea, #done.on .idea { position: static; transform: none; }
   }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; animation-iteration-count: 1 !important; } }   /* once: checks still land on their last frame, loops stop */
 </style></head>
@@ -388,15 +403,6 @@
   </div>
   <div class="says r"><i>“Open Spotify and play lo-fi”</i><i>“Make Chrome full screen”</i><i>“Volume to 30%”</i><i>“Turn on dark mode”</i></div>
   <div class="done-note r" id="safe-note">Safe mode is on: deleting, sending or buying asks you first.</div>
-  <div class="bar2 r"><button class="btn quiet" data-go="learn">Skip</button><button class="btn" data-go="learn">Next</button></div>
-</section>
-
-<section class="page" id="learn">
-  <div class="kicker r">It learns you</div>
-  <h2 class="r">Tell it once. It remembers.</h2>
-  <p class="sub r">Say “remember…” or “from now on…” and Atticus keeps it for every ask after. Tasks that worked get faster next time. Change or delete anything in Settings → Memory.</p>
-  <div class="says r"><i>“Remember I use Chrome, not Safari”</i><i>“From now on, open apps on my left screen”</i><i>“Remember my monitor is screen 2”</i><i>“No, that’s wrong”</i></div>
-  <div class="done-note r">Two screens? Say which one: “on my laptop”, “on the big screen”. Atticus remembers the answer.</div>
   <div class="bar2 r"><button class="btn quiet" data-go="text">Skip</button><button class="btn" data-go="text">Next</button></div>
 </section>
 
@@ -453,21 +459,6 @@
   <div class="mt-row r"><div class="ic" style="background:#ff375f"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></div>
     <div class="txt"><b>Draw on screen to show you</b><span>Then ask “how do I…?” or “explain this and draw it”. Esc clears it.</span></div>
     <label class="sw"><input type="checkbox" data-k="draw" aria-label="Draw on screen to show you"></label></div>
-  <div class="bar2 r"><button class="btn quiet" data-go="pointer">Skip</button><button class="btn" data-go="pointer">Next</button></div>
-</section>
-
-<section class="page" id="pointer">
-  <div class="kicker r">Point at your screen</div>
-  <h2 class="r">Show it what you mean</h2>
-  <p class="sub r">Click the pointer next to the mic in the ask box. Circle, click or scribble on anything, then type or say your question.</p>
-  <div class="stage r" aria-hidden="true">
-    <div id="pa-win"><div class="tb"><i></i><i></i><i></i></div><pre>const user = {
-  name: "Sam"
-  role: "admin",
-}</pre><svg id="pa-mark" width="230" height="146"><ellipse pathLength="1" cx="61" cy="60" rx="50" ry="13" transform="rotate(-4 61 60)"/></svg></div>
-    <div class="fake gone2" id="pa-box"><div id="pa-row"><span id="pa-hint">Click, circle or scribble on anything, then ask</span><span id="pa-chip" hidden><b></b>Marked<i>×</i></span></div>
-      <div id="pa-ask"><span id="pa-q">Ask Atticus…</span><i id="pa-pt"><svg viewBox="0 0 24 24"><path d="M9 8l11 4.5-4.6 1.9L13.5 19z"/><path d="M5.1 11.9A5.5 5.5 0 0 1 12.9 4.1"/></svg></i><i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></i></div><div id="pa-a" hidden>Line 2 needs a comma after “Sam”.</div></div>
-  </div>
   <div class="bar2 r"><button class="btn quiet" data-go="work">Skip</button><button class="btn" data-go="work">Next</button></div>
 </section>
 
@@ -527,12 +518,31 @@
 </section>
 
 <section class="page" id="done">
-  <svg id="done-check" class="r" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg>
-  <h2 class="r" id="done-title">You’re all set</h2>
-  <p class="sub r" id="done-sub">Hold the keys anytime and just ask. Everything else lives in Settings, in the menu bar.</p>
-  <div class="tips r"><div><kbd>esc</kbd> stops an answer</div><div>Click an answer to copy</div><div>Click away to close</div><div>Hover the box to type</div></div>
-  <p class="done-note r" id="feedback-note">Atticus is new and growing, and your feedback helps a lot. <button class="alt" id="feedback-link">Report feedback ↗</button></p>
+  <div class="r"><span id="done-status"><svg id="done-check" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="11"/><path d="M6.5 11.3l3 3 6-6.3"/></svg><span id="done-title">You’re all set</span></span></div>
+  <div class="r" id="ideas">
+    <div id="core" aria-hidden="true"><canvas id="orb-done"></canvas></div>
+    <ul aria-label="Things to try">
+      <li class="idea left" style="--x:25%;--y:15px;--i:10;--c:#a2845e"><span><b><svg viewBox="0 0 24 24"><path d="M7 4h10v16l-5-3.5L7 20z"/></svg></b>“Remember I use Chrome”</span></li>
+      <li class="idea right" style="--x:70%;--y:15px;--i:11;--c:#ff453a"><span><b><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></b>“Tell me when the download finishes”</span></li>
+      <li class="idea left" style="--x:20%;--y:53px;--i:6;--c:#0a84ff"><span><b><svg viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="1.5"/><rect x="13" y="5" width="8" height="14" rx="1.5"/></svg></b>“Chrome left, Terminal right”</span></li>
+      <li class="idea right" style="--x:77%;--y:53px;--i:7;--c:#ff375f"><span><b><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg></b>“How do I export this as a PDF?”</span></li>
+      <li class="idea left" style="--x:22%;--y:91px;--i:0;--c:#30d158"><span><b><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></b>“Play my playlist”</span></li>
+      <li class="idea right" style="--x:79%;--y:91px;--i:1;--c:#636366"><span><b><svg viewBox="0 0 24 24"><path d="M19.5 14.5A8 8 0 0 1 9.5 4.5a8 8 0 1 0 10 10z"/></svg></b>“Turn on dark mode”</span></li>
+      <li class="idea left" style="--x:18%;--y:129px;--i:2;--c:#bf5af2"><span><b><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.5"/></svg></b>“What’s on my screen?”</span></li>
+      <li class="idea right" id="idea-dict" style="--x:75%;--y:129px;--i:3;--c:#ff9f0a"><span><b><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></b>Hold<span id="idea-key"><kbd>fn</kbd></span>to dictate</span></li>
+      <li class="idea left" style="--x:22%;--y:167px;--i:4;--c:#30d158"><span><b><svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg></b>“Pause the music”</span></li>
+      <li class="idea right" style="--x:79%;--y:167px;--i:5;--c:#ff375f"><span><b><svg viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/></svg></b>“Explain this and draw it”</span></li>
+      <li class="idea left" style="--x:21%;--y:205px;--i:8;--c:#8e8e93"><span><b><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></b>“Read your answers aloud”</span></li>
+      <li class="idea right" style="--x:77%;--y:205px;--i:9;--c:#30b0c7"><span><b><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></b>“Best headphones under $200?”</span></li>
+      <li class="idea left" style="--x:27%;--y:243px;--i:12;--c:#5e5ce6"><span><b><svg viewBox="0 0 24 24"><path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/></svg></b>“When I say work mode, open Notes”</span></li>
+      <li class="idea right" style="--x:75%;--y:243px;--i:13;--c:#d97757"><span><b><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg></b>“Compare the top 3 laptops”</span></li>
+      <li class="idea right" style="--x:50%;--y:281px;--i:14;--c:#30b0c7"><span><b><svg viewBox="0 0 24 24"><path d="M4 7h15l-3-3M20 17H5l3 3"/></svg></b>“Convert this JPEG to PNG”</span></li>
+    </ul>
+  </div>
+  <h1 class="r">Go use Atticus. <span>Be great.</span></h1>
+  <p class="sub r" id="done-sub">Hold the shortcut anywhere and try one.</p>
   <button class="btn r" id="finish">Start Using Atticus</button>
+  <p class="done-note r" id="feedback-note">Atticus is new and growing, and your feedback helps a lot. <button class="alt" id="feedback-link">Report feedback ↗</button></p>
 </section>
 
 <div id="prov" hidden role="dialog" aria-modal="true" aria-labelledby="prov-h">
@@ -557,13 +567,13 @@
   </div>
 </div>
 
-<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<div id="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 
 <script type="text/plain" id="orbsrc">/*ORBS*/</script>
 <script type="module">
   const $ = id => document.getElementById(id);
   const post = m => window.webkit?.messageHandlers.ob.postMessage(m);
-  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'learn', 'text', 'dictate', 'point', 'pointer', 'work', 'meeting', 'improve', 'tip', 'done'];
+  const pages = ['welcome', 'perms', 'agents', 'try', 'mac', 'text', 'dictate', 'point', 'work', 'meeting', 'improve', 'tip', 'done'];
   let cur = '', orbWake = null;
   const skip = id => ['devin', 'pi'].includes(provider) && ['agents', 'work'].includes(id);   // their CLIs run no Atticus agents
   const go = id => {
@@ -602,6 +612,7 @@
     const key = prefs.dictateHotkeyLabel;
     $('dc-sub').textContent = key ? `Hold ${key} to talk. Double-tap to lock.` : 'Give dictation a shortcut. Hold it to talk, double-tap to lock.';
     $('dc-key').textContent = key || 'fn'; $('dc-globe').hidden = !prefs.globeTaken;
+    $('idea-dict').hidden = !key; $('idea-key').replaceChildren(...capsOf(key || '').map(c => Object.assign(document.createElement('kbd'), { textContent: c })));
     $('dc-mode').classList.toggle('dim', !prefs.dictateHotkeyLabel);
     document.querySelector('[data-k=dictateMode] [data-v=cleanup]').disabled = other;
     $('dc-mode-hint').textContent = other ? 'Clean up needs Claude.' : 'Clean up tidies it as shown. Verbatim types every word.';
@@ -732,8 +743,8 @@
   let planOK = false, last = null, toggleMode = false, talkLabel = '⌃⌥Space';
   const paintDone=s=>{
     const core=[['claude','AI provider'],['mic','Microphone'],['speech','Speech Recognition'],['ax','Accessibility']],missing=core.filter(([id])=>!s[id]).map(([,name])=>name),voice=['claude','mic','speech'].every(id=>s[id]);
-    $('done-title').textContent=!missing.length?'You’re all set':voice?'Voice is ready':'Setup isn’t finished yet';
-    $('done-sub').textContent=!missing.length?(toggleMode?'Press':'Hold')+' the shortcut anytime and just ask. Everything else lives in Settings, in the menu bar.':(voice?'Still needed for full Mac control: ':'Still needed: ')+missing.join(', ')+'. You can allow '+(missing.length===1?'it':'them')+' later in Setup & Permissions.';
+    $('done-title').textContent=!missing.length?'You’re all set':voice?'Voice is ready':'Setup isn’t finished yet';$('done-status').className=missing.length?'warn':'';
+    $('done-sub').textContent=!missing.length?(toggleMode?'Press':'Hold')+' the shortcut anywhere and try one.':(voice?'Still needed for full Mac control: ':'Still needed: ')+missing.join(', ')+'. You can allow '+(missing.length===1?'it':'them')+' later in Setup & Permissions.';
     $('finish').textContent=voice?'Start Using Atticus':'Finish Setup Later';
   };
   window.ob = {
@@ -913,15 +924,9 @@
       await wait(700); box.classList.remove('gone2'); await wait(1100); lead(); await wait(400); ring.classList.add('on'); await wait(2600);
       st.classList.add('wb'); for (let k = 1; k <= 3; k++) { await wait(k === 1 ? 500 : 1600); wb(k); } await wait(3200);
     },
-    async pointer() {
-      const box = $('pa-box'), mark = $('pa-mark'), q = $('pa-q'), pt = $('pa-pt');
-      box.classList.add('gone2'); mark.classList.remove('on'); pt.classList.remove('on'); $('pa-hint').hidden = true; $('pa-chip').hidden = true; $('pa-a').hidden = true;
-      q.textContent = 'Ask Atticus…'; q.classList.remove('on');
-      await wait(600); box.classList.remove('gone2'); await wait(900);
-      pt.classList.add('press'); await wait(220); pt.classList.remove('press'); pt.classList.add('on'); $('pa-hint').hidden = false; await wait(1100);
-      mark.classList.add('on'); await wait(1000);
-      $('pa-hint').hidden = true; $('pa-chip').hidden = false; await wait(900);
-      q.textContent = 'what’s wrong?'; q.classList.add('on'); await wait(900); $('pa-a').hidden = false; await wait(2800);
+    async done() {   // one idea at a time lights up around the orb
+      const all = [...document.querySelectorAll('.idea:not([hidden])')];
+      for (let k = 0; k < all.length && cur === 'done'; k++) { await wait(k ? 2200 : 1600); all.forEach((e, j) => e.classList.toggle('hi', j === k)); }
     },
     async meeting() {
       const q = $('mt-q'), ans = $('mt-ans'), think = $('mt-think'), dana = $('mt-dana');
@@ -931,10 +936,9 @@
     },
   };
   const finals = { dictate() { dcShow(dcAt); },
-                   pointer() { $('pa-box').classList.remove('gone2'); $('pa-mark').classList.add('on'); $('pa-pt').classList.add('on'); $('pa-hint').hidden = true; $('pa-chip').hidden = false;
-                     $('pa-q').textContent = 'what’s wrong?'; $('pa-q').classList.add('on'); $('pa-a').hidden = false; },
                    work() { $('wk-line').textContent = WK_STARTED; $('wk-box').classList.remove('gone2'); $('wk-chip').classList.remove('gone2'); },
                    mac() { $('macstage').classList.add('snapped'); $('mac-play').classList.remove('gone2'); $('mac-box').classList.remove('gone2'); }, point() { $('ptstage').classList.add('wb'); wb(3); }, text() { $('tx-box').classList.remove('gone2'); $('tx-line').classList.add('sel'); },
+                   done() { document.querySelectorAll('.idea').forEach(e => e.classList.remove('hi')); },
                    meeting() { $('mt-q').classList.remove('gone2'); $('mt-think').hidden = true; $('mt-ans').classList.add('on'); } };
   for (const id of Object.keys(loops)) (async () => {
     for (;;) {
@@ -958,14 +962,14 @@
   // The same orb as the overlay, breathing.
   try {
     const E = await import(URL.createObjectURL(new Blob([$('orbsrc').textContent], { type: 'text/javascript' })));
-    const cv = $('orb'), ctx = cv.getContext('2d'), S = 64, dpr = 4, preset = E.r('breathing', S);
-    cv.width = cv.height = S * dpr;
+    const cv = $('orb'), ctx = cv.getContext('2d'), end = $('orb-done').getContext('2d'), S = 64, dpr = 4, preset = E.r('breathing', S);
+    cv.width = cv.height = $('orb-done').width = $('orb-done').height = S * dpr;
     let t = 0, prev = performance.now();
     (function frame(now) {
-      const idle = reduced.matches || cur !== 'welcome';   // still under Reduce Motion; the orb only shows on the welcome page
+      const idle = reduced.matches || !['welcome', 'done'].includes(cur), c = cur === 'done' ? end : ctx;   // still under Reduce Motion; the orb shows on the first and last pages
       if (!idle) t += (now - prev) / 1000 * preset.speed; prev = now;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, S, S);
-      E.p(ctx, E.M[preset.mode](S, t, preset.opts), true, null);
+      c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, S, S);
+      E.p(c, E.M[preset.mode](S, t, preset.opts), true, null);
       if (idle) orbWake = () => requestAnimationFrame(frame); else requestAnimationFrame(frame);
     })(prev);
   } catch (e) {}

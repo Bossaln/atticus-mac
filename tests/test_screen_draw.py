@@ -354,15 +354,11 @@ class DrawingTests(unittest.TestCase):
         self.assertIn('Click, circle or scribble on anything, then ask',ui)
         bar = ui.split('<div id="pointbar"',1)[1].split('</div>',1)[0]
         self.assertNotIn('Done',bar); self.assertNotIn('Cancel',bar); self.assertNotIn('pointDone',ui)   # mark, then ask: nothing to confirm
-        setup = (ROOT/'ui'/'onboarding.html').read_text()
         coach = ui.split('const coachShow',1)[1].split('};',1)[0]
-        for words in ('next to the mic','circle, click or scribble on anything','type or say your question'):
-            self.assertIn(words,setup.lower())
         for words in ('circle, click or scribble on anything','type or say your question'):
-            self.assertIn(words,coach)   # the first-open tip teaches the same steps as setup
-        self.assertIn('id="pa-pt"',setup)   # setup's picture shows the pointer button being clicked
+            self.assertIn(words,coach)   # the first-open tip teaches it, so setup has no page for it
         self.assertNotIn('Draw on screen',ui)   # that name belongs to Atticus's own drawings
-        for page in ('README.md','ui/settings.html','ui/onboarding.html'):
+        for page in ('README.md','ui/settings.html'):
             self.assertIn('Point at your screen',(ROOT/page).read_text(),page)
 
 

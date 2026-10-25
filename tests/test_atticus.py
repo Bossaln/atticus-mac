@@ -949,8 +949,45 @@ print('Ready.')
              python_fixture_cli():
             reply, _, _ = atticus.run_pi('test')
         say.assert_called_with('!', 'setup')
-        self.assertEqual(reply, 'Pi needs a provider and model. Atticus setup is open to fix it.')
+        self.assertEqual(reply, 'Pi stopped: No provider credentials; run /login. Open Atticus Settings, choose Set Up, then try again.')
         self.assertEqual(atticus.run.why, 'provider_needed')
+
+    def test_pi_json_errors_are_failures_even_when_the_cli_exits_zero(self):
+        from types import SimpleNamespace
+        cases = [
+            ('error', '401 credentials expired', '', 'signed_out', True, 'choose Set Up'),
+            ('error', '429 usage limit reached', '', 'rate_limited', False, 'try again in a moment'),
+            ('error', 'Unknown provider model', '', 'provider_needed', True, 'choose Set Up'),
+            ('error', 'Service rejected request', '', 'stopped', True, 'choose Set Up'),
+            ('error', 'Service unavailable', '', 'unavailable', False, 'temporarily unavailable'),
+            ('aborted', 'Request aborted', '', 'cancelled', False, 'cancelled'),
+            ('stop', '', 'Network connection failed', 'offline', False, 'Check your internet connection'),
+            ('stop', '', '', 'no_reply', False, 'empty answer'),
+        ]
+        for reason, detail, stderr, why, opens_setup, guidance in cases:
+            with self.subTest(reason=reason, detail=detail, stderr=stderr):
+                message = {'role': 'assistant', 'stopReason': reason, 'errorMessage': detail,
+                           'content': [{'type': 'text', 'text': 'Partial answer'}] if reason == 'error' else []}
+                def spawn(args, **kwargs):
+                    kwargs['stderr'].write(stderr)
+                    return SimpleNamespace(stdout=io.StringIO(json.dumps({'type': 'message_end', 'message': message}) + '\n'),
+                                           returncode=0, wait=lambda: 0, poll=lambda: 0)
+                atticus.run.why = ''
+                with patch.object(atticus.shutil, 'which', return_value='/fixture/pi'), \
+                     patch.object(atticus, 'wait_commit', return_value=True), patch.object(atticus, 'say') as say, \
+                     patch.object(atticus, 'relay'), patch.object(atticus.signal, 'signal'), \
+                     patch.object(atticus.atexit, 'register'), patch.object(atticus.subprocess, 'Popen', side_effect=spawn), \
+                     patch.object(atticus, 'read_rows', return_value=[{'tool': 'exec', 'input': {'command': 'echo fixture'}}]):
+                    reply, _, _ = atticus.run_pi('fixture request')
+                self.assertFalse(atticus.run.ok)
+                self.assertEqual(atticus.run.cmds, [])
+                self.assertEqual(atticus.run.why, why)
+                self.assertIn(guidance, reply)
+                if opens_setup: say.assert_called_once_with('!', 'setup')
+                else: say.assert_not_called()
+                if reason == 'error' or stderr:
+                    self.assertIn(detail or stderr, reply)
+                    self.assertNotIn('empty answer', reply)
 
     def test_pi_ignores_malformed_events_and_uses_json_mode_images_and_atticus_gate(self):
         with tempfile.TemporaryDirectory() as root:
@@ -1324,7 +1361,7 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
                 self.assertEqual(args[args.index('--model')+1],expected)
 
     def test_stream_requires_a_real_terminal_answer(self):
-        for stream, expected in [([], 'Claude’s helper exited without returning a result. Atticus setup is open; choose Set Up, then try again.'),
+        for stream, expected in [([], 'Claude’s helper exited without returning a result. Open Atticus Settings, choose Set Up, then try again.'),
                                  ([{'type': 'result', 'result': ''}], 'Claude returned an empty answer. Please try again.'),
                                  ([{'type': 'result', 'result': 'Found it.', 'total_cost_usd': .001}], 'Found it.')]:
             p = unittest.mock.Mock()
@@ -1497,7 +1534,7 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
                     reply, _, _ = atticus.run('test', p)
                 if is_error and text == error:
                     self.assertEqual(say.call_args_list.count(unittest.mock.call('!', 'setup')), 1)
-                    self.assertEqual(reply, 'Your Claude sign-in expired. Atticus setup is open to sign in again.')
+                    self.assertEqual(reply, 'Your Claude sign-in expired. Open Atticus Settings to sign in again.')
                     self.assertFalse(atticus.run.ok)
                 elif is_error:
                     self.assertIn('temporarily unavailable', reply)
