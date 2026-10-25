@@ -836,8 +836,7 @@ def ask_user(j, secs):
             except FileNotFoundError: pass   # the cancelled ask's owner already removed its folder
         return answer
     deadline = time.monotonic() + secs
-    try: fd = os.open(os.path.join(d, 'permission.lock'), os.O_RDWR | os.O_CREAT, 0o600)
-    except FileNotFoundError: return None   # the request owner already removed the cancelled ask
+    fd = os.open(os.path.join(d, 'permission.lock'), os.O_RDWR | os.O_CREAT, 0o600)
     with os.fdopen(fd, 'r+') as lock:
         # Parallel tool hooks must never overwrite each other's card or consume each other's answer.
         while True:
@@ -3727,8 +3726,6 @@ def claude_plan():
         s = json.loads(subprocess.run(['claude', 'auth', 'status'], capture_output=True, text=True, timeout=20).stdout)
     except FileNotFoundError:
         return {'ok': False, 'need': 'install', 'text': 'Claude Code is not installed.'}
-    except OSError:
-        return {'ok': False, 'need': 'install', 'text': 'Could not start Claude Code. Reinstall it and try again.'}
     except (ValueError, subprocess.TimeoutExpired):
         return {'ok': False, 'need': 'login', 'text': 'Could not read your Claude sign-in.'}
     if not s.get('loggedIn'):

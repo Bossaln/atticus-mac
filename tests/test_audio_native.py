@@ -10,18 +10,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS Swift audio regression")
 class AudioNativeTests(unittest.TestCase):
-    def test_read_aloud_never_overwrites_system_voice_or_trusts_siri_probe(self):
+    def test_siri_voice_retries_until_the_voice_test_succeeds(self):
         source = (ROOT / "Atticus.swift").read_text()
-        self.assertNotIn("CFPreferencesSetAppValue", source)
-        self.assertNotIn("siriVoice", source)
+        voice = source[source.index("var siriVoiceTrying"):source.index("// The talk shortcut")]
+        before_test = voice[:voice.index("DispatchQueue.global().async")]
+        self.assertNotIn('set(true, forKey: "siriVoice")', before_test)
+        self.assertIn('else { UserDefaults.standard.set(true, forKey: "siriVoice") }', voice)
         deliver = source[source.index("    func deliver("):source.index("    func linger(")]
+        self.assertIn("siriVoice()", deliver)
         self.assertIn("readAloudArguments(spoken(a))", deliver)
+        self.assertLess(deliver.index("readAloudArguments(spoken(a))"), deliver.index("siriVoice()"))
         drawing = source[source.index("final class ScreenDrawing"):source.index("// The box can take typing")]
         self.assertIn("p.arguments = sayArguments(words)", drawing)
 
     def test_best_installed_english_voice_prefers_quality_then_region(self):
         source = (ROOT / "Atticus.swift").read_text()
-        policy = source[source.index("struct ReadAloudVoice"):source.index("func sayVoiceNames")]
+        policy = source[source.index("struct ReadAloudVoice"):source.index("let installedReadAloudVoice")]
         run_swift(self, """import Foundation
 import AVFoundation
 """ + policy + """
@@ -48,11 +52,11 @@ print("read-aloud voice policy ok")
 
     def test_say_voice_is_validated_and_compact_tip_is_once(self):
         source = (ROOT / "Atticus.swift").read_text()
-        voice = source[source.index("let installedSayVoices"):source.index("// The talk shortcut")]
+        voice = source[source.index("let usableReadAloudVoice"):source.index("// The talk shortcut")]
         self.assertIn('p.arguments = ["-v", "?"]', voice)
-        self.assertNotIn('"-v", "?"', voice[voice.index("func usableReadAloudVoice"):])   # listed once, not per read
-        self.assertIn("preferredReadAloudVoice(selections", voice)
-        self.assertIn("if voice == nil { compactTip() }", voice)
+        self.assertIn("sayVoiceName($0.name, names: names)", voice)
+        self.assertIn("if usableReadAloudVoice == nil { compactTip() }", voice)
+        self.assertIn('(usableReadAloudVoice.map { ["-v", $0] } ?? []) + ["--", words]', voice)
         tip = source[source.index("    func voiceQualityTip()"):source.index("    @discardableResult func shush()")]
         self.assertIn('bool(forKey: "voiceQualityTip")', tip)
         self.assertIn('set(true, forKey: "voiceQualityTip")', tip)
@@ -60,7 +64,7 @@ print("read-aloud voice policy ok")
 
     def test_say_voice_list_parser_handles_spaces_and_rejects_unknown_names(self):
         source = (ROOT / "Atticus.swift").read_text()
-        parser = source[source.index("func sayVoiceNames"):source.index("func preferredReadAloudVoice")]
+        parser = source[source.index("func sayVoiceNames"):source.index("let usableReadAloudVoice")]
         run_swift(self, "import Foundation\n" + parser + """
 let names = sayVoiceNames("Bad News            en_US    # Hello\\nDaniel (English (UK)) en_GB    # Hello\\n")
 precondition(names == ["Bad News", "Daniel (English (UK))"])
@@ -70,42 +74,6 @@ precondition(sayVoiceName("Ava", names: ["Ava (Enhanced)"]) == "Ava (Enhanced)")
 precondition(sayVoiceName("Daniel", names: names) == "Daniel (English (UK))")
 precondition(sayVoiceName("Voice 2", names: names) == nil)
 print("say voice list parser ok")
-""")
-
-    def test_saved_voice_and_unavailable_voice_fallback(self):
-        source = (ROOT / "Atticus.swift").read_text()
-        policy = source[source.index("struct ReadAloudVoice"):source.index("let installedSayVoices")]
-        arguments = source[source.index("func readAloudArguments"):source.index("// The talk shortcut")]
-        run_swift(self, "import Foundation\nimport AVFoundation\nfunc usableReadAloudVoice() -> String? { nil }\n" + policy + arguments + """
-let voices = [
-    ReadAloudVoice(name: "Unavailable", language: "en-US", quality: .premium, identifier: "missing-say"),
-    ReadAloudVoice(name: "Tessa", language: "en-ZA", quality: .enhanced, identifier: "tessa"),
-    ReadAloudVoice(name: "US Premium", language: "en-US", quality: .premium, identifier: "premium")]
-let names: Set<String> = ["Tessa", "Tessa (Enhanced)", "US Premium", "Samantha"]
-func pick(_ saved: [Any], selected: String = "", os: Int = 27, installed: [ReadAloudVoice] = voices) -> String? {
-    preferredReadAloudVoice(saved, voices: installed, names: names, selected: selected, region: "US", majorVersion: os)
-}
-func say(_ voice: String?) -> ([String], Bool) {
-    var tipped = false
-    return (readAloudArguments("hi", voice: voice) { tipped = true }, tipped)
-}
-let unknown: [Any] = ["en", ["voiceId": "unlisted-system-voice"]]
-for os in [26, 27] {
-    precondition(pick(["en", ["voiceId": "tessa"]], os: os) == "Tessa (Enhanced)", "saved voice ignored on \\(os)")
-    precondition(pick(unknown, selected: "Samantha", os: os) == "Samantha")
-}
-precondition(say(pick(unknown, os: 26)) == (["--", "hi"], false), "macOS 26 lost the unlisted system voice or showed the tip")
-precondition(say(pick(unknown, os: 26, installed: [])) == (["--", "hi"], false))
-precondition(say(pick(unknown, os: 27)) == (["-v", "US Premium", "--", "hi"], false), "macOS 27 skipped the installed natural voice")
-precondition(say(pick(unknown, os: 27, installed: [])) == (["--", "hi"], true))
-precondition(pick(["unexpected schema"], os: 26) == "US Premium")
-precondition(pick([], selected: "deleted voice", os: 26) == "US Premium")
-precondition(pick(["unexpected schema"]) == "US Premium")
-precondition(pick([], selected: "Samantha") == "Samantha")
-precondition(pick([], selected: "deleted voice") == "US Premium")
-precondition(pick([]) == "US Premium", "unusable top-ranked voice blocked fallback")
-precondition(preferredReadAloudVoice([], voices: voices, names: [], selected: "", region: "US", majorVersion: 27) == nil)
-print("saved voice and fallback ok")
 """)
 
     def test_device_choice_falls_back_without_opening_bluetooth(self):

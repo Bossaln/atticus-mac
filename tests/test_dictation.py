@@ -382,7 +382,7 @@ print("single delivery fallback ok")
         helpers = source[source.index('let atticusFnKey'):source.index('func configuredHotkey')]
         recorder = source[source.index('    // "Change shortcut"'):source.index('    func done(', source.index('    // "Change shortcut"'))]
         registration_start = source.index('var specialGlobalHotkeys')
-        registration = source[registration_start:source.index('\nregisterHotkey()', registration_start)]
+        registration = source[registration_start:source.index('if Prefs.bool("speak")', registration_start)]
         self.assertIn('done((-2, shortcutModifiers(held)', recorder)
         self.assertIn('.function', recorder)
         self.assertIn('addGlobalMonitorForEvents', registration)

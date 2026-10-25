@@ -39,17 +39,6 @@ class BrainTests(unittest.TestCase):
             self.assertEqual({env[f'ANTHROPIC_DEFAULT_{m}_MODEL'] for m in ('HAIKU', 'SONNET', 'OPUS')}, {'deepseek-chat'})
             self.assertEqual(atticus.plan(), {'ok': True, 'need': '', 'text': 'Using your custom server, api.deepseek.com.', 'client': 'server'})
 
-    def test_unlaunchable_claude_is_setup_instead_of_a_crash(self):
-        with patch.object(atticus, 'start_claude', return_value=None), \
-             patch.object(atticus.subprocess, 'run', side_effect=PermissionError(13, 'private path')), \
-             patch.object(atticus, 'say'), patch.object(atticus, 'report_error') as error:
-            reply, steps, commands = atticus.run('fixture')
-            self.assertIn('Could not start Claude Code', reply)
-            self.assertNotIn('private path', reply)
-            self.assertEqual((steps, commands, atticus.run.why), (0, [], 'setup_needed'))
-            atticus.report_worker_failure('claude', 'haiku', atticus.run.why)
-            error.assert_called_once_with('setup', worker='claude', model='haiku', why='setup_needed')
-
     def test_custom_server_models_come_from_the_server(self):
         from http.server import BaseHTTPRequestHandler, HTTPServer
         class Fake(BaseHTTPRequestHandler):   # DeepSeek-style: the Claude address ends in /anthropic, the list is at /models
