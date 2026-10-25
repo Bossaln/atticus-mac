@@ -23,14 +23,19 @@ let nsapp = NSApplication.shared
 let windows: [NSWindow] = [NSWindow(), NSPanel(), NSPanel()]
 precondition(Prefs.bool("hideWhenSharing"), "sharing must be hidden by default")
 windows.forEach(applySharing)
-precondition(windows.allSatisfy { $0.sharingType == .none })
+for major in [26, 27, 28] {
+    precondition(sharingType(hidden: true, majorVersion: major) == (major < 27 ? .none : .readOnly))
+    precondition(sharingType(hidden: false, majorVersion: major) == .readOnly)
+}
+let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+precondition(windows.allSatisfy { $0.sharingType == sharingType(hidden: true, majorVersion: major) })
 let k = "hideWhenSharing"
 for enabled in [false, true, false] {
     Prefs.set(k, enabled)
 """ + live + """
-    precondition(windows.allSatisfy { $0.sharingType == (enabled ? .none : .readOnly) }, "live change missed a window")
+    precondition(windows.allSatisfy { $0.sharingType == sharingType(hidden: enabled, majorVersion: major) }, "live change missed a window")
     let later = NSPanel(); applySharing(later)
-    precondition(later.sharingType == (enabled ? .none : .readOnly), "new window missed preference")
+    precondition(later.sharingType == sharingType(hidden: enabled, majorVersion: major), "new window missed preference")
 }
 """
         with tempfile.TemporaryDirectory() as root:

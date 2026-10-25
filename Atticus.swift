@@ -229,7 +229,12 @@ enum Prefs {
 }
 
 func applySharing(_ window: NSWindow) {
-    window.sharingType = Prefs.bool("hideWhenSharing") ? .none : .readOnly
+    window.sharingType = sharingType(hidden: Prefs.bool("hideWhenSharing"), majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+}
+
+func sharingType(hidden: Bool, majorVersion: Int) -> NSWindow.SharingType {
+    // Work around reported macOS 27 blank content with .none; preserve the saved preference.
+    hidden && majorVersion < 27 ? .none : .readOnly
 }
 
 func profileName(_ path: String) -> String {
@@ -458,32 +463,10 @@ func spoken(_ answer: String) -> String {
     return s.replacingOccurrences(of: #"(?m)^#{1,4}\s+"#, with: "", options: .regularExpression).replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
 }
 
-// Read-aloud uses the Mac's Spoken Content voice, and most people never pick one: switch it to Siri's once available.
-var siriVoiceTrying = false
-func siriVoice() {
-    guard !UserDefaults.standard.bool(forKey: "siriVoice"), !siriVoiceTrying else { return }
-    siriVoiceTrying = true
-    DispatchQueue.global().async {
-        defer { DispatchQueue.main.async { siriVoiceTrying = false } }
-        let key = "SpokenContentDefaultVoiceSelectionsByLanguage" as CFString, dom = "com.apple.Accessibility" as CFString
-        let old = CFPreferencesCopyAppValue(key, dom)
-        if (old as? [Any])?.contains(where: { (($0 as? [String: Any])?["voiceId"] as? String)?.hasPrefix("com.apple.siri.") == true }) == true {
-            UserDefaults.standard.set(true, forKey: "siriVoice"); return
-        }
-        let siri: [Any] = ["en", ["_type": "Speech.VoiceSelection", "_version": 0, "boundLanguage": "en", "voiceId": "com.apple.siri.natural.en-US-F"]]
-        CFPreferencesSetAppValue(key, siri as CFArray, dom); CFPreferencesAppSynchronize(dom)
-        let out = NSTemporaryDirectory() + "atticus-voice.aiff", p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["-o", out, "hi"]
-        try? p.run(); p.waitUntilExit()
-        let size = (try? FileManager.default.attributesOfItem(atPath: out)[.size] as? Int) ?? 0
-        try? FileManager.default.removeItem(atPath: out)
-        if p.terminationStatus != 0 || size < 1000 { CFPreferencesSetAppValue(key, old, dom); CFPreferencesAppSynchronize(dom) }
-        else { UserDefaults.standard.set(true, forKey: "siriVoice") }
-    }
-}
-
+// Read-aloud uses the Mac's saved voice explicitly: bare say can ignore Spoken Content.
 struct ReadAloudVoice {
     let name: String, language: String, quality: AVSpeechSynthesisVoiceQuality
+    var identifier: String = ""
 }
 func bestEnglishVoice(_ voices: [ReadAloudVoice], region: String?) -> ReadAloudVoice? {
     func rank(_ q: AVSpeechSynthesisVoiceQuality) -> Int { q == .premium ? 2 : q == .enhanced ? 1 : 0 }
@@ -495,9 +478,6 @@ func bestEnglishVoice(_ voices: [ReadAloudVoice], region: String?) -> ReadAloudV
         return local != other ? local : $0.name < $1.name
     }.first
 }
-let installedReadAloudVoice = bestEnglishVoice(AVSpeechSynthesisVoice.speechVoices().map {
-    ReadAloudVoice(name: $0.name, language: $0.language, quality: $0.quality)
-}, region: Locale.current.region?.identifier)
 func sayVoiceNames(_ output: String) -> Set<String> {
     Set(output.split(separator: "\n").compactMap { line in
         line.range(of: #"\s+[a-z]{2,3}_[A-Z0-9]{2,3}\s+#"#, options: .regularExpression).map { String(line[..<$0.lowerBound]) }
@@ -508,18 +488,45 @@ func sayVoiceName(_ name: String, names: Set<String>) -> String? {
     for quality in ["Premium", "Enhanced"] where names.contains("\(name) (\(quality))") { return "\(name) (\(quality))" }
     return names.sorted().first { $0.hasPrefix(name + " (") }
 }
-let usableReadAloudVoice: String? = {
+// "" means bare say: before macOS 27 it speaks a saved system voice that neither list shows (such as Siri).
+func preferredReadAloudVoice(_ selections: [Any], voices: [ReadAloudVoice], names: Set<String>, selected: String, region: String?, majorVersion: Int) -> String? {
+    func sayName(_ voice: ReadAloudVoice) -> String? {
+        let quality = voice.quality == .premium ? "Premium" : voice.quality == .enhanced ? "Enhanced" : ""
+        let qualified = "\(voice.name) (\(quality))"
+        return !quality.isEmpty && names.contains(qualified) ? qualified : sayVoiceName(voice.name, names: names)
+    }
+    if !selected.isEmpty, names.contains(selected) { return selected }
+    var saved = false
+    for entry in selections {
+        guard let id = (entry as? [String: Any])?["voiceId"] as? String else { continue }
+        saved = true
+        if let voice = voices.first(where: { $0.identifier == id }), let name = sayName(voice) { return name }
+    }
+    if saved && majorVersion < 27 { return "" }
+    let usable = voices.filter { sayName($0) != nil }
+    return bestEnglishVoice(usable, region: region).flatMap { sayName($0) }
+}
+// Listed once per launch, as before: a voice downloaded later is used after Atticus relaunches.
+let installedSayVoices: Set<String>? = {
     let p = Process(), out = Pipe()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = ["-v", "?"]; p.standardOutput = out
     do { try p.run() } catch { return nil }
     let names = sayVoiceNames(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
     p.waitUntilExit()
-    return installedReadAloudVoice.flatMap { p.terminationStatus == 0 ? sayVoiceName($0.name, names: names) : nil }
+    return p.terminationStatus == 0 ? names : nil
 }()
-func readAloudArguments(_ words: String, compactTip: () -> Void) -> [String] {
-    guard !UserDefaults.standard.bool(forKey: "siriVoice"), !siriVoiceTrying else { return ["--", words] }
-    if usableReadAloudVoice == nil { compactTip() }
-    return (usableReadAloudVoice.map { ["-v", $0] } ?? []) + ["--", words]
+func usableReadAloudVoice() -> String? {
+    guard let names = installedSayVoices else { return nil }
+    let voices = AVSpeechSynthesisVoice.speechVoices().map {
+        ReadAloudVoice(name: $0.name, language: $0.language, quality: $0.quality, identifier: $0.identifier)
+    }
+    // shortcut: Apple's selection schema is undocumented; use an installed fallback until a public selection API exists.
+    let selections = CFPreferencesCopyAppValue("SpokenContentDefaultVoiceSelectionsByLanguage" as CFString, "com.apple.Accessibility" as CFString) as? [Any] ?? []
+    return preferredReadAloudVoice(selections, voices: voices, names: names, selected: Prefs.str("voice"), region: Locale.current.region?.identifier, majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+}
+func readAloudArguments(_ words: String, voice: String? = usableReadAloudVoice(), compactTip: () -> Void) -> [String] {
+    if voice == nil { compactTip() }
+    return (voice.flatMap { $0.isEmpty ? nil : ["-v", $0] } ?? []) + ["--", words]
 }
 
 // The talk shortcut, any key plus modifiers, recorded in Settings: Carbon modifiers to register, and the
@@ -1896,11 +1903,11 @@ final class App: NSObject, WKScriptMessageHandler {
     let drawing = ScreenDrawing()
     var drawingReply = false
     var pointContext: [String:Any]?
-    var voice: Process?   // `say`: the Mac's system voice (a Siri voice if picked in Spoken Content); AVSpeechSynthesizer can't use Siri voices
+    var voice: Process?   // `say`, with a validated installed voice
     func voiceQualityTip() {
         guard !UserDefaults.standard.bool(forKey: "voiceQualityTip") else { return }
         UserDefaults.standard.set(true, forKey: "voiceQualityTip")
-        show(); js("notice", "Voice sounds robotic? This Mac has no natural voice yet. Get one: System Settings → Accessibility → Read & Speak → System voice → Manage Voices → download a Siri voice, then pick it as the System voice."); hide(after: 14)
+        show(); js("notice", "Voice sounds robotic? This Mac has no natural voice yet. Get one: System Settings → Accessibility → Read & Speak → System voice → Manage Voices → download an Enhanced or Premium voice, then pick it as the System voice."); hide(after: 14)
     }
     @discardableResult func shush() -> Bool {
         guard let v = voice else { return false }; voice = nil
@@ -1910,7 +1917,6 @@ final class App: NSObject, WKScriptMessageHandler {
         if Prefs.bool("autoCopy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string) }
         if Prefs.bool("speak") && aloud {
             let arguments = readAloudArguments(spoken(a)) { voiceQualityTip() }
-            siriVoice()   // retry for next time: this read uses the fallback after a previous Siri test failed
             shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = arguments
             p.terminationHandler = { [weak self] _ in DispatchQueue.main.async {
                 guard let self, self.voice === p else { return }; self.voice = nil; self.hide(after: 2)
@@ -4635,7 +4641,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         send("agents", ["count": agentsUI.count])
         send("dictation", DictationData.state())
         js("st.motion(\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion))")
-        var d: [String: Any] = ["prefs": Prefs.d, "mics": microphoneChoices(), "version": Updater.version, "update": Updater.status, "managedUpdates": Updater.managedByNix,
+        var d: [String: Any] = ["prefs": Prefs.d, "mics": microphoneChoices(), "version": Updater.version, "update": Updater.status, "managedUpdates": Updater.managedByNix, "sharingUnavailable": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27,
                                 "hotkeyTaken": !hotkeyRegistered, "dictateHotkeyTaken": !Prefs.str("dictateHotkeyLabel").isEmpty && !dictateHotkeyRegistered, "globeTaken": globeKeyTaken()]
         let routines = (Prefs.path as NSString).deletingLastPathComponent + "/routines.json"
         d["routines"] = (try? JSONSerialization.jsonObject(with:Data(contentsOf:URL(fileURLWithPath:routines)))) as? [[String:Any]] ?? []
@@ -4795,7 +4801,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         }
         if k == "speechModel" { app.prepareSpeech() }
         if k == "improve" { Prefs.set("improveAsked", true) }   // any answer, here or in setup or the card, is the answer
-        if k == "speak" { if v as? Bool == true { siriVoice() } else { app.shush() } }
+        if k == "speak", v as? Bool == false { app.shush() }
         if k == "hideWhenSharing" { NSApp.windows.forEach(applySharing) }
         if k == "menuIcon" { bar.item.isVisible = v as? Bool == true }
         if k == "paused" { if v as? Bool == true { meeting.stop(paused: true); app.close(clear: false); agentsUI.stopAll() }; bar.paint() }
@@ -7356,7 +7362,6 @@ var pasteRef: EventHotKeyRef?
 let pasteHotkey = (code: 9, mods: controlKey | cmdKey, flags: NSEvent.ModifierFlags([.control, .command]))
 let pasteHotkeyRegistered = !hotkeysConflict(pasteHotkey, hotkey()) && (Prefs.str("dictateHotkeyLabel").isEmpty || !hotkeysConflict(pasteHotkey, dictateHotkey())) &&
     RegisterEventHotKey(UInt32(pasteHotkey.code), UInt32(pasteHotkey.mods), EventHotKeyID(signature: 0x41545443, id: 7), GetApplicationEventTarget(), 0, &pasteRef) == noErr
-if Prefs.bool("speak") { siriVoice() }
 let settings = SettingsWindow()
 let bar = MenuBar()
 let delegate = Delegate()
