@@ -42,7 +42,7 @@ for (let i=0;i<10;i++) {
   ui.listen(true); ui.words(i===1?'Save it as a shortcut':'Change the setting'); if(i%2===0)ui.think();
   ui.line('▸ Working on the request'); ui.line('… Here is the answer so far and'); settle();
   const turn=thread.lastElementChild;
-  out.turns.push([inView(turn.querySelector('.elapsed')), inView(turn.querySelector('.step.live')), inView(turn.querySelector('.elapsed span')), turn.querySelector('.elapsed span').textContent, turn.querySelectorAll('.elapsed').length]);
+  out.turns.push([inView(turn.querySelector('.elapsed')), inView(turn.querySelector('.step.live')), !turn.querySelector('.elapsed span'), turn.querySelectorAll('.elapsed').length]);
   ui.line('✓ Finished the request.'); if(i===1)ui.line('i Learned: change the setting'); ui.finished(); settle();
 }
 ui.line('i Support: Atticus is free, leave a tip'); settle();
@@ -92,7 +92,7 @@ class BoxPageTests(unittest.TestCase):
         self.assertTrue(out['math'][5])
         self.assertEqual(out['two'], 'I started an agent on “Ebikes”. I’ll ping you when it’s done. Queued an agent for “Helmets”. It starts when another one finishes.')   # the queued one is not called started
         self.assertEqual(out['mix'], 'Queued an agent for “Tents”. It starts when another one finishes. I started agents on “Stoves” and “Maps”. I’ll ping you when they’re done.')
-        self.assertEqual(out['turns'], [[True, True, True, 'Working on the request', 1]] * 10)
+        self.assertEqual(out['turns'], [[True, True, True, 1]] * 10)
         self.assertEqual(out['support'], ['BUTTON', True, 'pointer', True, True])
         self.assertTrue(any(isinstance(p, dict) and p.get('kofi') for p in got['posts']))
         self.assertEqual(out['learned'], ['Learned “Atticus” Undo', 'flex', 'dn tick'])

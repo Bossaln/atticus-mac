@@ -19,7 +19,6 @@
   .elapsed { display: flex; align-items: baseline; gap: 6px; margin-top: 16px; color: var(--fg2); font-size: 10.5px; line-height: 16px; animation: in .25s var(--ease) both; }
   .elapsed .redo { margin-left: auto; padding: 0; border: 0; background: none; font: 500 11px -apple-system, system-ui, sans-serif; color: var(--fg2); cursor: pointer; transition: color .2s; }
   .elapsed .redo:is(:hover,.hot) { color: #f5f5f7; }
-  .elapsed span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .elapsed b { color: var(--fg2); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #status span { display: inline-block; max-width: 100%; vertical-align: top; overflow: hidden; text-overflow: ellipsis; animation: in .35s var(--ease) both; }
   #status.live span { background: linear-gradient(90deg, var(--fg2) 0%, #fff 45%, var(--fg2) 90%); background-size: 200% 100%;
@@ -535,7 +534,6 @@
   const markShot = () => { const img = bar.querySelector('img'); return bar.classList.contains('has') && !img.hidden && img.src; };   // the crop the next ask carries into its bubble
   $('mic').onclick = () => { $('ask').value = ''; comp(false); post({ mic: 1 }); };
   const status = (s, live) => {
-    const label = part('elapsed')?.querySelector('span'); if (label) label.textContent = s;
     if (s && listening) s = 'Listening…';   // early AI notes never replace it while the user talks
     $('status').className = live ? 'live' : '';
     $('status').innerHTML = '<span></span>'; $('status').firstChild.textContent = s;
@@ -677,20 +675,20 @@
   new ResizeObserver(miniRect).observe($('thread'));
 
   let clockStart = null, clockHeld = null, clockFrame = 0, clock = null;   // clockHeld: ms so far while a card waits for the user
-  const clockPaint = () => { const t = (performance.now() - clockStart) / 1000; clock.querySelector('b').textContent = t < 60 ? t.toFixed(2) + ' s' : Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0'); };   // past a minute, stopwatch style: 4:01.27
+  const clockPaint = () => { const t = (performance.now() - clockStart) / 1000; clock.querySelector('b').firstChild.data = t < 60 ? t.toFixed(2) + ' s' : Math.floor(t / 60) + ':' + (t % 60).toFixed(2).padStart(5, '0'); };   // past a minute, stopwatch style: 4:01.27
   const clockTick = () => {
     if (clockStart === null) return;
     clockPaint();
     clockFrame = requestAnimationFrame(clockTick);
   };
-  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); clockStart = clockHeld = null; if (clock) clock.querySelector('span').textContent = ''; };
+  const clockStop = () => { cancelAnimationFrame(clockFrame); if (clockStart !== null) clockPaint(); clockStart = clockHeld = null; };
   const clockHold = () => { if (clockStart === null) return; cancelAnimationFrame(clockFrame); clockPaint(); clockHeld = performance.now() - clockStart; clockStart = null; };
   const clockGo = () => { if (clockHeld === null) return; clockStart = performance.now() - clockHeld; clockHeld = null; clockTick(); };
   const clockBegin = () => {
     if (clockStart !== null || clockHeld !== null || !turn()) return;
     clock = document.createElement('div'); clock.className = 'elapsed';
     clock.title = 'Time Atticus spent working. Waiting for your pick or approval is not counted.';
-    clock.innerHTML = '<b></b><span>Thinking…</span>';
+    clock.innerHTML = '<b>0.00 s</b>';
     turn().append(clock); clockStart = performance.now(); clockTick();
   };
 
