@@ -150,6 +150,27 @@ class OnboardingPageTests(unittest.TestCase):
                     self.assertGreater(page['actions'], 0, f"{page['id']} has no action")
                     self.assertTrue(page['reachable'], f"{page['id']} action is unreachable at {width}×{height}")
 
+    def test_skip_all_stays_at_top_right_and_jumps_to_improve(self):
+        script = '''
+          while (!window.ob) await new Promise(r => setTimeout(r, 10));
+          const skip = document.getElementById('skip-all'), rows = [];
+          const all = [...document.querySelectorAll('.page')], end = all.findIndex(p => p.id === 'improve');
+          for (const page of all.slice(0, end)) {
+            document.querySelectorAll('.page').forEach(p => { p.classList.toggle('on', p === page); p.inert = p !== page; });
+            page.scrollTop = page.scrollHeight;
+            const r = skip.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            rows.push(r.top >= 0 && r.bottom <= 50 && r.right <= innerWidth && r.left > innerWidth / 2 && skip.contains(hit));
+            hit?.click();
+            rows.push(document.getElementById('improve').classList.contains('on') && skip.hidden);
+            skip.hidden = false;
+          }
+          return rows;
+        '''
+        for width, height in ((640, 612), (480, 420), (360, 320)):
+            out = self.run_page(self.live, width, height, script)
+            self.assertTrue(all(out['result']), out['result'])
+            self.assertNotIn({'do': 'done'}, out['posts'])
+
     def test_every_permission_row_scrolls_into_reach(self):
         for width, height in ((640, 612), (480, 420)):
             for granted in (False, True):

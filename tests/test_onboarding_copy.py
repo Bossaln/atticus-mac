@@ -13,6 +13,34 @@ class OnboardingMatchesAppTests(unittest.TestCase):
     def setUpClass(cls):
         cls.page = (ROOT / 'ui/onboarding.html').read_text()
 
+    def test_skip_all_jumps_to_the_closing_pages(self):
+        self.assertIn('id="skip-all">Skip All</button>', self.page)
+        self.assertIn("$('skip-all').onclick = () => go('improve');", self.page)
+        self.assertIn("$('skip-all').hidden = pages.indexOf(id) >= pages.indexOf('improve');", self.page)
+        self.assertIn("$('finish').onclick = () => post({ do: 'done' });", self.page)
+        swift = (ROOT / 'Atticus.swift').read_text()
+        self.assertIn('if b["do"] == "done" { return finish() }', swift)
+        finish = swift.split('    func finish() {', 1)[1].split('    func windowDidResignKey', 1)[0]
+        self.assertIn('set(true, forKey: "onboarded")', finish)
+        self.assertIn('win?.close()', finish)
+        self.assertIn('if relaunch { relaunchSoon() }', finish)
+
+    def test_privacy_help_drags_a_bundle_and_cleans_up(self):
+        swift = (ROOT / 'Atticus.swift').read_text()
+        helper = swift.split('final class PermissionIcon:', 1)[1].split('// `Atticus --look', 1)[0]
+        self.assertIn('NSDraggingItem(pasteboardWriter: Bundle.main.bundleURL as NSURL)', helper)
+        self.assertIn('beginDraggingSession(with: [item], event: event, source: self)', helper)
+        self.assertIn('if self.panel === w, allowed { self.close() }', helper)
+        self.assertIn('if seen { close() }', helper)
+        self.assertNotIn('timeIntervalSince', helper)   # a slow Settings launch or consent prompt must not lose the helper
+        self.assertLess(helper.index('let allowed = granted()'), helper.index('guard let frame'))
+        self.assertIn('func windowWillClose(_ n: Notification) { timer?.invalidate(); timer = nil; panel = nil }', helper)
+        self.assertIn('styleMask: [.titled, .closable, .nonactivatingPanel]', helper)
+        self.assertIn('drag: p == "Accessibility" || p == "ScreenCapture"', swift)
+        for pane in ('Accessibility', 'ScreenCapture', 'Microphone', 'SpeechRecognition', 'Calendars', 'Automation'):
+            self.assertIn('"' + pane + '": ', swift)
+        self.assertIn('case "automation": onboarding.settings("Automation")', swift)
+
     def test_dictation_pill_shows_no_words(self):
         pill = self.page.split('id="dc-pill">', 1)[1].split('</div>', 1)[0]
         self.assertNotIn('dc-said', pill)   # the pill has no transcript any more

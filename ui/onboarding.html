@@ -50,7 +50,8 @@
   .btn:hover { filter: brightness(1.08); } .btn:active { transform: scale(.97); }
   .btn:focus-visible, .allow:focus-visible { outline: 3px solid rgba(10,132,255,.45); outline-offset: 2px; }
   .btn.quiet { background: var(--card); color: var(--fg); box-shadow: inset 0 0 0 .5px var(--line); }
-  #back { position: absolute; z-index: 10; top: 18px; left: 22px; margin: 0; padding: 0 10px; height: 30px; color: var(--fg2); background: transparent; box-shadow: none; }
+  #back, #skip-all { position: absolute; z-index: 10; top: 18px; margin: 0; padding: 0 10px; height: 30px; color: var(--fg2); background: transparent; box-shadow: none; }
+  #back { left: 22px; } #skip-all { right: 22px; }
 
   /* permissions list, grouped like System Settings */
   #list, .list { width: 100%; max-width: 480px; margin-top: 22px; border-radius: 12px; background: var(--card); text-align: left;
@@ -358,6 +359,7 @@
 </style></head>
 <body>
 <button class="btn quiet" id="back" hidden>Back</button>
+<button class="btn quiet" id="skip-all">Skip All</button>
 <section class="page" id="welcome">
   <div id="orbwrap" class="r"><canvas id="orb"></canvas></div>
   <h1 class="r">Meet Atticus</h1>
@@ -585,9 +587,11 @@
     for (const page of pages) { $(page).inert = page !== id; $(page).setAttribute('aria-hidden', String(page !== id)); }
     [...$('dots').children].forEach((d, i) => { d.classList.toggle('on', pages[i] === id); d.hidden = skip(pages[i]); });
     $('back').hidden = pages.indexOf(id) < 1;
+    $('skip-all').hidden = pages.indexOf(id) >= pages.indexOf('improve');
   };
   document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
   $('back').onclick = () => { let i = pages.indexOf(cur) - 1; while (skip(pages[i])) i--; go(pages[i]); };
+  $('skip-all').onclick = () => go('improve');   // skips the tour only: the improve, tip and done pages still show
   $('finish').onclick = () => post({ do: 'done' });
   $('kofi').onclick = () => post({ do: 'kofi' });
   $('feedback-link').onclick = () => post({ do: 'feedback' });   // Settings → Report feedback, over this window

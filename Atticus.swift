@@ -3942,6 +3942,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     var checkingPlan = false, setupShown = false
     var screenInitiallyGranted = false, screenGrantedDuringSetup = false
     let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
+    let permissionHelp = PermissionHelp()
 
     func open(automatic: Bool = false) {
         if automatic && setupShown { return }
@@ -4042,8 +4043,16 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
 
     // Open the exact privacy pane and point at the switch: Atticus's own row, or an app's row under Atticus (Automation).
     func settings(_ p: String, point label: String = Onboarding.name) {
-        NSWorkspace.shared.open(URL(string: pane + p)!)
+        guard NSWorkspace.shared.open(URL(string: pane + p)!) else { return }
+        help(p, point: label)
         Onboarding.pointSwitch(label, under: label == Onboarding.name ? nil : Onboarding.name)
+    }
+    func help(_ p: String, point label: String = Onboarding.name) {
+        permissionHelp.show(drag: p == "Accessibility" || p == "ScreenCapture", target: label == Onboarding.name ? "Atticus" : "\(label) under Atticus") {
+            if p == "Automation", label != Onboarding.name { return Onboarding.granted("automation", app: label) }
+            let key = ["Accessibility": "ax", "ScreenCapture": "screen", "Microphone": "mic", "SpeechRecognition": "speech", "Calendars": "calendar", "Automation": "auto"][p] ?? ""
+            return Onboarding.perms()[key] == true
+        }
     }
     static let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Atticus"
 
@@ -4181,7 +4190,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             else { settings("SpeechRecognition") }
         case "ax":
             if UserDefaults.standard.bool(forKey: "askedAX") { if !AXIsProcessTrusted() { settings("Accessibility") } }
-            else { UserDefaults.standard.set(true, forKey: "askedAX"); _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) }
+            else { UserDefaults.standard.set(true, forKey: "askedAX"); if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) { help("Accessibility") } }
         case "claude":
             fixPlan()
         case "connectors": NSWorkspace.shared.open(URL(string: "https://claude.ai/settings/connectors")!)
@@ -4193,7 +4202,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
             // First click: only macOS's own prompt (its button lands on the right list). Opening Settings at the
             // same time put people in the wrong section; later clicks, when macOS won't prompt again, open Settings.
             if UserDefaults.standard.bool(forKey: "askedScreen") { if !CGPreflightScreenCaptureAccess() { settings("ScreenCapture") } }
-            else { UserDefaults.standard.set(true, forKey: "askedScreen"); if CGRequestScreenCaptureAccess() { screenGrantedDuringSetup = true } }
+            else { UserDefaults.standard.set(true, forKey: "askedScreen"); if CGRequestScreenCaptureAccess() { screenGrantedDuringSetup = true } else { help("ScreenCapture") } }
         case "auto":
             Atticus.settings.open(tab: "apps")
         case "chrome":   // clicks Chrome's View > Developer > Allow JavaScript from Apple Events; Atticus keeps it on after this OK
@@ -4216,6 +4225,7 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
     func windowDidResignKey(_ n: Notification) { if Atticus.settings.echo != nil { Atticus.settings.done(nil) } }   // keys typed elsewhere must not become the shortcut
 
     func windowWillClose(_ n: Notification) {
+        permissionHelp.close()
         if Atticus.settings.echo != nil { Atticus.settings.done(nil) }   // closed mid-recording: keep the old shortcut
         timer?.invalidate(); timer = nil
         walkTimer?.invalidate(); walkTimer = nil   // closing setup cancels Enable All: no more Settings panes open later
@@ -4223,6 +4233,74 @@ final class Onboarding: NSObject, WKScriptMessageHandler, NSWindowDelegate {
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "ob")
         web = nil; win = nil
     }
+}
+
+final class PermissionIcon: NSImageView, NSDraggingSource {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {}   // receive mouseDragged without NSImageView's image-only drag
+    override func mouseDragged(with event: NSEvent) {
+        let item = NSDraggingItem(pasteboardWriter: Bundle.main.bundleURL as NSURL)
+        item.setDraggingFrame(bounds, contents: image)
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .copy }
+}
+
+// The helper watches window metadata, so it works before Accessibility or Screen Recording is allowed.
+final class PermissionHelp: NSObject, NSWindowDelegate {
+    var panel: NSPanel?, timer: Timer?
+    func show(drag: Bool, target: String, granted: @escaping () -> Bool) {
+        close()
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 110),
+                        styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+        applySharing(w)
+        w.title = "Allow Atticus"; w.level = .floating; w.hidesOnDeactivate = false
+        w.isReleasedWhenClosed = false; w.delegate = self
+        let bg = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 360, height: 110))
+        bg.material = .popover; bg.state = .active
+        let icon = drag ? PermissionIcon(frame: NSRect(x: 16, y: 30, width: 56, height: 56)) : NSImageView(frame: NSRect(x: 16, y: 30, width: 56, height: 56))
+        icon.image = NSWorkspace.shared.icon(forFile: Bundle.main.bundleURL.path)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.setAccessibilityLabel(drag ? "Drag Atticus into System Settings" : "Atticus")
+        let text = NSTextField(wrappingLabelWithString: drag
+            ? "Drag Atticus into the list, then turn it on.\nYou can also use Add (+) to choose Atticus."
+            : "Turn on \(target) in the list.\nIf it’s missing, return to setup and click Allow to request access first.")
+        text.frame = NSRect(x: 86, y: 14, width: 258, height: 82)
+        text.font = .systemFont(ofSize: 13)
+        bg.addSubview(icon); bg.addSubview(text); w.contentView = bg; panel = w
+        var seen = false, checking = false
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self, weak w] _ in
+            guard let self, let w else { return }
+            if !checking {
+                checking = true
+                DispatchQueue.global().async {
+                    let allowed = granted()
+                    DispatchQueue.main.async {
+                        checking = false
+                        if self.panel === w, allowed { self.close() }
+                    }
+                }
+            }
+            let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first?.processIdentifier
+            let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+            let frame = windows.first { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }.flatMap { MiniScreen.bounds($0) }
+            guard let frame, frame.width > 100, frame.height > 100 else {
+                if seen { close() }
+                return
+            }
+            if !seen {
+                seen = true
+                let top = NSScreen.screens.first?.frame.maxY ?? 0
+                let f = NSRect(x: frame.midX - w.frame.width / 2, y: top - frame.maxY - w.frame.height - 8, width: w.frame.width, height: w.frame.height)
+                let screen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: f.midX, y: top - frame.midY)) } ?? NSScreen.main
+                if let screen { w.setFrame(MeetingFrame.clamp(f, screen.visibleFrame), display: false) }
+                w.orderFrontRegardless()
+            }
+        }
+    }
+    func close() { timer?.invalidate(); timer = nil; panel?.close(); panel = nil }
+    func windowWillClose(_ n: Notification) { timer?.invalidate(); timer = nil; panel = nil }
 }
 
 // `Atticus --look <screen #> <out.jpg> [window id]` (atticus.py --look): the screen without Atticus's own box on it, 1280 px wide.
@@ -4951,7 +5029,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
         case "enableAll": onboarding.enableAll(connected: b["connected"] as? String == "true")
         case "connectors": onboarding.grant("connectors")
         case "stopAllow": Apps.job += 1
-        case "automation": NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!)
+        case "automation": onboarding.settings("Automation")
         case "quit": NSApp.terminate(nil)
         default: break
         }
@@ -4960,6 +5038,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
     func windowDidResignKey(_ n: Notification) { if monitor != nil { done(nil) } }
 
     func windowWillClose(_ n: Notification) {
+        onboarding.permissionHelp.close()
         feedbackJob += 1; feedbackURL = nil
         if let v = web { v.evaluateJavaScript("st.flush()") { [weak self] r, _ in _ = v; if let b = r as? [String: Any] { self?.handle(b) } } }   // a deletion still showing Undo
         if monitor != nil { done(nil) }   // closed mid-recording: keep the old shortcut
