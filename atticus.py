@@ -7520,6 +7520,7 @@ def main():
         if line.startswith('{'):
             request = json.loads(line)
             front_now, task = request['front'], request['task']
+            if not isinstance(front_now, str): front_now = ''
             remaining, done, marks, drawn = request.get('remaining'), request.get('done', []), request.get('point'), request.get('drawing')
             card = str(request.get('agentCard') or '')
         else: front_now, _, task = line.rpartition('\t')

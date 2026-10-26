@@ -1307,6 +1307,22 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
             relay = next(call for call in threads.call_args_list if call.kwargs.get('target') is atticus.relay)
             self.assertIsNone(relay.kwargs['args'][0])
 
+    def test_wait_request_ignores_non_string_front(self):
+        for front, expected in [(True, 'Previous'), (7, 'Previous'), ({'app': 'Fixture'}, 'Previous'),
+                                (['Fixture'], 'Previous'), (None, 'Previous'), ('', 'Previous'), ('Fixture', 'Fixture')]:
+            with self.subTest(front=front), \
+                 patch.multiple(atticus, licensed=lambda: True, ping=lambda: None, start_ai=lambda: None,
+                                fast=lambda _: 'Done.', remember_turn=lambda *a: None, say=lambda *a: None,
+                                allow_focus=lambda _: None), \
+                 patch.object(atticus, 'log_turn') as log, patch.object(atticus.threading, 'Thread'), \
+                 patch.object(atticus.os, 'setpgrp'), patch.object(atticus.signal, 'signal'), \
+                 patch.dict(os.environ, {'ATTICUS_FRONT': 'Previous', 'ATTICUS_COMMIT': ''}), \
+                 patch('sys.argv', ['atticus.py', '--wait']), \
+                 patch('sys.stdin', io.StringIO(json.dumps({'front': front, 'task': 'Fixture task'}) + '\n')):
+                log.side_effect = lambda *a, **k: self.assertEqual(os.environ['ATTICUS_FRONT'], expected)
+                atticus.main()
+                log.assert_called_once()
+
     def test_request_reuses_an_active_relay_for_ai_attempts(self):
         process = unittest.mock.Mock(returncode=0, ask=str(self.root), relay_thread=None)
         process.stdin = io.StringIO()
