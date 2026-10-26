@@ -917,6 +917,7 @@ def set_switch(words, on):
             save_pref(k, options[o])
         return print(f'{name} is now {o}.')
     rows = switches()
+    words = re.sub(r'\b(voice|speech|speaking|talking)\b', 'read aloud', words, flags=re.I)
     k = max(rows, key=lambda k: len(stem(words) & stem(rows[k])))
     if not stem(words) & stem(rows[k]):
         return unavailable()
@@ -2203,8 +2204,11 @@ def look(cleanup=True, window=None):
     x, y, w, h = (window or {}).get('windowFrame') or (0, 0, 0, 0)
     home = next((i for i, s in enumerate(scr, 1) if s[1] <= x + w / 2 < s[1] + s[3] and s[2] <= y + h / 2 < s[2] + s[4]), None) if window else None
     def one(i):
-        ask = os.environ.get('ATTICUS_ASK')   # AI helper images belong to the request owner, not this short-lived process.
-        fd, path = tempfile.mkstemp(prefix=f'atticus-screen-{i}-', suffix='.jpg', dir=ask)
+        ask = os.environ.get('ATTICUS_ASK') or None   # AI helper images belong to the request owner, not this short-lived process.
+        try: fd, path = tempfile.mkstemp(prefix=f'atticus-screen-{i}-', suffix='.jpg', dir=ask)
+        except OSError:   # an ask folder this helper cannot write (EROFS seen in the field): the shared temp folder still works
+            if not ask: raise
+            ask = None; fd, path = tempfile.mkstemp(prefix=f'atticus-screen-{i}-', suffix='.jpg')
         os.close(fd)
         os.remove(path)
         if cleanup and not ask:
@@ -3435,17 +3439,21 @@ def report_error(kind, **props):
         posthog('error', {'kind': kind, **props})
 
 
-PLAN_LIMIT = r'\b(?<!context )limit\b.*\b(?:resets?|reached)\b|\bhit your\b.*\blimit\b'   # Claude plan limits ("You've hit your weekly limit · resets 3pm")
+TOO_LONG = r'\bcontext\b[\w\s-]{0,20}\blimit\b|\b(?:prompt|input|request) is too long\b'   # the request outgrew the model's context window
+PLAN_LIMIT = r'\busage limit\b|\b(?<!rate.)limit\b.*\b(?:resets?|reached)\b|\bhit your\b.*\blimit\b'   # Claude plan limits ("You've hit your weekly limit · resets 3pm")
 
 
 def failure_why(detail, custom=False):
     """Classify backend errors, never the user's request or the model's ordinary answer."""
     for why, pattern in (
         ('signed_out', r'\b(?:o?auth(?:enticate|entication|orization)?|unauthori[sz]ed)\b|\b401\b|invalid (?:api )?key|not logged in|sign.?in'),
-        ('rate_limited', rf'rate.?limit|usage limit|{PLAN_LIMIT}|too many requests|\b429\b'),
+        ('too_long', TOO_LONG),
+        ('plan_limit', PLAN_LIMIT),
+        ('rate_limited', r'rate.?limit|too many requests|\b429\b'),
         ('offline', r'network|connect|dns|timed? ?out|timeout'),
         ('unavailable', r'overload|unavailable|service error|\b5\d\d\b'),
         ('sandbox', r'sandbox'),
+        ('outdated', r'unknown option|unrecognized (?:option|argument)'),
     ):
         if re.search(pattern, detail, re.I): return why
     # HTTP client errors mean the server rejected the configured request (model, tools, API compatibility).
@@ -3454,7 +3462,7 @@ def failure_why(detail, custom=False):
 
 def report_worker_failure(worker, model, why):
     if why == 'cancelled': return
-    setup = why in ('setup_needed', 'provider_needed', 'model_missing', 'server_rejected', 'signed_out', 'rate_limited', 'offline', 'unavailable', 'sandbox')
+    setup = why in ('setup_needed', 'provider_needed', 'model_missing', 'server_rejected', 'signed_out', 'too_long', 'plan_limit', 'rate_limited', 'offline', 'unavailable', 'sandbox')
     report_error('setup' if setup else 'worker_exit', worker=worker, model=model if model in ('haiku', 'sonnet', 'opus') else 'custom', why=why)
 
 
@@ -3479,6 +3487,7 @@ def install_exception_hooks():
         exception_error(exc_type, tb, value)
         previous_sys(exc_type, value, tb)
     def thread_hook(args):
+        if not threading.main_thread().is_alive(): return
         if issubclass(args.exc_type, SystemExit): return
         if issubclass(args.exc_type, BrokenPipeError) and stdout_closed():
             sys.stdout = open(os.devnull, 'w')
@@ -5449,11 +5458,16 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
             else:
                 say('!', 'setup')
                 reply = 'Your Claude sign-in expired. Open Atticus Settings to sign in again.'
+        elif run.why == 'too_long':
+            reply = f'This request is too long for {"your custom server" if custom else "Claude"}. Please start a new, shorter one.'
+        elif run.why == 'plan_limit':
+            # Claude's own words say which limit, when it resets and what to try
+            plan_limit = '' if custom else next((l for l in detail.splitlines() if re.search(PLAN_LIMIT, l, re.I) and not l.startswith('API Error')), '')
+            plan_limit = re.sub(r'\|(\d+)\s*$', lambda m: time.strftime(' · resets %a %-I:%M %p', time.localtime(int(m[1]))), plan_limit)   # older Claude Code appends "|<reset epoch>"
+            plan_limit = ' '.join(plan_limit.split())[:200]
+            reply = f'Claude: {plan_limit}' if plan_limit else ('Your custom server' if custom else 'Claude') + ' reached its usage limit. Please try again after it resets.'
         elif run.why == 'rate_limited':
-            # a plan limit: Claude's own words say which limit, when it resets and what to try
-            plan_limit = '' if custom or not result_error else next((l for l in reply.splitlines() if re.search(PLAN_LIMIT, l, re.I) and not l.startswith('API Error')), '')
-            plan_limit = ' '.join(re.sub(r'\|\d+\s*$', '', plan_limit).split())[:200]   # older Claude Code appends "|<reset epoch>"
-            reply = f'Claude: {plan_limit}' if plan_limit else ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
+            reply = ('Your custom server' if custom else 'Claude') + ' is temporarily rate-limited. Please try again in a moment.'
         elif run.why == 'offline':
             reply = ('Could not connect to your custom server. Check its address and try again.' if custom else
                      'Claude could not connect. Check your internet connection and try again.')
@@ -5461,6 +5475,8 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
             reply = ('Your custom server' if custom else 'Claude') + ' is temporarily unavailable. Please try again.'
         elif run.why == 'sandbox':
             reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
+        elif run.why == 'outdated':
+            reply = 'Update Claude Code, then try again.'
         else:
             say('!', 'setup')
             reason = ' '.join(clean(detail).split()) or f'exit code {p.returncode}'
@@ -5671,12 +5687,21 @@ def run_pi(task, shots=(), request=None):
         run.why = failure_why(detail)
         if run.why == 'stopped' and re.search(r'auth|credential|model|provider|login', detail, re.I): run.why = 'provider_needed'
         reason = clean(detail) or f'exit code {p.returncode}'
-        if run.why == 'rate_limited':
+        if run.why in ('signed_out', 'provider_needed'):
+            say('!', 'setup')
+            reply = 'Pi needs a provider and model. Open Atticus Settings, choose Set Up, then try again.'
+        elif run.why == 'too_long':
+            reply = 'This request is too long for Pi. Please start a new, shorter one.'
+        elif run.why == 'plan_limit':
+            reply = f'Pi stopped: {reason}. Please try again after the limit resets.'
+        elif run.why == 'rate_limited':
             reply = f'Pi stopped: {reason}. Pi is temporarily rate-limited. Please try again in a moment.'
         elif run.why == 'offline':
             reply = f'Pi stopped: {reason}. Pi could not connect. Check your internet connection and try again.'
         elif run.why == 'unavailable':
             reply = f'Pi stopped: {reason}. Pi is temporarily unavailable. Please try again.'
+        elif run.why == 'outdated':
+            reply = 'Update Pi, then try again.'
         else:
             say('!', 'setup')
             reply = f'Pi stopped: {reason}. Open Atticus Settings, choose Set Up, then try again.'
@@ -7107,6 +7132,8 @@ def main():
                             exit=int(args[4]) if args[4].lstrip('-').isdigit() else -1)
     if len(args) == 3 and args[:2] == ['--telemetry', 'support']:   # a Leave a Tip click in the app
         return posthog('support', {'action': 'clicked', 'from': args[2] if args[2] in ('overlay', 'setup', 'settings', 'menu') else 'other'})
+    if len(args) == 4 and args[:2] == ['--telemetry', 'idea'] and args[2] in ('shown', 'clicked') and args[3].isdigit():   # "Ideas when I'm away": which one, never its text
+        return posthog('idea', {'action': args[2], 'index': int(args[3])})
     if args == ['--draw', '--help']:
         return print(DRAW_HELP if pref('draw', True) else 'Screen drawings are off')
     if args[:1] == ['--draw']:
@@ -7575,8 +7602,9 @@ def main():
     if handed_off(): return
     if not wait_commit() or cancelled(): return
     previous = []
+    final = getattr(run, 'why', '') in ('plan_limit', 'too_long', 'signed_out', 'setup_needed', 'provider_needed', 'outdated')   # another run or model can't lift these
     # One continuation, including CLI asks; no task classifier or second fast-path call.
-    if offer_model and (reply.rstrip().endswith('[sonnet]') or not run.ok and run.work):   # a trailing [sonnet]: the model stopped short of a reachable goal
+    if offer_model and not final and (reply.rstrip().endswith('[sonnet]') or not run.ok and run.work):   # a trailing [sonnet]: the model stopped short of a reachable goal
         escalated, escalate_why = True, 'asked' if reply.strip() == '[sonnet]' else 'failed'
         model = work_model()
         say('▸', 'Continuing with ' + model.capitalize())
@@ -7592,7 +7620,7 @@ def main():
         run.ran = previous + run.ran
         reply, cost, steps = again or reply, None if cost is None or more is None else cost + more, steps + extra
         if handed_off(): return
-    elif not run.ok and run.why not in ('rate_limited', 'signed_out', 'setup_needed') and os.environ.get('ATTICUS_ASK'):   # retrying can't lift a plan limit or sign-in
+    elif not run.ok and not final and os.environ.get('ATTICUS_ASK'):
         if warm:
             os.environ['ATTICUS_RELAY_ACTIVE'] = str(os.getpid())
             threading.Thread(target=relay, args=(None, os.environ['ATTICUS_ASK']), daemon=True).start()

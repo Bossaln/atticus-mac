@@ -76,19 +76,26 @@ print("say voice list parser ok")
         source = (ROOT / "Atticus.swift").read_text()
         policy = source[source.index("struct ReadAloudVoice"):source.index("let installedSayVoices")]
         arguments = source[source.index("func readAloudArguments"):source.index("// The talk shortcut")]
-        run_swift(self, "import Foundation\nimport AVFoundation\nfunc usableReadAloudVoice() -> String? { nil }\n" + policy + arguments + """
+        self.assertIn('language: NLLanguageRecognizer.dominantLanguage(for: words)', source[source.index("func usableReadAloudVoice"):source.index("func readAloudArguments")])
+        run_swift(self, "import Foundation\nimport AVFoundation\nfunc usableReadAloudVoice(_ words: String) -> String? { nil }\n" + policy + arguments + """
 let voices = [
     ReadAloudVoice(name: "Unavailable", language: "en-US", quality: .premium, identifier: "missing-say"),
     ReadAloudVoice(name: "Tessa", language: "en-ZA", quality: .enhanced, identifier: "tessa"),
-    ReadAloudVoice(name: "US Premium", language: "en-US", quality: .premium, identifier: "premium")]
-let names: Set<String> = ["Tessa", "Tessa (Enhanced)", "US Premium", "Samantha"]
-func pick(_ saved: [Any], selected: String = "", os: Int = 27, installed: [ReadAloudVoice] = voices) -> String? {
-    preferredReadAloudVoice(saved, voices: installed, names: names, selected: selected, region: "US", majorVersion: os)
+    ReadAloudVoice(name: "US Premium", language: "en-US", quality: .premium, identifier: "premium"),
+    ReadAloudVoice(name: "Monica", language: "es-ES", quality: .enhanced, identifier: "monica")]
+let names: Set<String> = ["Tessa", "Tessa (Enhanced)", "US Premium", "Samantha", "Monica (Enhanced)"]
+func pick(_ saved: [Any], selected: String = "", os: Int = 27, installed: [ReadAloudVoice] = voices, language: String = "en") -> String? {
+    preferredReadAloudVoice(saved, voices: installed, names: names, selected: selected, region: "US", majorVersion: os, language: language)
 }
 func say(_ voice: String?) -> ([String], Bool) {
     var tipped = false
-    return (readAloudArguments("hi", voice: voice) { tipped = true }, tipped)
+    return (readAloudArguments("hi", pick: { _ in voice }) { tipped = true }, tipped)
 }
+let bilingual: [Any] = ["es", ["voiceId": "monica"], "en-US", ["voiceId": "tessa"]]
+precondition(pick(bilingual) == "Tessa (Enhanced)", "an English answer used the saved Spanish voice")
+precondition(pick(bilingual, language: "es") == "Monica (Enhanced)", "a Spanish answer skipped the saved Spanish voice")
+precondition(pick(["es", ["voiceId": "monica"]], language: "fr") == "US Premium", "a French answer used the saved Spanish voice")
+precondition(pick(["es", ["voiceId": "unlisted-system-voice"]], os: 26) == "US Premium", "another language's unlisted voice took over English")
 let unknown: [Any] = ["en", ["voiceId": "unlisted-system-voice"]]
 for os in [26, 27] {
     precondition(pick(["en", ["voiceId": "tessa"]], os: os) == "Tessa (Enhanced)", "saved voice ignored on \\(os)")

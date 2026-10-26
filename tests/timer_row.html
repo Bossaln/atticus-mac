@@ -35,9 +35,10 @@ try {
     const current = thread.lastElementChild, timer = current.querySelector('.elapsed b'), step = current.querySelector('.step.live');
     if (!timer) throw Error(`turn ${i}: step arrived without a timer`);
     results.dataset.lastCheck = `turn ${i}: live step with timer ${timer.textContent}`;
-    const before = parseFloat(timer.textContent);
+    const before = parseFloat(timer.textContent), node = timer.firstChild;
     for (let n = 0; n < 20 && !(parseFloat(timer.textContent) > before); n++) await tick(50);
     if (!(parseFloat(timer.textContent) > before)) throw Error(`turn ${i}: timer did not tick while the step was live`);
+    if (current.querySelector('.elapsed b') !== timer || timer.firstChild !== node || timer.childNodes.length !== 1) throw Error(`turn ${i}: ticking replaced the timer's text node`);
     const visible = e => { const r = e.getBoundingClientRect(), t = thread.getBoundingClientRect(); return r.height > 0 && r.top >= t.top && r.bottom <= t.bottom + 1; };
     if (current.querySelector('.elapsed span')) throw Error(`turn ${i}: status text beside timer`);
     if (!visible(timer) || !visible(step)) throw Error(`turn ${i}: live timer or step outside viewport`);

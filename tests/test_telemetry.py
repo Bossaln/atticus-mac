@@ -129,8 +129,9 @@ class TelemetryTests(unittest.TestCase):
                  ('400: model does not support tools', True, 'server_rejected'),
                  ('422: incompatible request', True, 'server_rejected'),
                  ('OAuth session expired', False, 'signed_out'),
-                 ('HTTP 429', False, 'rate_limited'), ('You’ve hit your weekly limit · resets 3pm', False, 'rate_limited'), ('network connection failed', False, 'offline')]
-        self.assertEqual(atticus.failure_why('Context limit reached · /compact or /clear to continue'), 'stopped')   # not a plan limit
+                 ('HTTP 429', False, 'rate_limited'), ('Rate limit reached for requests', False, 'rate_limited'),
+                 ('You’ve hit your weekly limit · resets 3pm', False, 'plan_limit'), ('Context window limit reached', False, 'too_long'),
+                 ('network connection failed', False, 'offline')]
         with patch.object(atticus, 'report_error') as sent:
             for detail, custom, why in cases:
                 self.assertEqual(atticus.failure_why(detail, custom), why)
@@ -230,6 +231,14 @@ class TelemetryTests(unittest.TestCase):
                 threading.excepthook(SimpleNamespace(exc_type=type(error), exc_value=error, exc_traceback=None))
             sys.stdout.close()
         stop.assert_called_once(); sent.assert_not_called()
+
+    def test_a_daemon_thread_failing_during_shutdown_is_not_a_crash(self):
+        with patch.object(sys, 'excepthook'), patch.object(threading, 'excepthook') as previous, \
+             patch.object(threading, 'main_thread', return_value=SimpleNamespace(is_alive=lambda: False)), \
+             patch.object(atticus, 'report_error') as sent:
+            atticus.install_exception_hooks()
+            threading.excepthook(SimpleNamespace(exc_type=ValueError, exc_value=ValueError(), exc_traceback=None))
+        sent.assert_not_called(); previous.assert_not_called()
 
     def test_a_backend_broken_pipe_with_live_output_is_a_real_failure(self):
         with patch.object(atticus, 'main', side_effect=BrokenPipeError), patch.object(atticus, 'end_turn'), \

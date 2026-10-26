@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 import EventKit
 import CoreAudio
 import AudioToolbox
+import NaturalLanguage
 
 let dir = ProcessInfo.processInfo.environment["ATTICUS_RESOURCES_DIR"] ?? Bundle.main.resourcePath!   // build.sh copies atticus.py and ui/ in here
 
@@ -194,7 +195,7 @@ enum Prefs {
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "support": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
@@ -489,20 +490,24 @@ func sayVoiceName(_ name: String, names: Set<String>) -> String? {
     return names.sorted().first { $0.hasPrefix(name + " (") }
 }
 // "" means bare say: before macOS 27 it speaks a saved system voice that neither list shows (such as Siri).
-func preferredReadAloudVoice(_ selections: [Any], voices: [ReadAloudVoice], names: Set<String>, selected: String, region: String?, majorVersion: Int) -> String? {
+func preferredReadAloudVoice(_ selections: [Any], voices: [ReadAloudVoice], names: Set<String>, selected: String, region: String?, majorVersion: Int, language: String = "en") -> String? {
     func sayName(_ voice: ReadAloudVoice) -> String? {
         let quality = voice.quality == .premium ? "Premium" : voice.quality == .enhanced ? "Enhanced" : ""
         let qualified = "\(voice.name) (\(quality))"
         return !quality.isEmpty && names.contains(qualified) ? qualified : sayVoiceName(voice.name, names: names)
     }
+    func base(_ code: String) -> String { String(code.lowercased().prefix { $0.isLetter }) }   // "en-US" -> "en"
     if !selected.isEmpty, names.contains(selected) { return selected }
-    var saved = false
+    var byLanguage: [String: String] = [:], key = ""   // saved as ["en", {voiceId}, "es", {voiceId}]
     for entry in selections {
-        guard let id = (entry as? [String: Any])?["voiceId"] as? String else { continue }
-        saved = true
+        if let k = entry as? String { key = base(k) }
+        else if let id = (entry as? [String: Any])?["voiceId"] as? String, byLanguage[key] == nil { byLanguage[key] = id }
+    }
+    let saved = [base(language), "en"].compactMap { byLanguage[$0] }   // the answer's language first, then English
+    for id in saved {
         if let voice = voices.first(where: { $0.identifier == id }), let name = sayName(voice) { return name }
     }
-    if saved && majorVersion < 27 { return "" }
+    if !saved.isEmpty && majorVersion < 27 { return "" }
     let usable = voices.filter { sayName($0) != nil }
     return bestEnglishVoice(usable, region: region).flatMap { sayName($0) }
 }
@@ -515,16 +520,18 @@ let installedSayVoices: Set<String>? = {
     p.waitUntilExit()
     return p.terminationStatus == 0 ? names : nil
 }()
-func usableReadAloudVoice() -> String? {
+func usableReadAloudVoice(_ words: String) -> String? {
     guard let names = installedSayVoices else { return nil }
     let voices = AVSpeechSynthesisVoice.speechVoices().map {
         ReadAloudVoice(name: $0.name, language: $0.language, quality: $0.quality, identifier: $0.identifier)
     }
     // shortcut: Apple's selection schema is undocumented; use an installed fallback until a public selection API exists.
     let selections = CFPreferencesCopyAppValue("SpokenContentDefaultVoiceSelectionsByLanguage" as CFString, "com.apple.Accessibility" as CFString) as? [Any] ?? []
-    return preferredReadAloudVoice(selections, voices: voices, names: names, selected: Prefs.str("voice"), region: Locale.current.region?.identifier, majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+    return preferredReadAloudVoice(selections, voices: voices, names: names, selected: Prefs.str("voice"), region: Locale.current.region?.identifier, majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+                                   language: NLLanguageRecognizer.dominantLanguage(for: words)?.rawValue ?? "en")
 }
-func readAloudArguments(_ words: String, voice: String? = usableReadAloudVoice(), compactTip: () -> Void) -> [String] {
+func readAloudArguments(_ words: String, pick: (String) -> String? = usableReadAloudVoice, compactTip: () -> Void) -> [String] {
+    let voice = pick(words)
     if voice == nil { compactTip() }
     return (voice.flatMap { $0.isEmpty ? nil : ["-v", $0] } ?? []) + ["--", words]
 }
@@ -1887,7 +1894,7 @@ final class App: NSObject, WKScriptMessageHandler {
         let b = p.y < 6 || (p.y < c && (p.x < c || p.x > w - c)), t = p.y > h - 6 || (p.y > h - c && (p.x < c || p.x > w - c))
         return l || r || t || b ? (l, r, t, b) : nil
     }
-    func overX(_ p: NSPoint) -> Bool { p.x > panel.frame.width - 42 && p.y > panel.frame.height - 42 }
+    func overX(_ p: NSPoint) -> Bool { !pillOn && p.x > panel.frame.width - 42 && p.y > panel.frame.height - 42 }   // the pill has no ✕ corner: its own buttons sit there
     // Words the recognizer should expect: the user's app names plus a few of the user's own (free, on-device).
     var hints: [String] {
         let config = (Prefs.path as NSString).deletingLastPathComponent
@@ -2166,6 +2173,11 @@ final class App: NSObject, WKScriptMessageHandler {
                 }
             }
             if b["dictationHistory"] != nil { hide(after: 0); Atticus.settings.open(tab: "dictation") }
+            if let i = b["idea"] as? Int, Self.ideas.indices.contains(i) {
+                telemetry(["idea", "clicked", String(i)]); gen += 1; pill(false)
+                pinned = true; panel.makeKey(); panel.makeFirstResponder(web); js("draft", Self.ideas[i])
+            }
+            if b["ideaClose"] != nil { close(clear: false) }
             if let enabled = b["agentDefault"] as? Bool { defaultKey(enabled) }
             if let value = b["miniRect"] as? [String:Any] { mini.layout(value) }
             // a click on the mini screen = the user wants to see it: the focus guard stands aside
@@ -2946,6 +2958,18 @@ final class App: NSObject, WKScriptMessageHandler {
         learnedWord = word; pill(true); show(); js("learned", word); hide(after: 6)
         Atticus.settings.send("dictation", DictationData.state())
         return true
+    }
+    // "Ideas when I'm away": after a day with no ask, one line grows out of the orb, at most once a day; a click puts it in the box.
+    static let ideas = ["Need to research something? Just ask.", "Want me to tidy these windows?", "Got an email to write?", "Turn a photo into a PNG?",
+                        "Want a quick summary of this page?", "Need a reminder for later?", "Stuck on a formula? I can explain it.", "Looking for a file? I can find it.",
+                        "Planning a trip? I can compare options.", "Want some music on?", "Got a long text to shorten?", "Need a word that fits better?"]
+    static func ideaDue(now: Date, lastAsk: Date, lastShown: Date, on: Bool) -> Bool {
+        on && now.timeIntervalSince(lastAsk) >= 86400 && now.timeIntervalSince(lastShown) >= 86400
+    }
+    func idea(_ i: Int) {
+        js("reset"); try? FileManager.default.removeItem(atPath: recent)   // a day later: a fresh box, like the next shortcut press
+        pill(true); show(); js("idea", [i, Self.ideas[i]]); hide(after: 8)
+        telemetry(["idea", "shown", String(i)])
     }
     // No readable field: the next keys in that app, held in memory only, for 20 s; a click, secure input or another app ends it.
     var editKeys: Any?, replayIdle: Timer?
@@ -7239,7 +7263,6 @@ func showNudge(_ info: [String: Any]) {
     DispatchQueue.main.asyncAfter(deadline: .now() + 45) { if meeting.generation == g && !meeting.running && meeting.nudge != nil { meeting.discard() } }
 }
 Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in checkCalendar() }
-
 // "Notice when you're in a call": a call app holding the mic for 3 s gets one card per call (like Granola's "Meeting detected").
 // Dictation apps (Wispr Flow, Atticus itself) aren't call apps, and a short debounce skips transient mic use. Browser helpers share the browser's prefix.
 let callApps = ["us.zoom.xos": "Zoom", "com.microsoft.teams": "Teams", "com.apple.FaceTime": "FaceTime", "com.tinyspeck.slackmacgap": "Slack",
@@ -7278,6 +7301,24 @@ let routineWake = RoutineWake()
 let onboarding = Onboarding()
 if !UserDefaults.standard.bool(forKey: "onboarded") { DispatchQueue.main.async { onboarding.open() } }
 else { Onboarding.plan { c in if c["ok"] as? Bool != true { onboarding.open(automatic: true) } } }   // set up once, but Claude signed out since
+// An idea only while the user is at the Mac and nothing else wants them: no call, sharing, full-screen app, setup, or Atticus in use.
+let launched = Date()
+func checkIdea() {
+    let log = (Prefs.path as NSString).deletingLastPathComponent + "/log.jsonl"   // every ask appends a row
+    let asked = (try? FileManager.default.attributesOfItem(atPath: log)[.modificationDate] as? Date) ?? launched
+    let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let fullScreen = { (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []).contains { w in
+        w[kCGWindowOwnerPID as String] as? pid_t == front && w[kCGWindowLayer as String] as? Int == 0 &&
+            NSScreen.screens.contains { (w[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.size == $0.frame.size }
+    } }
+    guard App.ideaDue(now: Date(), lastAsk: asked, lastShown: Date(timeIntervalSince1970: Prefs.num("ideaAt")), on: Prefs.bool("comeBack") && !Prefs.bool("paused")),
+          CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!) < 60,
+          !NSApp.isActive, !app.panel.isVisible, !app.busy, !app.engine.isRunning, !app.dictating, onboarding.win == nil,
+          !agentsUI.quiet, meeting.panel == nil, callAppsOnMic().isEmpty, !fullScreen() else { return }
+    let n = Int(Prefs.num("ideaN")); Prefs.set("ideaN", n + 1); Prefs.set("ideaAt", Date().timeIntervalSince1970)
+    app.idea(n % App.ideas.count)   // in order, so none repeats before the list is used up
+}
+Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in checkIdea() }
 var specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
              EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))]
 InstallEventHandler(GetApplicationEventTarget(), { _, ev, _ in

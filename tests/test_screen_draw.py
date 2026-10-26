@@ -190,7 +190,20 @@ class DrawingTests(unittest.TestCase):
             self.assertEqual(atticus.look(cleanup=False),[])
         self.assertFalse(snapshot.exists())
 
-    def test_look_finds_the_drawing_target_while_it_captures(self):
+    def test_look_falls_back_when_the_ask_folder_is_read_only(self):
+        def run(args, **_):
+            if args[1:2] == ['--look']: Path(args[-1]).write_bytes(b'x')
+            return subprocess.CompletedProcess(args, 0, stdout='pixelWidth: 1280\npixelHeight: 800\n')
+        ask = self.root/'ask'; ask.mkdir(); ask.chmod(0o500)
+        self.addCleanup(ask.chmod, 0o700)
+        with patch.dict(os.environ,{'ATTICUS_ASK':str(ask)}), patch.object(atticus,'pref',side_effect=lambda k,d: False if k == 'draw' else d), \
+             patch.object(atticus,'screens',return_value=[('Laptop',0,0,1440,900,True)]), patch.object(atticus.subprocess,'run',run), \
+             patch.object(atticus.atexit,'register') as register:
+            shots = atticus.look()
+        self.assertEqual(len(shots), 1)
+        self.addCleanup(os.remove, shots[0][0])
+        self.assertEqual(os.path.dirname(shots[0][0]), tempfile.gettempdir())
+        register.assert_called_once()   # outside the ask folder nobody else removes it
         import threading
         asked = threading.Event()
         def target(): asked.set(); return {'windowID': '7'}

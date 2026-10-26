@@ -434,8 +434,14 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                 self.assertEqual(log.call_args.kwargs['attempt_usd'],[.001])
                 learn.assert_not_called()
 
+    def test_plan_and_context_limits_do_not_continue_on_a_bigger_model(self):
+        for why, runs in (('plan_limit', 1), ('too_long', 1), ('rate_limited', 2)):
+            with self.subTest(why=why):
+                brain, start, _, _ = self.routing_ask({'routing': 'balanced'}, [('Stopped.', False, ['inspect']), ('Done.', True, ['verify'])], why=why)
+                self.assertEqual(brain.call_count, runs)
+
     def test_plan_limits_skip_the_retry_card(self):
-        for why, offered in (('rate_limited', False), ('stopped', True)):
+        for why, offered in (('plan_limit', False), ('too_long', False), ('provider_needed', False), ('outdated', False), ('rate_limited', True), ('stopped', True)):
             with self.subTest(why=why):
                 brain = unittest.mock.Mock(return_value=('Claude: You’ve hit your weekly limit · resets 3pm', 0, []))
                 brain.ok = False; brain.cmds = brain.ran = brain.observed = []; brain.handoff = None; brain.handoffs = []; brain.work = False; brain.why = why
@@ -977,17 +983,20 @@ print('Ready.')
              python_fixture_cli():
             reply, _, _ = atticus.run_pi('test')
         say.assert_called_with('!', 'setup')
-        self.assertEqual(reply, 'Pi stopped: No provider credentials; run /login. Open Atticus Settings, choose Set Up, then try again.')
+        self.assertEqual(reply, 'Pi needs a provider and model. Open Atticus Settings, choose Set Up, then try again.')
         self.assertEqual(atticus.run.why, 'provider_needed')
 
     def test_pi_json_errors_are_failures_even_when_the_cli_exits_zero(self):
         from types import SimpleNamespace
         cases = [
             ('error', '401 credentials expired', '', 'signed_out', True, 'choose Set Up'),
-            ('error', '429 usage limit reached', '', 'rate_limited', False, 'try again in a moment'),
-            ('error', 'Unknown provider model', '', 'provider_needed', True, 'choose Set Up'),
+            ('error', '429 usage limit reached', '', 'plan_limit', False, 'after the limit resets'),
+            ('error', '429 too many requests', '', 'rate_limited', False, 'try again in a moment'),
+            ('error', 'Prompt is too long', '', 'too_long', False, 'start a new, shorter one'),
+            ('error', 'Unknown provider model', '', 'provider_needed', True, 'Pi needs a provider and model'),
             ('error', 'Service rejected request', '', 'stopped', True, 'choose Set Up'),
             ('error', 'Service unavailable', '', 'unavailable', False, 'temporarily unavailable'),
+            ('error', 'Error: Unknown option: --no-mcp', '', 'outdated', False, 'Update Pi, then try again.'),
             ('aborted', 'Request aborted', '', 'cancelled', False, 'cancelled'),
             ('stop', '', 'Network connection failed', 'offline', False, 'Check your internet connection'),
             ('stop', '', '', 'no_reply', False, 'empty answer'),
@@ -1013,7 +1022,7 @@ print('Ready.')
                 self.assertIn(guidance, reply)
                 if opens_setup: say.assert_called_once_with('!', 'setup')
                 else: say.assert_not_called()
-                if reason == 'error' or stderr:
+                if (reason == 'error' or stderr) and why not in ('signed_out', 'provider_needed', 'too_long', 'outdated'):
                     self.assertIn(detail or stderr, reply)
                     self.assertNotIn('empty answer', reply)
 
@@ -1591,17 +1600,40 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
                 self.assertNotIn('abcdefghijklmnopqrstuvwxyz123456', atticus.run.error)
 
     def test_plan_limits_show_claudes_own_words_instead_of_setup(self):
+        resets = time.strftime(' · resets %a %-I:%M %p', time.localtime(1760000000))
         for detail, shown in (('You’ve hit your weekly limit · resets 3pm', 'You’ve hit your weekly limit · resets 3pm'),
                               ('Opus limit reached, try Sonnet', 'Opus limit reached, try Sonnet'),
-                              ('Claude AI usage limit reached|1760000000', 'Claude AI usage limit reached')):
+                              ('You’ve reached your usage limit. /upgrade to keep going', 'You’ve reached your usage limit. /upgrade to keep going'),
+                              ('Claude AI usage limit reached|1760000000', 'Claude AI usage limit reached' + resets)):
             with self.subTest(detail=detail):
                 p = unittest.mock.Mock()
                 p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
                 p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': detail})]
                 with patch.object(atticus, 'say') as say:
                     reply, _, _ = atticus.run('test', p)
-                self.assertEqual((reply, atticus.run.why), ('Claude: ' + shown, 'rate_limited'))
+                self.assertEqual((reply, atticus.run.why), ('Claude: ' + shown, 'plan_limit'))
                 self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
+
+    def test_context_limits_say_the_request_is_too_long_without_setup(self):
+        for detail in ('Context window limit reached', 'The context token limit has been reached', 'context-limit reached',
+                       'Prompt is too long', 'Context limit reached · /compact or /clear to continue'):
+            with self.subTest(detail=detail):
+                p = unittest.mock.Mock()
+                p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
+                p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': detail})]
+                with patch.object(atticus, 'say') as say:
+                    reply, _, _ = atticus.run('test', p)
+                self.assertEqual((reply, atticus.run.why), ('This request is too long for Claude. Please start a new, shorter one.', 'too_long'))
+                self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
+
+    def test_an_unknown_cli_option_asks_to_update_claude_code_without_setup(self):
+        p = unittest.mock.Mock()
+        p.stdin = io.StringIO(); p.ask = ''; p.returncode = 0; p.errors = io.StringIO()
+        p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': 'Error: Unknown option: --no-mcp'})]
+        with patch.object(atticus, 'say') as say:
+            reply, _, _ = atticus.run('test', p)
+        self.assertEqual((reply, atticus.run.why), ('Update Claude Code, then try again.', 'outdated'))
+        self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
 
     def test_terminal_error_text_uses_friendly_mapping_and_copy_details(self):
         for detail, expected in [('HTTP 429 rate limit exceeded', 'rate-limited'),
@@ -1889,7 +1921,7 @@ class WatchAndBudgetTests(unittest.TestCase):
         with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, patch('sys.stdout', new_callable=io.StringIO):
             atticus.set_switch('safe mode', 'on')
         self.assertEqual(ask.call_args.args[0], {'set': 'safe', 'value': True})
-        for words, key in [('the drawing setting', 'draw'), ('read answers aloud', 'speak'), ('safe mode', None)]:
+        for words, key in [('the drawing setting', 'draw'), ('read answers aloud', 'speak'), ('voice', 'speak'), ('safe mode', None)]:
             with patch.dict(os.environ, {'ATTICUS_ASK': '/fake'}), patch.object(atticus, 'ask_user') as ask, \
                  patch.object(atticus.subprocess, 'run'), patch('sys.stdout', new_callable=io.StringIO):
                 atticus.set_switch(words, 'off')
