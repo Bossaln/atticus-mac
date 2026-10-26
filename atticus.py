@@ -5459,7 +5459,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 say('!', 'setup')
                 reply = 'Your Claude sign-in expired. Open Atticus Settings to sign in again.'
         elif run.why == 'too_long':
-            reply = f'This request is too long for {"your custom server" if custom else "Claude"}. Please start a new, shorter one.'
+            reply = f'This request is too long for {"your custom server" if custom else "Claude"}. Close this box with ✕ to start fresh, then ask again with less text.'
         elif run.why == 'plan_limit':
             # Claude's own words say which limit, when it resets and what to try
             plan_limit = '' if custom else next((l for l in detail.splitlines() if re.search(PLAN_LIMIT, l, re.I) and not l.startswith('API Error')), '')
@@ -5476,7 +5476,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
         elif run.why == 'sandbox':
             reply = 'Claude’s sandbox could not start. Open Atticus Settings → Account & Access → Safety, turn off Safe mode, and try again.'
         elif run.why == 'outdated':
-            reply = 'Update Claude Code, then try again.'
+            reply = 'Claude Code needs an update. Open Terminal, run claude update, then try again.'
         else:
             say('!', 'setup')
             reason = ' '.join(clean(detail).split()) or f'exit code {p.returncode}'
@@ -5691,7 +5691,7 @@ def run_pi(task, shots=(), request=None):
             say('!', 'setup')
             reply = 'Pi needs a provider and model. Open Atticus Settings, choose Set Up, then try again.'
         elif run.why == 'too_long':
-            reply = 'This request is too long for Pi. Please start a new, shorter one.'
+            reply = 'This request is too long for Pi. Close this box with ✕ to start fresh, then ask again with less text.'
         elif run.why == 'plan_limit':
             reply = f'Pi stopped: {reason}. Please try again after the limit resets.'
         elif run.why == 'rate_limited':
@@ -7624,7 +7624,7 @@ def main():
         if warm:
             os.environ['ATTICUS_RELAY_ACTIVE'] = str(os.getpid())
             threading.Thread(target=relay, args=(None, os.environ['ATTICUS_ASK']), daemon=True).start()
-        answer = plain(ask_user({'q': 'Couldn’t finish this', 'cmd': 'Try again with the same model.',
+        answer = plain(ask_user({'q': 'Couldn’t finish this', 'cmd': reply if getattr(run, 'why', '') == 'rate_limited' else 'Try again with the same model.',   # the card hides the reply until it's answered
                                  'retry': True, 'details': getattr(run, 'error', '')}, 60) or '')
         if answer in ('r', 'retry', 'try again'):
             previous = run.ran[:]

@@ -455,6 +455,7 @@ print(json.dumps({{"type": "result", "is_error": True, "result": "Authentication
                      patch('sys.argv', ['atticus.py', 'Fixture task']), patch('sys.stdout', io.StringIO()) as out:
                     atticus.main()
                 self.assertEqual(card.called, offered)
+                if why == 'rate_limited': self.assertEqual(card.call_args[0][0]['cmd'], brain.return_value[0])   # the card says why
                 self.assertIn('weekly limit', out.getvalue())
 
     def test_partial_request_handoff_keeps_one_original_log_row(self):
@@ -992,7 +993,7 @@ print('Ready.')
             ('error', '401 credentials expired', '', 'signed_out', True, 'choose Set Up'),
             ('error', '429 usage limit reached', '', 'plan_limit', False, 'after the limit resets'),
             ('error', '429 too many requests', '', 'rate_limited', False, 'try again in a moment'),
-            ('error', 'Prompt is too long', '', 'too_long', False, 'start a new, shorter one'),
+            ('error', 'Prompt is too long', '', 'too_long', False, 'Close this box with ✕ to start fresh'),
             ('error', 'Unknown provider model', '', 'provider_needed', True, 'Pi needs a provider and model'),
             ('error', 'Service rejected request', '', 'stopped', True, 'choose Set Up'),
             ('error', 'Service unavailable', '', 'unavailable', False, 'temporarily unavailable'),
@@ -1623,7 +1624,7 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
                 p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': detail})]
                 with patch.object(atticus, 'say') as say:
                     reply, _, _ = atticus.run('test', p)
-                self.assertEqual((reply, atticus.run.why), ('This request is too long for Claude. Please start a new, shorter one.', 'too_long'))
+                self.assertEqual((reply, atticus.run.why), ('This request is too long for Claude. Close this box with ✕ to start fresh, then ask again with less text.', 'too_long'))
                 self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
 
     def test_an_unknown_cli_option_asks_to_update_claude_code_without_setup(self):
@@ -1632,7 +1633,7 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
         p.stdout = [json.dumps({'type': 'result', 'is_error': True, 'result': 'Error: Unknown option: --no-mcp'})]
         with patch.object(atticus, 'say') as say:
             reply, _, _ = atticus.run('test', p)
-        self.assertEqual((reply, atticus.run.why), ('Update Claude Code, then try again.', 'outdated'))
+        self.assertEqual((reply, atticus.run.why), ('Claude Code needs an update. Open Terminal, run claude update, then try again.', 'outdated'))
         self.assertNotIn(unittest.mock.call('!', 'setup'), say.call_args_list)
 
     def test_terminal_error_text_uses_friendly_mapping_and_copy_details(self):
