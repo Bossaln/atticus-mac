@@ -1781,10 +1781,14 @@ final class MiniScreen: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 
+func boxWidth(_ saved: Double, _ bounds: NSRect) -> CGFloat {
+    min(CGFloat(min(900, max(340, saved.isFinite ? saved : 500))), bounds.width - 16)
+}
+
 final class App: NSObject, WKScriptMessageHandler {
     let mini = MiniScreen()
     let quietAudio = AudioQuiet(layer: CoreAudioVolume(), changed: AudioRecovery.changed)
-    let panel = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: max(340, Prefs.num("boxW")), height: 76),
+    let panel = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: boxWidth(Prefs.num("boxW"), mouseScreen.visibleFrame), height: 76),
                         styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
     let web: WKWebView
     let engine = Mic()
@@ -1872,17 +1876,21 @@ final class App: NSObject, WKScriptMessageHandler {
             return ago < 1 && !($0 == .flagsChanged && ago >= ours - 0.6 && ago <= ours + 0.1)
         }
     }
-    func frame(_ requested: NSRect, animate: Bool = false) {   // keep the close button and composer reachable on every display
-        let screen = NSScreen.screens.max { a, b in
+    func frame(_ requested: NSRect, on target: NSScreen? = nil, animate: Bool = false) {   // keep the close button and composer reachable on every display
+        let screen = target ?? NSScreen.screens.max { a, b in
             let x = a.visibleFrame.intersection(requested), y = b.visibleFrame.intersection(requested)
             return x.width * x.height < y.width * y.height
         } ?? NSScreen.main
         guard let screen else { return }
         let bounds = screen.visibleFrame.insetBy(dx: 8, dy: 8)
         var f = requested
-        f.size.width = min(f.width, bounds.width); f.size.height = min(f.height, bounds.height)
-        f.origin.x = min(max(f.minX, bounds.minX), bounds.maxX - f.width)
-        f.origin.y = min(max(f.minY, bounds.minY), bounds.maxY - f.height)
+        // A temporary screen clamp is not a resize: restore the preferred width when space returns.
+        if !pillOn && !dragging {
+            let w = boxWidth(Prefs.num("boxW"), screen.visibleFrame)
+            if Prefs.str("corner") == "top-right" { f.origin.x = f.maxX - w }
+            f.size.width = w
+        }
+        f = MeetingFrame.clamp(f, bounds)
         (animate ? panel.animator() : panel).setFrame(f, display: true); panel.invalidateShadow()
         js("limit", bounds.height)
     }
@@ -2028,7 +2036,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     override init() {
         let cfg = WKWebViewConfiguration()
-        web = WKWebView(frame: NSRect(x: 0, y: 0, width: max(340, Prefs.num("boxW")), height: 76), configuration: cfg)
+        web = WKWebView(frame: NSRect(x: 0, y: 0, width: boxWidth(Prefs.num("boxW"), mouseScreen.visibleFrame), height: 76), configuration: cfg)
         super.init()
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)   // main-thread AX polls (mini screen, drawings, dictation learning): a hung app costs 0.5 s, not 6 s
         drawing.resolve = { label, state in try Hands.drawAnchor(label,state:state) }
@@ -2152,7 +2160,7 @@ final class App: NSObject, WKScriptMessageHandler {
             let wasDictating = dictating, interrupted = hadDrawing && (engine.isRunning || dictating || busy)
             if interrupted { hush() }
             if hadDrawing { drawing.clear() }
-            frame(panel.frame)
+            frame(panel.frame, on: panel.screen ?? mouseScreen)
             if interrupted {
                 let message = "The screen changed. Ask again to continue."
                 if wasDictating { js("dictated", ["text": message, "ok": false]) } else { js("stopped", message) }
@@ -2293,10 +2301,11 @@ final class App: NSObject, WKScriptMessageHandler {
             return
         }
         defer { if drawing.active { avoidDrawing() } }
-        let vf = mouseScreen.visibleFrame   // open where the user is looking: the cursor's screen
-        let x = Prefs.str("corner") == "top-right" ? vf.maxX - panel.frame.width - 14 : vf.minX + 14
-        panel.setFrameOrigin(NSPoint(x: x, y: vf.maxY - panel.frame.height - 10))
-        frame(panel.frame)
+        let screen = mouseScreen, vf = screen.visibleFrame   // open where the user is looking: the cursor's screen
+        var f = panel.frame
+        if !pillOn { f.size.width = boxWidth(Prefs.num("boxW"), vf) }
+        f.origin = NSPoint(x: Prefs.str("corner") == "top-right" ? vf.maxX - f.width - 14 : vf.minX + 14, y: vf.maxY - f.height - 10)
+        frame(f, on: screen)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         if escRef == nil {
@@ -2363,7 +2372,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func pill(_ on: Bool) {   // dictation is a pill the page sizes (a hidden one starts as the dot it grows from); the box gets its saved width back
         pillOn = on; js("dictate", on)
         guard !on || !panel.isVisible else { return }
-        let w = CGFloat(on ? 36 : max(340, Prefs.num("boxW")))
+        let w = on ? 36 : boxWidth(Prefs.num("boxW"), (panel.isVisible ? panel.screen : nil)?.visibleFrame ?? mouseScreen.visibleFrame)
         var f = panel.frame; guard f.width != w || on && f.height != w else { return }
         if Prefs.str("corner") == "top-right" { f.origin.x = f.maxX - w }
         if on { f.origin.y = f.maxY - w; f.size.height = w }
@@ -4532,29 +4541,38 @@ final class MenuBar: NSObject, NSMenuDelegate {
         let keys = Prefs.str("hotkeyLabel")
         let hint = Prefs.str("input") == "type" ? "Press \(keys) to type" : Prefs.str("talkMode") == "toggle" ? "Press \(keys) to talk · again to send" : "Hold \(keys) and talk"
         let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : hint, action: nil, keyEquivalent: "")
+        head.attributedTitle = NSAttributedString(string: head.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor])
         head.isEnabled = false; m.addItem(head)
+        let u = NSMenuItem(title: today(), action: nil, keyEquivalent: "")
+        u.attributedTitle = NSAttributedString(string: u.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
+        u.isEnabled = false; m.addItem(u)
         m.addItem(.separator())
-        add(m, "Ask Atticus", #selector(ask), "")
-        add(m, "Dictation History…", #selector(dictationHistory), "")
+        add(m, "Ask Atticus", #selector(ask), "", "waveform")
+        add(m, agentsUI.count > 0 ? "Agents · \(agentsUI.count) running…" : "Agents…", #selector(openAgents), "", "person.2")
+        if agentsUI.hasLive || agentsUI.lingering { add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "", Prefs.bool("agentsHidden") ? "eye" : "eye.slash") }
+        add(m, "Dictation History…", #selector(dictationHistory), "", "clock.arrow.circlepath")
         if pasteHotkeyRegistered && (app.lastDictation ?? DictationData.archive.history.first?.text) != nil {
-            add(m, "Paste Last Dictation", #selector(pasteDictation), "v"); m.items.last?.keyEquivalentModifierMask = [.control, .command]
+            add(m, "Paste Last Dictation", #selector(pasteDictation), "v", "doc.on.clipboard"); m.items.last?.keyEquivalentModifierMask = [.control, .command]
         }
-        add(m, agentsUI.count > 0 ? "Agents · \(agentsUI.count) running…" : "Agents…", #selector(openAgents), "")
-        if agentsUI.hasLive || agentsUI.lingering { add(m, Prefs.bool("agentsHidden") ? "Show Agent Shelf" : "Hide Agent Shelf", #selector(hideAgents), "") }
-        if Prefs.bool("meeting") { add(m, meeting.running ? "Stop Meeting Copilot" : "Meeting Copilot…", #selector(toggleMeeting), "") }
-        add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "")
+        if Prefs.bool("meeting") { add(m, meeting.running ? "Stop Meeting Copilot" : "Meeting Copilot…", #selector(toggleMeeting), "", meeting.running ? "stop.circle" : "record.circle") }
+        add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "", Prefs.bool("paused") ? "play.fill" : "pause.fill")
         m.addItem(.separator())
-        let u = NSMenuItem(title: today(), action: nil, keyEquivalent: ""); u.isEnabled = false; m.addItem(u)
+        add(m, "Settings…", #selector(openSettings), ",", "gearshape")
+        let help = NSMenu(title: "Help & Feedback")
+        add(help, "Setup & Permissions…", #selector(openSetup), "", "checkmark.shield")
+        add(help, "Report Feedback…", #selector(reportFeedback), "", "bubble.left")
+        add(help, "Leave a Tip…", #selector(tipJar), "", "heart")
+        if !Prefs.bool("tips") { add(help, "Show Tips Again", #selector(tipsOn), "", "lightbulb") }   // a tip's "Turn off" has no Settings row to undo it
+        add(m, "Help & Feedback", nil, "", "questionmark.circle").submenu = help
         m.addItem(.separator())
-        add(m, "Settings…", #selector(openSettings), ",")
-        add(m, "Setup & Permissions…", #selector(openSetup), "")
-        add(m, "Report Feedback…", #selector(reportFeedback), "")
-        add(m, "Leave a Tip…", #selector(tipJar), "")
-        if !Prefs.bool("tips") { add(m, "Show Tips Again", #selector(tipsOn), "") }   // a tip's "Turn off" has no Settings row to undo it
-        m.addItem(.separator())
-        add(m, "Quit Atticus", #selector(quit), "q")
+        add(m, "Quit Atticus", #selector(quit), "q", "power")
     }
-    func add(_ m: NSMenu, _ t: String, _ a: Selector, _ k: String) { let i = NSMenuItem(title: t, action: a, keyEquivalent: k); i.target = self; m.addItem(i) }
+    @discardableResult func add(_ m: NSMenu, _ t: String, _ a: Selector?, _ k: String, _ symbol: String) -> NSMenuItem {
+        let i = NSMenuItem(title: t, action: a, keyEquivalent: k); i.target = self
+        i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))   // a point size keeps wide symbols' shape
+        if #available(macOS 27.0, *) { i.preferredImageVisibility = .visible }   // macOS 27 hides menu symbols by default
+        m.addItem(i); return i
+    }
     func today() -> String {
         let format = DateFormatter(); format.dateFormat = "yyyy-MM-dd"; let day = format.string(from: Date())
         let root = (Prefs.path as NSString).deletingLastPathComponent

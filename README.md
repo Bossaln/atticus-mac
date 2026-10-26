@@ -140,6 +140,10 @@ Say “make an agent called Researcher that finds sources and writes a short bri
 
 Background agents currently require Claude Code. Pi and Devin handle foreground asks; their meeting transcripts and recaps stay local. Pi has no built-in sandbox, so Atticus disables its direct file-edit and MCP tools and Safe mode asks before every shell command; its read tools still have your account’s file access.
 
+### Chats
+
+Plain questions and answers can be saved in the Agents window: switch to **Chats** at the top. Chats keep only answers, never actions or agent tasks, stay on your Mac, can be renamed, and are never sent back to the AI. Turn saving off in Settings → Memory → Learning → Save chats.
+
 ## Meeting Copilot
 
 Enable Meeting Copilot in Settings → Meetings → Meeting Copilot settings, then open it for a call or try the demo. Drag its header or empty background in any state; the minimized pill also drags. Positions and expanded sizes are remembered per display. Double-click the header to return to the default spot. Frames stay inside the display’s usable area, including after a display change.

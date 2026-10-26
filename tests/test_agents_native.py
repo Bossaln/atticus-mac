@@ -44,6 +44,7 @@ final class MiniScreen {
 enum MeetingFrame {
  static func key(_ s:NSScreen)->String{"fixture"}
 ''' + frames + '''}
+''' + source[source.index('func boxWidth('):source.index('final class App:')] + '''
 func axAttribute(_ e:AXUIElement,_ key:String)->CFTypeRef?{nil}
 func currentMeetingEvent(_ store:EKEventStore)->[String:Any]?{nil}
 let calendar=EKEventStore()
@@ -63,7 +64,7 @@ final class AppStub{
  var defaultWanted=false,defaultObservers:[NSObjectProtocol]=[]
  func js(_ call:String,_ data:Any?=nil){calls.append(call)}
  func modelChoices()->[String:Any]{[:]}
- func frame(_ f:NSRect,animate:Bool=false){panel.setFrame(f,display:true)}
+ func frame(_ f:NSRect,on target:NSScreen?=nil,animate:Bool=false){panel.setFrame(f,display:true)}
  func cue(_ name:String){};func sound(_ name:String,_ v:Float){};func startFollowingPointerScreen(){}
  func hide(after:Double){}
  func escape(){};func shortcut(_ pressed:Bool){};func dictateShortcut(_ pressed:Bool){};func pasteLastDictation(){}

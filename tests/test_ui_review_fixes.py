@@ -160,7 +160,8 @@ if (away.frames || away.timers || !away.waiting) process.exit(3);
 
     def test_turned_off_tips_come_back_from_the_menu_bar(self):
         menu = self.swift[self.swift.index('final class MenuBar'):self.swift.index('// Settings window (ui/settings.html)')]
-        self.assertIn('if !Prefs.bool("tips") { add(m, "Show Tips Again", #selector(tipsOn), "") }', menu)
+        self.assertIn('if !Prefs.bool("tips") { add(help, "Show Tips Again", #selector(tipsOn), "", "lightbulb") }', menu)
+        self.assertIn('add(m, "Help & Feedback", nil, "", "questionmark.circle").submenu = help', menu)
         self.assertIn('@objc func tipsOn() { settings.apply("tips", true); settings.push() }', menu)
 
     def test_removed_sonnet_offer_leaves_no_card_branch(self):
