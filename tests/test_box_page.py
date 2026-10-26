@@ -38,6 +38,22 @@ ui.listen(); ui.agentStarted({id: 'e1', title: 'Tents', status: 'queued'}); ui.a
 ui.reset(); out.turns = [];
 const thread = document.getElementById('thread');
 const inView = e => { const r=e.getBoundingClientRect(), t=thread.getBoundingClientRect(); return r.height>0 && r.top>=t.top && r.bottom<=t.bottom+1; };
+out.dismissedDuringAsk = [];
+for (const mode of ['typed', 'voice', 'approval']) {
+  ui.agentDone({id: 'old', title: 'Earlier task', status: 'done', result: 'Finished.'});
+  ui.listen(mode === 'typed'); ui.words('Explain the result');
+  if(mode === 'voice')ui.line('▸ Reading the request'); else ui.think();
+  const turn=thread.lastElementChild, timer=turn.querySelector('.elapsed');
+  if(mode === 'approval')ui.ask(['Continue?', 'echo preview']);
+  const status=document.getElementById('status').textContent;
+  ui.agentCancelled();
+  const keptStatus=document.getElementById('status').textContent===status;
+  if(mode === 'approval')turn.querySelector('.ok .go').click();
+  ui.think(); ui.line('▸ Explaining the result'); settle();
+  out.dismissedDuringAsk.push([!document.querySelector('.agent-card'), keptStatus, turn.querySelectorAll('.elapsed').length, timer===turn.querySelector('.elapsed'), inView(timer)]);
+  ui.stopped('Answer stopped');
+}
+ui.reset();
 for (let i=0;i<10;i++) {
   ui.listen(true); ui.words(i===1?'Save it as a shortcut':'Change the setting'); if(i%2===0)ui.think();
   ui.line('▸ Working on the request'); ui.line('… Here is the answer so far and'); settle();
@@ -93,6 +109,7 @@ class BoxPageTests(unittest.TestCase):
         self.assertEqual(out['two'], 'I started an agent on “Ebikes”. I’ll ping you when it’s done. Queued an agent for “Helmets”. It starts when another one finishes.')   # the queued one is not called started
         self.assertEqual(out['mix'], 'Queued an agent for “Tents”. It starts when another one finishes. I started agents on “Stoves” and “Maps”. I’ll ping you when they’re done.')
         self.assertEqual(out['turns'], [[True, True, True, 1]] * 10)
+        self.assertEqual(out['dismissedDuringAsk'], [[True, True, 1, True, True]] * 3)
         self.assertEqual(out['support'], ['BUTTON', True, 'pointer', True, True])
         self.assertTrue(any(isinstance(p, dict) and p.get('kofi') for p in got['posts']))
         self.assertEqual(out['learned'], ['Learned “Atticus” Undo', 'flex', 'dn tick'])

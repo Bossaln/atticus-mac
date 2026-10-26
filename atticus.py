@@ -3488,6 +3488,8 @@ def install_exception_hooks():
         previous_sys(exc_type, value, tb)
     def thread_hook(args):
         if not threading.main_thread().is_alive(): return
+        # CPython stops executors before the main thread is marked dead.
+        if isinstance(args.exc_value, RuntimeError) and str(args.exc_value) == 'cannot schedule new futures after interpreter shutdown': return
         if issubclass(args.exc_type, SystemExit): return
         if issubclass(args.exc_type, BrokenPipeError) and stdout_closed():
             sys.stdout = open(os.devnull, 'w')
@@ -4925,6 +4927,11 @@ class Agents:
             elif action in ('start', 'followup') and identifier in self.rows:
                 if action == 'followup' and data.get('text'): self.rows[identifier].setdefault('timeline', []).append({'user': data['text']})
                 self.start(identifier, data.get('text'), evidence=data.get('text') or None if action == 'followup' else None)
+            elif action == 'rename' and identifier in self.rows:
+                title = data.get('title')
+                if not isinstance(title, str) or not title.strip(): return
+                row = self.rows[identifier]
+                row['title'] = title.strip(); self.save(row)
             elif action in ('stop', 'cancel') and identifier in self.rows:
                 row = self.rows[identifier]
                 pending = identifier in self.offers; self.offers.discard(identifier)

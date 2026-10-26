@@ -88,6 +88,7 @@ main { display:flex; min-width:0; flex-direction:column; height:100%; min-height
 #scroll { flex:1; overflow:auto; overflow-x:hidden; min-height:0; user-select:text } #page { max-width:680px; margin:0 auto; padding:6px 28px 28px; display:grid; grid-template-columns:minmax(0,1fr); gap:18px } #body { display:grid; grid-template-columns:minmax(0,1fr); gap:20px }
 header { display:flex; gap:13px; align-items:center; padding-top:4px } header canvas { width:38px; height:38px; flex:none } header .t { min-width:0; flex:1 }
 header h1 { font-size:20px; font-weight:650; letter-spacing:-.45px; line-height:1.22; margin:0; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow-wrap:anywhere }
+header h1:has(input) { display:block; overflow:visible }
 .status { display:flex; gap:7px; align-items:center; margin-top:4px; font-size:11.5px; color:var(--fg2); font-variant-numeric:tabular-nums } .status .dot { width:6px; height:6px } .status .time-label { margin-left:-3px }
 #brief { color:var(--fg2); font-size:12.5px; line-height:1.55; margin:-6px 0 0 }
 .label { font-size:10.5px; font-weight:600; letter-spacing:.3px; color:var(--fg3); margin-bottom:8px; display:flex; align-items:center; gap:8px }
@@ -146,7 +147,7 @@ const P={shield:'<path d="M8 1.6 3 3.4v4.1c0 3 2.1 5.4 5 6.6 2.9-1.2 5-3.6 5-6.6
  event:'<rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/>',mail:'<rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="m2 4 6 5 6-5"/>',pdf:'<path d="M4 1.5h5l3 3v10H4z"/><path d="M6 10.5h4"/>',
  image:'<rect x="2" y="2.5" width="12" height="11" rx="2"/><circle cx="6" cy="6.5" r="1.2"/><path d="m2.5 12 3.5-3.5 2.5 2.5 2-2 3 3"/>',folder:'<path d="M1.5 4.5v8h13v-7h-6l-1.5-2h-5z"/>',link:'<path d="M7 9a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-.8.8M9 7a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/>'};
 const icon=name=>{const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox','0 0 16 16');s.setAttribute('class','i');s.innerHTML=P[name]||P.tools;return s;};
-let shown='', hovered='', rows=[], namedRows=[], renaming='', deleting='', selected='', expanded='', mode='shelf', visible=true, last=performance.now(), t=0, textFrame=0, liveText=new Map(), attention=new Map(), folds=new Map(), opened=new Set(), namedTimer=0;
+let shown='', hovered='', rows=[], namedRows=[], renaming='', deleting='', titleEditing='', selected='', expanded='', mode='shelf', visible=true, last=performance.now(), t=0, textFrame=0, liveText=new Map(), attention=new Map(), folds=new Map(), opened=new Set(), namedTimer=0;
 const ACTIVE=['running','needs-you','waiting-screen','queued'];
 const active=r=>ACTIVE.includes(r.status);
 // A finished agent lingers on the shelf for 10 minutes of on-screen time since it was last touched (finished, card shown, hovered).
@@ -328,13 +329,21 @@ function renderList(){const ordered=[...rows].sort((a,b)=>b.created-a.created),n
   const text=el('span');text.append(el('b','',r.name),el('small','',r.brief));const line=el('div','item');line.append(el('i','dot'),text);const actions=el('div','named-actions'),rename=button('Rename',()=>{deleting='';renaming=r.name;renderList();}),remove=button(deleting===r.name?'Delete?':'×',()=>{if(deleting!==r.name){deleting=r.name;return renderList();}post({action:'named-delete',name:r.name});deleting='';showNamedStatus('Deleting…');renderList();});remove.setAttribute('aria-label',(deleting===r.name?'Confirm delete ':'Delete ')+r.name);actions.append(rename,remove);row.append(line,actions);return row;}];
  const head=(key,text)=>[key,text,()=>el('div','group',text)];
  sync($('list'),[...(namedRows.length?[head('g-saved','Saved'),...namedRows.map(saved)]:[]),...(now.length?[head('g-now','In progress'),...now.map(item)]:[]),...(past.length?[head('g-past',now.length?'Earlier':'Recent'),...past.map(item)]:[])]);}
+function conversationTitle(r){const title=$('title');if(!title.children.length)title.replaceChildren();sync(title,[['title',JSON.stringify([r.id,r.title,titleEditing===r.id]),()=>{
+ if(titleEditing!==r.id)return el('span','',r.title);
+ const edit=el('span','named-edit'),input=el('input');input.value=r.title;input.setAttribute('aria-label','Conversation name');
+ const cancel=()=>{titleEditing='';renderView();$('tools').querySelector('.rename')?.focus();};
+ const save=()=>{const title=input.value.trim();if(!title){input.setCustomValidity('Enter a name.');input.reportValidity();return;}if(title!==r.title)command('rename',r.id,{title});cancel();};
+ input.oninput=()=>input.setCustomValidity('');input.onkeydown=e=>{if(e.isComposing)return;if(e.key==='Enter'){e.preventDefault();save();}if(e.key==='Escape'){e.preventDefault();e.stopPropagation();cancel();}};
+ edit.append(input,button('Save',save,'go'),button('Cancel',cancel));setTimeout(()=>{input.focus();input.select();});return edit;
+}]]);}
 function renderView(){if(!rows.some(r=>r.id===selected))selected=([...rows].sort((a,b)=>(ACTIVE.includes(b.status)-ACTIVE.includes(a.status))||b.created-a.created)[0]?.id)||'';renderList();
  const r=rows.find(r=>r.id===selected),scroll=$('scroll'),nearBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<90;$('followup').disabled=!r;$('send').disabled=!r;document.querySelector('header canvas').hidden=!r;
  if(!r){setText($('title'),'Agents');setText($('brief'),'Your tasks, while you do something else.');$('status').replaceChildren();$('tools').replaceChildren();sync($('body'),[['empty','',()=>{const n=el('div','empty');n.append(el('b','','No agents yet'),el('span','','Ask Atticus for something that takes a while.'));return n;}]]);return;}
- $('page').className='s-'+r.status;setText($('title'),r.title);setText($('brief'),r.brief||'');document.querySelector('header canvas').style.filter=hue(r);
+ $('page').className='s-'+r.status;conversationTitle(r);setText($('brief'),r.brief||'');document.querySelector('header canvas').style.filter=hue(r);
  const status=$('status');if(status.dataset.sig!==r.status+r.id){status.dataset.sig=r.status+r.id;status.className='status s-'+r.status;status.replaceChildren(el('i','dot'),el('span','',word(r)),el('span','time-label','· '+time(r)),el('span','time-label started','· Started '+begun(r)));}
  const live=ACTIVE.includes(r.status),files=things(r).some(m=>m.url.startsWith('/'));
- sync($('tools'),[['tools',JSON.stringify([r.status,files,!!r.directory]),()=>{const a=el('div','actions');if(r.status==='offered')a.append(button('Start',()=>command('start',r.id),'go'));if(live)a.append(button([icon('stop'),'Stop'],()=>command('stop',r.id)));
+ sync($('tools'),[['tools',JSON.stringify([r.id,r.status,files,!!r.directory]),()=>{const a=el('div','actions');a.append(button('Rename',()=>{titleEditing=r.id;renderView();},'ghost rename'));if(r.status==='offered')a.append(button('Start',()=>command('start',r.id),'go'));if(live)a.append(button([icon('stop'),'Stop'],()=>command('stop',r.id)));
   if(r.directory){const b=button([icon('reveal')],()=>command('reveal',r.id),'ghost');b.title='Show in Finder';b.setAttribute('aria-label','Show in Finder');a.append(b);}return a;}]]);
  setPlaceholder(r);const parts=[],g=groups(r),text=liveText.get(r.id);
  if(r.target)parts.push(['mini',r.id,()=>mini(r)]);   // a window agent's live window leads the page

@@ -27,6 +27,40 @@ try {
   ui.reset();
   const tick = ms => new Promise(resolve => setTimeout(resolve, ms));
   const thread = d.getElementById('thread');
+  const ticking = async timer => {
+    const before = parseFloat(timer.textContent);
+    for (let n = 0; n < 20 && !(parseFloat(timer.textContent) > before); n++) await tick(50);
+    if (!(parseFloat(timer.textContent) > before)) throw Error('agent-card dismissal stopped the foreground timer');
+  };
+  for (const mode of ['typed', 'voice-step', 'voice-stream', 'approval']) {
+    ui.reset();
+    ui.agentDone({id: 'a1', title: 'Earlier task', status: 'done', result: 'Finished.'});
+    ui.listen(mode === 'typed'); ui.words('Explain the result');
+    if (mode === 'typed' || mode === 'approval') ui.think();
+    else ui.line(mode === 'voice-step' ? '▸ Reading the request' : '… Here is the explanation and');
+    const turn = thread.lastElementChild, timer = turn.querySelector('.elapsed b'), node = timer?.firstChild;
+    if (!timer) throw Error(`${mode}: no timer before card dismissal`);
+    if (mode === 'approval') ui.ask(['Continue?', 'echo preview']);
+    const status = d.getElementById('status').textContent;
+    ui.agentCancelled();   // AgentPanels.tick sees busy/listening over the previous done card
+    if (d.querySelector('.agent-card')) throw Error(`${mode}: old agent card remains`);
+    if (d.getElementById('status').textContent !== status) throw Error(`${mode}: dismissal overwrote foreground status`);
+    if (mode === 'approval') {
+      const held = timer.textContent; await tick(100);
+      if (timer.textContent !== held) throw Error('approval wait counted as work');
+      turn.querySelector('.ok .go').click();
+    }
+    await ticking(timer);
+    ui.think(); ui.line('▸ Explaining the result'); ui.line('… Here is the explanation and');
+    await ticking(timer);
+    const r = timer.getBoundingClientRect(), t = thread.getBoundingClientRect();
+    if (!r.height || r.top < t.top || r.bottom > t.bottom + 1) throw Error(`${mode}: timer is outside viewport`);
+    if (turn.querySelectorAll('.elapsed').length !== 1 || timer.firstChild !== node) throw Error(`${mode}: dismissal replaced or duplicated the timer`);
+    if (mode === 'voice-stream') ui.stopped('Answer stopped'); else { ui.line('✓ Explained.'); ui.finished(); }
+    const stopped = timer.textContent; await tick(100);
+    if (timer.textContent !== stopped) throw Error(`${mode}: completed/cancelled timer kept ticking`);
+  }
+  ui.reset();
   for (let i = 0; i < 10; i++) {
     ui.listen(true); ui.words(i === 1 ? 'Save it as a shortcut' : 'Change the setting');
     if (i % 2 === 0) ui.think();   // instant/speculative work can emit a step before think()

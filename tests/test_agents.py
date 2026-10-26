@@ -79,6 +79,38 @@ class AgentTests(unittest.TestCase):
     def prepare(self, brief='WAIT fixture', **extra):
         return self.manager.prepare({'title':'Fixture task','brief':brief,'context':'Known text','connectors':[],**extra})
 
+    def test_conversation_rename_persists_without_changing_work(self):
+        row = self.manager.new()
+        row.update(title='Original', brief='Keep this task', status='done', session='fixture-session', result='Saved answer')
+        self.manager.rows[row['id']] = row
+        self.manager.save(row)
+        original = dict(row)
+        title = '旅行 <notes> & “plans”'
+        self.manager.command({'action':'rename', 'id':row['id'], 'title':'  ' + title + '  '})
+        self.assertEqual(row, {**original, 'title':title})
+        for filename in ('state.json', 'context.json'):
+            self.assertEqual(json.loads(Path(row['directory'], filename).read_text())['title'], title)
+        self.assertEqual(self.events[-1]['agent']['title'], title)
+        restored = atticus.Agents(emit=lambda e:None, launch=lambda r:None)
+        self.addCleanup(restored.close)
+        self.assertEqual(restored.rows[row['id']], row)
+        row.update(status='running', step='Still working')
+        self.manager.command({'action':'rename', 'id':row['id'], 'title':'Working title'})
+        self.manager.save(row)   # a later worker update must keep the user's title
+        self.assertEqual(atticus.agent_history()[0]['title'], 'Working title')
+        self.assertEqual(row['session'], 'fixture-session')
+        self.assertEqual(self.spawned, [])
+
+    def test_conversation_rename_rejects_empty_invalid_and_unknown(self):
+        row = self.manager.new(); row.update(title='Original', status='done')
+        self.manager.rows[row['id']] = row; self.manager.save(row)
+        before = len(self.events)
+        for title in (None, '', ' \n\t', 42, [], {}):
+            self.manager.command({'action':'rename', 'id':row['id'], 'title':title})
+        self.manager.command({'action':'rename', 'id':'unknown', 'title':'Other'})
+        self.assertEqual(row['title'], 'Original')
+        self.assertEqual(len(self.events), before)
+
     def receipt(self, row, tool, inp, output='Done.', error=False):
         identifier=str(time.time_ns())
         self.manager.event(row,{'event':'claude','data':{'type':'assistant','message':{'content':[{'type':'tool_use','id':identifier,'name':tool,'input':inp}]}}})

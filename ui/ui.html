@@ -757,7 +757,7 @@
       (turn()||$('thread')).append(d);fit();
     },
     agentDone(row){agentCard(row);},
-    agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());status('Ready');clockStop();fit();},
+    agentCancelled(){$('thread').querySelectorAll('.agent-card').forEach(e=>e.remove());if(!working&&!listening&&clockStart===null&&clockHeld===null)status('Ready');fit();},   // dismissing an old agent card does not stop the current ask
     // The box says plainly that an agent took the ask (its orb swims to the chip meanwhile), then fades; the chip shows its steps.
     agentStarted(row){$('thread').querySelectorAll('.agent-card').forEach(e=>{e.classList.add('gone');setTimeout(()=>{e.remove();fit();},360);});working=listening=false;settle();part('q')?.classList.remove('live','hear');setState('breathing');clockStop();
       const queued=row?.status==='queued',key=queued?'queued':'started',a=part('a'),named=JSON.parse(a?.dataset[key]||'[]');status(queued?'Agent queued':'Agent started');
