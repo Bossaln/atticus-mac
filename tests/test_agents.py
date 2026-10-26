@@ -360,9 +360,11 @@ class AgentTests(unittest.TestCase):
         stop.assert_called_once(); errors.assert_not_called()
 
     def test_a_thread_cancellation_signals_the_main_thread(self):
-        with patch.object(atticus.threading, 'current_thread', return_value=object()), \
+        with patch.object(atticus, 'STOPPING', False), \
+             patch.object(atticus.threading, 'current_thread', return_value=object()), \
              patch.object(atticus.os, 'kill') as kill, patch.object(atticus.signal, 'signal') as signal_handler:
             atticus.stop_workers()
+            self.assertTrue(atticus.STOPPING)
         kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
         signal_handler.assert_not_called()
 

@@ -39,19 +39,59 @@ return out;
 '''
 
 
+CHAT_SCRIPT = r'''
+const tick = () => new Promise(r => setTimeout(r, 50)), now = Date.now()/1000;
+const chat = {id:'c'.repeat(32),title:'Daily talk',created:now,turns:[{t:now,q:'<img src=x onerror=alert(1)>',a:'A [source](https://example.com/chat).'}]};
+const agent = {id:'a'.repeat(32),title:'Agent task',status:'done',created:now,ended:now,summary:'Done'};
+const shows=id=>!!document.querySelector('#list .item[data-id="'+id+'"]'),pressed=()=>document.querySelector('#tabs [aria-pressed="true"]').textContent,foot=()=>document.querySelector('#aside-foot').hidden;
+agents.mode('view');agents.list([agent]);agents.chats([chat]);agents.select(chat.id);await tick();
+const out={chatsTab:!document.querySelector('#tabs').hidden&&pressed()==='Chats'&&shows(chat.id)&&!shows(agent.id)&&foot()};
+document.querySelector('#tabs [data-v=""]').click();await tick();
+out.agentsTab=pressed()==='Agents'&&shows(agent.id)&&!shows(chat.id)&&!foot();
+agents.prefs({tab:'chats'});out.remembered=pressed()==='Chats'&&shows(chat.id);
+Object.assign(out,{literal:document.querySelector('.entry.user .line span').textContent===chat.turns[0].q,
+ noMarkup:!document.querySelector('#body img'),disabled:document.querySelector('#followup').disabled&&document.querySelector('#send').disabled});
+document.querySelector('#body a').click();
+document.querySelector('#tools .rename').click();await tick();
+document.querySelector('#title input').value='  Renamed chat  ';
+document.querySelector('#title input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+agents.chats([{...chat,title:'Renamed chat'}]);await tick();
+out.title=document.querySelector('#title').textContent;
+out.sidebar=document.querySelector('.item[data-id="'+chat.id+'"] b').textContent;
+agents.select(agent.id);out.enabled=!document.querySelector('#followup').disabled&&!document.querySelector('#send').disabled;
+agents.prefs({tab:'chats'});agents.chats([]);await tick();out.noTabs=document.querySelector('#tabs').hidden&&shows(agent.id)&&!foot();
+agents.list([]);agents.mode('shelf');await tick();out.noShelf=!document.querySelector('.chip');
+return out;
+'''
+
+
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS WebKit page check')
 class ConversationRenamePageTests(unittest.TestCase):
-    def test_rename_keyboard_buttons_live_updates_and_selected_identity(self):
+    def run_page(self, script):
         with tempfile.TemporaryDirectory() as tmp:
             page, src, binary = Path(tmp)/'agents.html', Path(tmp)/'page.swift', Path(tmp)/'page'
             page.write_text((ROOT/'ui/agents.html').read_text().replace('/*ORBS*/', (ROOT/'ui/orbs.js').read_text()))
             src.write_text(HARNESS.replace('width: 260, height: 400', 'width: 660, height: 580'))
             built = subprocess.run(['swiftc', str(src), '-o', str(binary)], capture_output=True, text=True)
             self.assertEqual(built.returncode, 0, built.stderr)
-            run = subprocess.run([str(binary), str(page), SCRIPT], capture_output=True, text=True, timeout=60)
+            run = subprocess.run([str(binary), str(page), script], capture_output=True, text=True, timeout=60)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         got = json.loads(run.stdout.strip().splitlines()[-1])
         self.assertEqual([p for p in got['posts'] if 'error' in p], [])
+        return got
+
+    def test_chats_share_rename_and_stay_off_the_shelf(self):
+        got = self.run_page(CHAT_SCRIPT)
+        for field in ('chatsTab','agentsTab','remembered','literal','noMarkup','disabled','enabled','noTabs','noShelf'):
+            self.assertTrue(got['result'][field], field)
+        self.assertIn({'action':'tab','value':''}, got['posts'])
+        for field in ('title','sidebar'):
+            self.assertEqual(got['result'][field], 'Renamed chat')
+        self.assertIn({'action':'rename','id':'c'*32,'title':'Renamed chat'}, got['posts'])
+        self.assertIn({'action':'open','id':'c'*32,'target':'https://example.com/chat'}, got['posts'])
+
+    def test_rename_keyboard_buttons_live_updates_and_selected_identity(self):
+        got = self.run_page(SCRIPT)
         posts = [p for p in got['posts'] if p.get('action') == 'rename']
         self.assertEqual(posts, [{'action':'rename','id':'a'*32,'title':'旅行 <notes> & “plans”'},
                                  {'action':'rename','id':'b'*32,'title':'Second name'}])

@@ -195,7 +195,7 @@ enum Prefs {
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
@@ -3544,6 +3544,8 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             if let ping, rows[ping] == nil { self.ping = nil; app.agentCard = ""; app.pinned = false; app.js("agentCancelled"); app.hide(after:1) }
             if rows.values.contains(where:Self.lingers) { ensureShelf(preload:true) }
             js("shelf","list",sorted); js("view","list",sorted); js("view","named",named)
+        } else if kind == "chats" {
+            js("view","chats",event["chats"] as? [[String:Any]] ?? [])
         } else if kind == "named" {
             named = event["named"] as? [[String:Any]] ?? []; js("view","named",named)
             if let reply = event["reply"] as? String { js("view","namedReply",reply) }
@@ -3832,7 +3834,10 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         }
     }
     func open(_ id:String, target:String? = nil, reveal:Bool = false) {
-        guard let row = rows[id] else { return }
+        guard let row = rows[id] else {
+            if let target, let url = URL(string:target), ["https","http"].contains(url.scheme?.lowercased() ?? "") { NSWorkspace.shared.open(url) }
+            return
+        }
         app.allowUntil = Date().addingTimeInterval(3); app.allowUserApp = true   // a click in our own panel never reaches the global monitor, so the focus guard took this for an app raising itself
         if row["destination"] as? String == "meeting" { meeting.open(); meeting.showAgentPrep(row); return }
         let raw = target ?? ((row["made"] as? [[String:Any]])?.first?["url"] as? String) ?? (row["links"] as? [String])?.first   // the main thing it made
@@ -3854,7 +3859,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         let surface = message.webView === viewWeb ? "view" : "shelf", id = body["id"] as? String ?? ""
         switch action {
         case "ready":
-            ready.insert(surface); js(surface,"mode",surface); js(surface,"prefs",["dismissed":Array(dismissed),"stack":Prefs.str("agentStack")]); js(surface,"list",sorted); if surface == "view" { js(surface,"named",named); if !selected.isEmpty { js(surface,"select",selected) } }
+            ready.insert(surface); js(surface,"mode",surface); js(surface,"prefs",["dismissed":Array(dismissed),"stack":Prefs.str("agentStack"),"tab":Prefs.str("agentTab")]); js(surface,"list",sorted); if surface == "view" { js(surface,"named",named); if !selected.isEmpty { js(surface,"select",selected) } }
             if surface == "shelf" {
                 js(surface,"visible",shelf?.isVisible == true)   // a preloaded shelf starts hidden; tick only reports changes
                 if !expandOnReady.isEmpty { js(surface,"expand",expandOnReady); expandOnReady = "" }
@@ -3873,6 +3878,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             dismissed.insert(id)
             if hovered == id, miniSurface == "shelf" { endPreview() }
         case "stack": Prefs.set("agentStack",body["value"] as? String ?? "")
+        case "tab": Prefs.set("agentTab",body["value"] as? String == "chats" ? "chats" : "")
         case "view", "show": openView(id); if rows[id]?["status"] as? String == "done" { send(["action":"seen","id":id]) }   // a finished chip clicked open
         case "lingering": lingering = body["value"] as? Bool ?? false; tick()
         case "close": if surface == "view" { view?.orderOut(nil); closeView() }

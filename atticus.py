@@ -3959,6 +3959,45 @@ def private_json(path, data):
         if os.path.exists(tmp): os.unlink(tmp)
 
 
+def saved_chats():
+    try:
+        with open(os.path.join(DIR, 'chats.json')) as f: return json.load(f)
+    except (OSError, ValueError): return []
+
+
+def update_chats(turn=None, previous=None, identifier=None, title=None):
+    os.makedirs(DIR, mode=0o700, exist_ok=True)
+    with open(os.path.join(DIR, 'chats.lock'), 'a') as lock:
+        os.fchmod(lock.fileno(), 0o600); fcntl.flock(lock, fcntl.LOCK_EX)
+        chats = saved_chats()
+        if turn:
+            if chats and previous and chats[0]['turns'][-1]['t'] == previous['t']:
+                chats[0]['turns'].append(turn)
+            else:
+                chats.insert(0, {'id': uuid.uuid4().hex, 'title': ' '.join(turn['q'].split()[:8]), 'created': turn['t'], 'turns': [turn]})
+            chats[0]['turns'] = chats[0]['turns'][-50:]
+        else:
+            chat = next((c for c in chats if c['id'] == identifier), None)
+            if not chat: return
+            chat['title'] = title
+        # Match private_json's encoding, including UTF-8 bytes and JSON escaping.
+        while len(json.dumps(chats, ensure_ascii=False).encode('utf-8')) > 1_000_000:
+            if len(chats) > 1: chats.pop()
+            elif len(chats[0]['turns']) > 1: chats[0]['turns'].pop(0)
+            else:
+                last = chats[0]['turns'][0]
+                key = max(('q', 'a'), key=lambda k: len(last[k]))
+                last[key] = last[key][:len(last[key]) // 2]
+                chats[0]['title'] = chats[0]['title'][:200]
+        private_json(os.path.join(DIR, 'chats.json'), chats)
+        return True
+
+
+def plain_chat(ok, failed, replacement, task, confirmed_task, ran):
+    return bool(ok and not failed and not replacement and task == confirmed_task and
+                all(command in ('<Read>', '<WebSearch>', '<WebFetch>') or agent_read_command(command) for command in ran))
+
+
 def persist_handoff(brief, worker_pid):
     """A dead box/supervisor must not be the only owner of a cancelled ask."""
     root = os.path.join(DIR, 'pending-handoffs'); os.makedirs(root, mode=0o700, exist_ok=True)
@@ -4422,6 +4461,7 @@ class Agents:
         self.offers = set()
         self.lock = threading.RLock(); self.idle = None; self.idle_at = 0; self.closed = False
         self.named_at = 0
+        self.chats_stamp = 0; self.chats_at = 0
         try: self.named_stamp = os.stat(os.path.join(DIR, 'agents', 'named.json')).st_mtime_ns
         except OSError: self.named_stamp = 0
         self.box = {'busy': True}; self.pings = [r['id'] for r in self.rows.values() if r.get('status') == 'done' and not r.get('seen') and r.get('pinged') != r.get('ended')]
@@ -4877,6 +4917,12 @@ class Agents:
                 except OSError: stamp = 0
                 if stamp != self.named_stamp:
                     self.named_stamp = stamp; self.emit({'event': 'named', 'named': named_agents()})
+            if now >= self.chats_at:
+                self.chats_at = now + 1
+                try: stamp = os.stat(os.path.join(DIR, 'chats.json')).st_mtime_ns
+                except OSError: stamp = 0
+                if stamp != self.chats_stamp:
+                    self.chats_stamp = stamp; self.emit({'event': 'chats', 'chats': saved_chats()})
             if self.idle and time.monotonic() - self.idle_at >= 600:
                 self.stop_process(self.idle['id']); self.idle = None
             for identifier, p in list(self.processes.items()):
@@ -4927,11 +4973,15 @@ class Agents:
             elif action in ('start', 'followup') and identifier in self.rows:
                 if action == 'followup' and data.get('text'): self.rows[identifier].setdefault('timeline', []).append({'user': data['text']})
                 self.start(identifier, data.get('text'), evidence=data.get('text') or None if action == 'followup' else None)
-            elif action == 'rename' and identifier in self.rows:
+            elif action == 'chats': self.emit({'event': 'chats', 'chats': saved_chats()})
+            elif action == 'rename':
                 title = data.get('title')
                 if not isinstance(title, str) or not title.strip(): return
-                row = self.rows[identifier]
-                row['title'] = title.strip(); self.save(row)
+                if identifier in self.rows:
+                    row = self.rows[identifier]
+                    row['title'] = title.strip(); self.save(row)
+                elif update_chats(identifier=identifier, title=title.strip()):
+                    self.emit({'event': 'chats', 'chats': saved_chats()})
             elif action in ('stop', 'cancel') and identifier in self.rows:
                 row = self.rows[identifier]
                 pending = identifier in self.offers; self.offers.discard(identifier)
@@ -6421,6 +6471,7 @@ def remember_turn(q, a, shortcut=None, agents=()):
             f.writelines(json.dumps(r) + '\n' for r in turns); f.flush(); os.replace(f.name, RECENT)
         finally:
             if os.path.exists(f.name): os.unlink(f.name)
+    return turn
 
 
 def ask():
@@ -7681,7 +7732,9 @@ def main():
     learned_entry = skills().get(learned_key) if learned_key else None
     learned_turn = {'key': learned_key, 'commands': learned_entry['cmds'],
                     'output': [f'{o.get("action", "")} => {str(o.get("result", ""))[:400]}' for o in run.observed] or [reply[:400]]} if learned_entry else None
-    remember_turn(task, reply, learned_turn)
+    turn = remember_turn(task, reply, learned_turn)
+    if turn and pref('saveChats', True) and plain_chat(run.ok, failed, replacement, task, confirmed_task, final_ran):
+        update_chats(turn={k: turn[k] for k in ('t', 'q', 'a')}, previous=turns[-1] if turns else None)
     if not run.ok or failed: end_turn('failed', emit=False)
     log_turn(TURN.get('task', task), reply, t, cost, steps, final_ran, len(images or ()),
              model=model, escalated=escalated, escalate_why=escalate_why, attempt_usd=attempt_usd)
