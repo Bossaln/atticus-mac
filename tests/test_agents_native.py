@@ -28,6 +28,8 @@ import AVFoundation
 import EventKit
 let dir=CommandLine.arguments[1]
 var fixtureReduced=false
+var fixtureTelemetry:[[String]]=[]
+func telemetry(_ args:[String]){fixtureTelemetry.append(args)}
 enum Prefs {
  static let path=ProcessInfo.processInfo.environment["ATTICUS_DIR"]!+"/settings.json"
  static var d:[String:Any]=[:]
@@ -146,6 +148,7 @@ first.terminate()
 let deadline=Date().addingTimeInterval(8)
 while Date()<deadline,agentsUI.process==nil||agentsUI.process===first{RunLoop.main.run(until:Date().addingTimeInterval(0.05))}
 guard let second=agentsUI.process,second !== first,second.isRunning,agentsUI.buffer.isEmpty else{print("Crashed supervisor was not restarted cleanly");exit(1)}
+precondition(first.terminationStatus != 0 && fixtureTelemetry == [["error","worker_exit","python",String(first.terminationStatus)]],"Supervisor crash did not emit exactly one matching worker_exit")
 second.terminate();print("supervisor restart ok")''','supervisor restart ok')
 
     def test_card_flight_placement_and_reduced_motion(self):

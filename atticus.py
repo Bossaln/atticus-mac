@@ -47,11 +47,14 @@ BUY = 'https://3370759087892.gumroad.com/l/atticus'
 KEY_FILE = os.path.join(DIR, 'license')
 # Anonymous counts, timings and error locations under a random install ID; never asks or screen content. Off in Settings → Privacy. Empty key = off.
 POSTHOG_KEY = os.environ.get('ATTICUS_POSTHOG_KEY', 'phc_mGpLLzJtYTToBF8uSkqkUxMMG9ANmQWKDBnpsRDmzy6P')   # public capture token; empty override disables
+APP_COMMIT = 'unknown'
 try:
     APP_VERSION = Path(ME).with_name('VERSION').read_text().strip()
 except OSError:
     try:
-        with open(Path(ME).parents[1] / 'Info.plist', 'rb') as f: APP_VERSION = plistlib.load(f).get('CFBundleShortVersionString', 'unknown')
+        with open(Path(ME).parents[1] / 'Info.plist', 'rb') as f: info = plistlib.load(f)
+        APP_VERSION = info.get('CFBundleShortVersionString', 'unknown')
+        APP_COMMIT = info.get('AtticusCommit', 'unknown')
     except (OSError, ValueError): APP_VERSION = 'unknown'
 
 
@@ -3398,7 +3401,7 @@ def posthog(event, props=None, stamp=()):
     if not telemetry_enabled():
         return
     try:
-        body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': install_id(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION,
+        body = json.dumps({'api_key': POSTHOG_KEY, 'event': event, 'distinct_id': install_id(), 'properties': {'$process_person_profile': False, 'version': APP_VERSION, 'commit': APP_COMMIT,
                                                                                                             'macos': platform.mac_ver()[0], 'client': client(), **(props or {})}})
         subprocess.Popen(['/bin/sh', '-c', 'curl -fsS -m 10 -H "Content-Type: application/json" -d "$1" https://us.i.posthog.com/i/v0/e/' + (' && printf %s "$2" > "$3"' if stamp else ''),
                           'atticus-ping', body, *stamp],
@@ -4870,9 +4873,11 @@ class Agents:
                         self.stop_process(row['id'])
                         if self.idle is row: self.idle = None
                     else: self.revive(row)
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError) as error:
             with self.lock:
-                if self.processes.get(row['id']) is p: self.revive(row)
+                if self.processes.get(row['id']) is p:
+                    exception_error(type(error), error.__traceback__, error, kind='worker_exception', worker='claude', stage='agent_read')
+                    self.revive(row)
 
     def revive(self, row):
         """Its process died mid-task: start it once more on the saved conversation and retry the step; a second death fails."""
@@ -7191,6 +7196,8 @@ def main():
     if len(args) == 5 and args[:3] == ['--telemetry', 'error', 'worker_exit']:
         return report_error('worker_exit', worker=args[3] if args[3] in ('python', 'claude', 'devin', 'pi') else 'python',
                             exit=int(args[4]) if args[4].lstrip('-').isdigit() else -1)
+    if args == ['--telemetry', 'error', 'native', 'mic_start']:
+        return report_error('native', stage='mic_start')
     if len(args) == 3 and args[:2] == ['--telemetry', 'support']:   # a Leave a Tip click in the app
         return posthog('support', {'action': 'clicked', 'from': args[2] if args[2] in ('overlay', 'setup', 'settings', 'menu') else 'other'})
     if len(args) == 4 and args[:2] == ['--telemetry', 'idea'] and args[2] in ('shown', 'clicked') and args[3].isdigit():   # "Ideas when I'm away": which one, never its text

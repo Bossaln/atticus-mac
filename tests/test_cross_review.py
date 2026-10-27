@@ -90,6 +90,7 @@ assert.equal(P.apiModel,'b-model'); assert.equal(JSON.stringify(nodes),before);
         source = (ROOT / 'Atticus.swift').read_text()
         methods = source[source.index('    func send(_ data:[String:Any])'):source.index('    func prepare(_ brief:')]
         swift_check(self, """import Darwin
+func telemetry(_ args:[String]) {}
 func py(_ args:[String])->Process { let p=Process(); p.executableURL=URL(fileURLWithPath:"/bin/cat"); return p }
 final class Fixture {
  var process:Process?, input:FileHandle?, output:Pipe?, buffer=Data(), lastBox:NSDictionary?, restarts=0

@@ -2754,7 +2754,7 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         engine.start(device, sampleRate: want.sampleRate, onBuffer) { [weak self] result in
             guard let self, listenID == listeningID else { return }
-            if case .failure(let error) = result { if replying { stopOfferInput() } else { hush() }; js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
+            if case .failure(let error) = result { telemetry(["error", "native", "mic_start"]); if replying { stopOfferInput() } else { hush() }; js("msg", "Mic error: \(error.localizedDescription)"); hide(after: 3); return }
             began = Date()   // measure the limit from when the mic is ready
             Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
                 guard let self, listenID == listeningID, engine.isRunning else { return t.invalidate() }
@@ -3446,7 +3446,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
         localKeys = NSEvent.addLocalMonitorForEvents(matching:.keyDown) { [weak self] e in if Int(e.keyCode) == kVK_Escape { self?.js("shelf","blur") }; return e }
         timer = Timer.scheduledTimer(withTimeInterval:0.1, repeats:true) { [weak self] _ in self?.tick() }
         NotificationCenter.default.addObserver(forName:NSApplication.willTerminateNotification, object:nil, queue:.main) { [weak self] _ in
-            self?.process?.terminate(); self?.mini.reset()
+            self?.process?.terminationHandler = nil; self?.process?.terminate(); self?.mini.reset()
         }
         NotificationCenter.default.addObserver(forName:NSApplication.didChangeScreenParametersNotification, object:nil, queue:.main) { [weak self] _ in
             guard let self else { return }
@@ -3498,6 +3498,7 @@ final class AgentPanels: NSObject, WKScriptMessageHandler {
             out.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async { [weak self] in
                 guard let self, process === p else { return }
+                if p.terminationReason == .uncaughtSignal || (p.terminationStatus != 0 && p.terminationStatus != 70) { telemetry(["error", "worker_exit", "python", String(p.terminationStatus)]) }
                 // A crash drops its half-read line and box state; a fresh supervisor relists its saved rows.
                 process = nil; input = nil; buffer = Data(); lastBox = nil; restarts += 1
                 DispatchQueue.main.asyncAfter(deadline:.now() + min(60, pow(2, Double(restarts)))) { [weak self] in self?.start() }

@@ -6,6 +6,7 @@ VERSION=$(tr -d '\n' < VERSION)
 IFS=. read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$VERSION"
 (( VERSION_MINOR < 1000 && VERSION_PATCH < 1000 )) || { echo "VERSION components must be below 1000"; exit 1; }
 BUILD=$((VERSION_MAJOR * 1000000 + VERSION_MINOR * 1000 + VERSION_PATCH))
+COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ] || { echo "Atticus needs macOS 26 or later (it uses Apple's new on-device speech)."; exit 1; }
 xcode-select -p >/dev/null 2>&1 || { echo "Needs Apple's command line tools. Run: xcode-select --install   then run ./build.sh again."; exit 1; }
 command -v python3 >/dev/null || { echo "Atticus needs Python 3. Install it, then run ./build.sh again."; exit 1; }
@@ -28,6 +29,7 @@ cat > "$APP/Contents/Info.plist" <<P
 <key>CFBundleExecutable</key><string>Atticus</string>
 <key>CFBundleVersion</key><string>$BUILD</string>
 <key>CFBundleShortVersionString</key><string>$VERSION</string>
+<key>AtticusCommit</key><string>$COMMIT</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>AtticusSource</key><string>$(pwd)</string>

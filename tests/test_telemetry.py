@@ -33,7 +33,7 @@ class TelemetryTests(unittest.TestCase):
                 payload = json.loads(args[4])
                 self.assertEqual(payload['event'], 'used')
                 self.assertEqual(payload['api_key'], 'fixture-token')
-                self.assertEqual(payload['properties'], {'$process_person_profile': False, 'version': atticus.APP_VERSION,
+                self.assertEqual(payload['properties'], {'$process_person_profile': False, 'version': atticus.APP_VERSION, 'commit': atticus.APP_COMMIT,
                                                                   'macos': platform.mac_ver()[0], 'client': 'claude'})
                 self.assertEqual(set(payload), {'api_key', 'event', 'distinct_id', 'properties'})
                 worker = spawn(args, **kwargs)
@@ -62,7 +62,7 @@ class TelemetryTests(unittest.TestCase):
         payload = json.loads(send.call_args.args[0][4])
         self.assertEqual(payload['event'], 'task_failed')
         self.assertEqual(payload['properties']['version'], atticus.APP_VERSION)
-        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'task', 'reply', 'steps', 'why', 'secs', 'model', 'client', 'macos'})
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'commit', 'task', 'reply', 'steps', 'why', 'secs', 'model', 'client', 'macos'})
 
     def test_failure_reports_drop_text_applescript_types_or_writes(self):
         steps = ['osascript -e \'tell application "System Events" to keystroke "hunter2"\'',
@@ -83,7 +83,7 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(payload['event'], 'ask_done')
         self.assertEqual(payload['properties']['tools'], ['place', 'web'])
         self.assertEqual(payload['properties']['status'], 'ok')
-        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'path', 'model', 'secs', 'steps',
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'commit', 'path', 'model', 'secs', 'steps',
                                                       'tools', 'status', 'escalated', 'macos', 'client'})
         self.assertNotIn('Private', json.dumps(payload))
 
@@ -103,7 +103,7 @@ class TelemetryTests(unittest.TestCase):
                 atticus.exception_error(type(error), error.__traceback__)
             atticus.report_error('replay', shortcut='0123456789abcdef', failed_at=2)
         crash, replay = [json.loads(call.args[0][4]) for call in send.call_args_list]
-        self.assertEqual(set(crash['properties']), {'$process_person_profile', 'version', 'kind', 'macos', 'client',
+        self.assertEqual(set(crash['properties']), {'$process_person_profile', 'version', 'commit', 'kind', 'macos', 'client',
                                                     'exception', 'file', 'line', 'function', 'at_line', 'at_function'})
         self.assertEqual(crash['properties']['exception'], 'RuntimeError')
         self.assertNotIn('private crash detail', json.dumps(crash))
@@ -279,7 +279,7 @@ for (p, expected) in [(Worker(terminationReason: .exit, terminationStatus: 0), 0
         payload = json.loads(send.call_args.args[0][4])
         self.assertEqual(payload['event'], 'dictation')
         self.assertEqual(payload['properties']['secs'], 1.235)
-        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'macos', 'client', 'mode', 'secs',
+        self.assertEqual(set(payload['properties']), {'$process_person_profile', 'version', 'commit', 'macos', 'client', 'mode', 'secs',
                                                       'cleanup_used', 'fell_back', 'timed_out', 'insert'})
 
     def test_the_ask_log_and_its_folder_are_private_even_on_older_installs(self):
