@@ -238,6 +238,25 @@ class DrawingTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, '--look again'):
                         atticus.draw({'steps':[{'target':'Control','say':'Look here.','shapes':[{'kind':'rect'}]}]})
 
+    def test_look_uses_capture_fallback_when_native_helper_is_missing(self):
+        calls = []
+        def run(args, **_):
+            calls.append(args)
+            if args[0] == atticus.APP:
+                raise FileNotFoundError(2, 'missing helper', atticus.APP)
+            if args[0] == 'screencapture': Path(args[-1]).write_bytes(b'x')
+            return subprocess.CompletedProcess(args, 0, stdout='')
+        window = {'windowID':'7', 'windowFrame':[0,0,800,600], 'window':'Hidden', 'app':'Example', 'visible':False}
+        with patch.dict(os.environ, {'ATTICUS_ASK':str(self.root)}), \
+             patch.object(atticus, 'pref', side_effect=lambda k,d: False if k == 'draw' else d), \
+             patch.object(atticus, 'screens', return_value=[('Display',0,0,1440,900,True)]), \
+             patch.object(atticus.subprocess, 'run', run):
+            shots = atticus.look(cleanup=False, window=window)
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(Path(shots[0][0]).read_bytes(), b'x')
+        self.assertEqual([args[0] for args in calls], [atticus.APP, 'screencapture', 'sips'])
+        self.assertNotIn('painted', shots[0][1])
+
     def test_ax_draw_refreshes_the_map_in_the_look_target(self):
         target={'pid':123,'windowID':'17','windowFrame':[0,0,800,600]}
         (self.root/'draw-screens.json').write_text(json.dumps({

@@ -2214,7 +2214,10 @@ def look(cleanup=True, window=None):
         if cleanup and not ask:
             atexit.register(lambda: os.path.exists(path) and os.remove(path))
         # Atticus.app takes it, leaving its own box out; plain screencapture is the fallback (box included)
-        r = subprocess.run([APP, '--look', str(i), path] + ([str(window['windowID'])] if i == home else []), capture_output=True, text=True)
+        try:
+            r = subprocess.run([APP, '--look', str(i), path] + ([str(window['windowID'])] if i == home else []), capture_output=True, text=True)
+        except FileNotFoundError:
+            r = subprocess.CompletedProcess([APP], 1, stdout='')
         if r.returncode:
             subprocess.run(['screencapture', '-x', '-D', str(i), '-t', 'jpg', path])
             subprocess.run(['sips', '-Z', '1280', '-s', 'formatOptions', '70', path], capture_output=True)
