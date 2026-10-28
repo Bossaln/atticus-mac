@@ -17,7 +17,7 @@ Atticus (Open-Source-Sprachassistent für Mac, github.com/SaarthurR/atticus-mac)
 3. **Sender-Binary:** `~/.local/bin/atticus-ask` (kompiliertes Swift) sendet die Notification `atticus.ask`.
 4. **Kurzbefehl „Atticus starten“** (Shell-Skript: `~/.local/bin/atticus-ask`), ausgelöst über Bedienungshilfen → Sprachkurzbefehle mit „Hey Ava“. Der Kurzbefehl funktioniert, der Sprachauslöser wird gerade getestet.
 
-> Hinweis: Wegen lokaler Änderungen greift das Auto-Update nicht mehr („Skipped: local changes“).
+> Die Patches sind jetzt im Fork committet, das Auto-Update meldet deshalb nicht mehr „Skipped: local changes“.
 
 ## Vorlese-Stimme (behoben am 28.10.2026, testen!)
 
