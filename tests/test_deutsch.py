@@ -81,19 +81,5 @@ class DeutschTests(unittest.TestCase):
         self.assertNotIn('</', src)   # steht in einem <script> der Seite
 
 
-    def test_hey_ava_erkennt_nur_das_aktivierungswort(self):
-        from pathlib import Path
-        from tests import run_swift
-        source = (Path(__file__).resolve().parent.parent / 'Atticus.swift').read_text()
-        rule = next(l for l in source.splitlines() if 'static let phrase = try! NSRegularExpression' in l)
-        run_swift(self, "import Foundation\nenum WakeWord {\n" + rule + """
-    static func matches(_ words: String) -> Bool { phrase.firstMatch(in: words, range: NSRange(words.startIndex..., in: words)) != nil }
-}
-for w in ["Hey Ava", "hey, Ava!", "Hey Awa", "Heyava", "Hei Ava, öffne Safari", "Ava, wie spät ist es"] { precondition(WakeWord.matches(w), w) }
-for w in ["Hey Eva", "Havanna", "Ich habe Ava gesagt", "Hey Avatar", "Java"] { precondition(!WakeWord.matches(w), w) }
-print("ok")
-""")
-
-
 if __name__ == '__main__':
     unittest.main()

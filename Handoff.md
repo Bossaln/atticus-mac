@@ -58,17 +58,7 @@ Atticus (Open-Source-Sprachassistent für Mac, github.com/SaarthurR/atticus-mac)
 - Seitencode, der eigenen Text wieder vergleicht, nutzt `atticusOrig()` (in `agents.html` und `ui.html` angepasst).
 - Lücken: Texte, die aus Teilen zusammengesetzt werden („vor 5 Min.“ usw.), Alerts und einige Python-Meldungen bleiben teils englisch. Fehlende Texte einfach in `deutsch/i18n/fixes.json` ergänzen.
 
-## „Hey Ava“ als Aktivierungswort (28.10.2026)
-
-- Einstellungen → Allgemein → **Hey Ava** (Prefs-Key `heyAva`, Standard aus; bei Luca an).
-- `WakeWord` in `Atticus.swift`: eigener `SpeechTranscriber` (Sprache aus `speechLocale()`) auf dem gewählten Mikrofon, prüft jede Sekunde, ob er laufen darf: nicht während Atticus zuhört, arbeitet, vorliest, pausiert ist oder ein Meeting läuft. Alle 5 Minuten neu gestartet.
-- Ablauf wie bei Siri: „Hey Ava“ (oder „Ava“ am Satzanfang, weil die Zwischenergebnisse das „Hey“ oft verlieren) → Ton + Box hört zu; der Rest des Satzes bzw. der nächste Satz wird wie getippt gestellt (`app.typed`). 8 s Stille → Box geht wieder zu.
-- Die Erkennung kommt 1–2 s verspätet, deshalb hört `WakeWord` den Satz selbst zu Ende, statt an die normale Aufnahme zu übergeben.
-- Dauerhaft an: oranger Mikrofon-Punkt, ca. 4–5 % CPU. Nichts Gehörtes wird gespeichert.
-- Der alte Sprachkurzbefehl „Hey Ava“ (Bedienungshilfen) sollte aus sein, sonst lösen beide aus (der `atticus.ask`-Observer ignoriert Doppelte innerhalb von 3 s).
-
 ## Nächste Schritte
 
 1. Deutsche Instant-Befehle im Alltag testen und fehlende Formulierungen ergänzen.
-2. „Hey Ava“ im Alltag testen (Fehlauslösungen, verpasste Aktivierungen).
-3. Deutsche Oberfläche durchklicken, englisch gebliebene Texte in `deutsch/i18n/fixes.json` nachtragen.
+2. Deutsche Oberfläche durchklicken, englisch gebliebene Texte in `deutsch/i18n/fixes.json` nachtragen.
