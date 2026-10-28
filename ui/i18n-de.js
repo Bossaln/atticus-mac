@@ -560,6 +560,7 @@ window.ATTICUS_DE = {
 "Say \"remember …\" and Atticus keeps it as a rule.": "Sag \"merke dir …\" und Atticus behält es als Regel.",
 "Say \"when I say study mode, open …\" to make your own instant command.": "Sag \"wenn ich Lernmodus sage, öffne …\", um deinen eigenen Instant-Befehl zu erstellen.",
 "Say it. It’s done.": "Sag es. Erledigt.",
+"Say “Hey Ava” to talk. The mic stays on while Atticus waits.": "Sag „Hey Ava“ zum Sprechen. Das Mikrofon bleibt an, solange Atticus wartet.",
 "Say “Retry” or “Not now”": "Sag „Wiederholen“ oder „Nicht jetzt“",
 "Say “remember…” or add one here.": "Sag „merk dir …“ oder füge hier eine hinzu.",
 "Saying the same thing more than once? Tell Atticus how you want it done. It remembers next time.": "Sagst du etwas mehrmals? Sag Atticus, wie du es haben willst. Er merkt es sich fürs nächste Mal.",

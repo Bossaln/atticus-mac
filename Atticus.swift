@@ -195,7 +195,7 @@ enum Prefs {
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "sprache": "de", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "sprache": "de", "heyAva": false, "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
@@ -2184,7 +2184,7 @@ final class App: NSObject, WKScriptMessageHandler {
             self?.allowUntil = Date().addingTimeInterval(3)   // hands raise an app for a mouse click, then put the user's app back
             self?.allowUserApp = n.object as? String == "user"   // a voice focus request changes the user's app; a temporary hands raise does not
         }
-        DistributedNotificationCenter.default().addObserver(forName: .init("atticus.ask"), object: nil, queue: .main) { _ in bar.ask() }
+        DistributedNotificationCenter.default().addObserver(forName: .init("atticus.ask"), object: nil, queue: .main) { _ in if Date().timeIntervalSince(wake.lastFire) > 3 { bar.ask() } }   // nicht doppelt, wenn auch „Hey Ava“ es gehört hat
         SFSpeechRecognizer.requestAuthorization { _ in }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -4963,7 +4963,8 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             }
         }
         if k == "speechModel" || k == "sprache" { app.prepareSpeech() }
-        if k == "sprache" { applyUILanguage() }   // a new language may need its model downloaded
+        if k == "sprache" { applyUILanguage() }
+        if k == "heyAva" { wake.tick() }   // a new language may need its model downloaded
         if k == "improve" { Prefs.set("improveAsked", true) }   // any answer, here or in setup or the card, is the answer
         if k == "speak", v as? Bool == false { app.shush() }
         if k == "hideWhenSharing" { NSApp.windows.forEach(applySharing) }
@@ -7546,6 +7547,91 @@ let pasteHotkeyRegistered = !hotkeysConflict(pasteHotkey, hotkey()) && (Prefs.st
     RegisterEventHotKey(UInt32(pasteHotkey.code), UInt32(pasteHotkey.mods), EventHotKeyID(signature: 0x41545443, id: 7), GetApplicationEventTarget(), 0, &pasteRef) == noErr
 let settings = SettingsWindow()
 let bar = MenuBar()
+// Fork: „Hey Ava“ (Einstellungen → Hey Ava) öffnet die Box wie „Atticus fragen“. Hört mit der Spracherkennung auf diesem Mac
+// mit, nur solange Atticus nicht selbst zuhört, arbeitet, vorliest oder ein Meeting läuft; die Worte werden nirgends gespeichert.
+final class WakeWord {
+    private let mic = Mic()
+    private var analyzer: SpeechAnalyzer?, reading: Task<Void, Never>?, feed: AsyncStream<AnalyzerInput>.Continuation?
+    private var started = Date.distantPast, generation = 0, armed = false
+    private(set) var lastFire = Date.distantPast
+    // „Hey Ava“ irgendwo, oder „Ava“ am Satzanfang: die Zwischenergebnisse verlieren das „Hey“ oft, das Endergebnis kommt Sekunden später
+    static let phrase = try! NSRegularExpression(pattern: #"\b(?:hey|hei|hay|he)[\s,.!]*(?:ava|awa)\b|\bheyava\b|^\W*(?:ava|awa)\b"#, options: .caseInsensitive)
+    static func matches(_ words: String) -> Bool { phrase.firstMatch(in: words, range: NSRange(words.startIndex..., in: words)) != nil }
+    func wanted() -> Bool {
+        Prefs.bool("heyAva") && !Prefs.bool("paused") && !app.engine.isRunning && !app.busy && app.voice?.isRunning != true && !meeting.running
+            && Date().timeIntervalSince(lastFire) > 2 && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && SFSpeechRecognizer.authorizationStatus() == .authorized
+    }
+    func tick() {   // jede Sekunde; alle 5 Minuten frisch, damit eine stundenlange Sitzung nicht wächst
+        if armed { return }
+        guard wanted() else { return stop() }
+        if analyzer != nil && Date().timeIntervalSince(started) > 300 { stop() }
+        if analyzer == nil { start() }
+    }
+    private func start() {
+        guard let device = listenMic().flatMap({ AVCaptureDevice(uniqueID: $0.uid) }) ?? AVCaptureDevice.default(for: .audio) else { return }
+        generation += 1; let g = generation; started = Date()
+        let tr = SpeechTranscriber(locale: speechLocale(), preset: .progressiveTranscription)
+        let (stream, cont) = AsyncStream<AnalyzerInput>.makeStream()
+        let an = SpeechAnalyzer(modules: [tr]); analyzer = an; feed = cont
+        reading = Task { [weak self] in
+            do { for try await r in tr.results { let words = String(r.text.characters), final = r.isFinal; await MainActor.run { self?.heard(words, final: final, g) } } } catch {}
+        }
+        Task { [weak self] in
+            if let r = try? await AssetInventory.assetInstallationRequest(supporting: [tr]) { try? await r.downloadAndInstall() }
+            let ctx = AnalysisContext(); ctx.contextualStrings[.general] = ["Hey Ava", "Ava"]
+            try? await an.setContext(ctx)
+            let want = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr]) ?? AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+            await MainActor.run { self?.open(device, want, cont, g) }
+            try? await an.start(inputSequence: stream)
+        }
+    }
+    private func open(_ device: AVCaptureDevice, _ want: AVAudioFormat, _ cont: AsyncStream<AnalyzerInput>.Continuation, _ g: Int) {
+        guard generation == g else { return }
+        var conv: AVAudioConverter?, from: AVAudioFormat?
+        mic.start(device, sampleRate: want.sampleRate, { buf in
+            guard buf.format != want else { cont.yield(AnalyzerInput(buffer: buf)); return }
+            if from != buf.format { conv = AVAudioConverter(from: buf.format, to: want); from = buf.format }
+            guard let conv, let out = AVAudioPCMBuffer(pcmFormat: want, frameCapacity: AVAudioFrameCount(Double(buf.frameLength) * want.sampleRate / buf.format.sampleRate) + 1) else { return }
+            var given = false
+            conv.convert(to: out, error: nil) { _, status in
+                if given { status.pointee = .noDataNow; return nil }
+                given = true; status.pointee = .haveData; return buf
+            }
+            cont.yield(AnalyzerInput(buffer: out))
+        }) { [weak self] result in if case .failure = result, self?.generation == g { self?.stop() } }
+    }
+    func stop() {
+        guard analyzer != nil else { return }
+        generation += 1
+        mic.stop(); feed?.finish(); reading?.cancel()
+        let an = analyzer; analyzer = nil; feed = nil; reading = nil
+        Task { await an?.cancelAndFinishNow() }
+    }
+    // Wie bei Siri: „Hey Ava“ öffnet die Box sofort, diese Erkennung hört den Satz zu Ende. Die Ergebnisse kommen 1–2 s
+    // verspätet, die Box selbst käme zu spät für „Hey Ava, wie spät ist es?“. Die Frage danach wird gestellt wie getippt.
+    private func heard(_ words: String, final: Bool, _ g: Int) {
+        guard generation == g else { return }
+        let range = NSRange(words.startIndex..., in: words), hit = WakeWord.phrase.firstMatch(in: words, range: range)
+        if !armed {
+            guard hit != nil, !app.engine.isRunning, !app.busy else { return }
+            armed = true; lastFire = Date()
+            app.cue("soundStart"); app.js("listen"); app.show()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in   // nichts mehr gesagt: still zu
+                guard let self, armed, generation == g else { return }
+                armed = false; stop(); app.hush(); app.hide(after: 1)
+            }
+        }
+        let rest = hit.flatMap { Range($0.range, in: words) }.map { String(words[$0.upperBound...]) } ?? words
+        let question = rest.trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines))
+        if !question.isEmpty { app.js("words", question) }
+        guard final, question.count >= 2 else { return }   // nur „Hey Ava.“: weiter zuhören, die Frage kommt im nächsten Satz
+        armed = false; lastFire = Date(); stop()
+        if app.panel.isVisible { app.typed(question) }   // mit Esc weggeklickt: nichts fragen
+    }
+}
+let wake = WakeWord()
+Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in wake.tick() }
 let delegate = Delegate()
 NSApplication.shared.delegate = delegate
 if !hotkeyRegistered || !dictateHotkeyRegistered { DispatchQueue.main.async { settings.open() } }   // another app owns a saved shortcut: show the warning, not a silent dead key
