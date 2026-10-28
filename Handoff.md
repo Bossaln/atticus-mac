@@ -43,7 +43,12 @@ Atticus (Open-Source-Sprachassistent für Mac, github.com/SaarthurR/atticus-mac)
 - Fehlermeldungen bleiben englisch, damit `failed_action_reply` sie erkennt.
 - Tests: `tests/test_deutsch.py`; in `tests/test_learning_e2e.py` wurde ein Beispielsatz angepasst.
 
+## Spracheinstellung (28.10.2026)
+
+- Einstellungen → Dictation → **Sprache**: Deutsch oder English. Gespeichert als `"sprache": "de"|"en"` in `settings.json` (Standard im Fork: `de`).
+- Swift: `speechLocale()` liefert `de-DE` oder `en-US` für Spracherkennung, Diktat und Meetings; beim Umschalten lädt `prepareSpeech()` das Sprachmodell.
+- Python: Bei `de` kommen alle Sofort-Antworten auf Deutsch; bei `en` nur die Antworten auf deutsche Befehle.
+
 ## Nächste Schritte
 
 1. Deutsche Instant-Befehle im Alltag testen und fehlende Formulierungen ergänzen.
-2. Optional: Spracheinstellung in den Settings statt fest eingetragenem `de-DE`.

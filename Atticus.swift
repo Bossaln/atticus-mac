@@ -195,7 +195,7 @@ enum Prefs {
             ["name": "Friendly", "text": "Warm and conversational, like talking to a colleague. Simple words."]],
         "selection": true, "ahead": true, "aheadDelay": 0.7, "live": true, "screen": "auto", "openOn": "here", "workIn": "back", "miniScreen": true, "draw": true, "guideSteps": "auto", "pageJS": false,
         "speak": false, "showAnswers": "stream", "autoCopy": false, "hideWhenSharing": true, "menuIcon": true, "autoUpdate": true,
-        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "improve": false, "improveAsked": false, "draftInsert": "ask",
+        "learn": true, "safe": true, "pointer": false, "meeting": false, "meetingSave": true, "meetingAuto": "sure", "meetingNudge": false, "meetingDetect": true, "learnMe": true, "saveChats": true, "stats": true, "tips": true, "support": true, "comeBack": true, "askMe": true, "meetingSummary": true, "input": "voice", "talkMode": "hold", "speechModel": "speech", "sprache": "de", "improve": false, "improveAsked": false, "draftInsert": "ask",
         "dictateHotkeyCode": -1, "dictateHotkeyMods": 0, "dictateHotkeyLabel": "", "dictateMode": "cleanup", "dictateHistory": true, "dictateLearn": true, "dictateWords": [], "dictateFixes": [String: String](), "boxW": 500, "boxH": 420]
     static let retiredKeys = ["quietAudio", "quietLevel", "autoCopy", "askMe", "corner", "linger", "soundStart", "soundRelease", "soundDone", "soundStop",
         "instant", "live", "ahead", "aheadDelay", "learn", "selection", "guideSteps", "workIn", "openOn", "miniScreen", "draftInsert",
@@ -228,6 +228,9 @@ enum Prefs {
     static func str(_ k: String) -> String { d[k] as? String ?? "" }
     static func num(_ k: String) -> Double { (d[k] as? NSNumber)?.doubleValue ?? 0 }
 }
+
+// Fork: Settings → Sprache, für Spracherkennung, Diktat und Meetings. SpeechTranscriber braucht eine feste Locale, nicht die des Macs.
+func speechLocale() -> Locale { Locale(identifier: Prefs.str("sprache") == "en" ? "en-US" : "de-DE") }
 
 func applySharing(_ window: NSWindow) {
     window.sharingType = sharingType(hidden: Prefs.bool("hideWhenSharing"), majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
@@ -1804,7 +1807,7 @@ final class App: NSObject, WKScriptMessageHandler {
     // Settings → Speech model: Apple's newer SpeechTranscriber, or the Dictation model the keyboard mic uses.
     // Dictation drops fastResults / frequentFinalization (Apple: faster but less accurate); asks keep them for live commands.
     func speechModule(dictate: Bool = false) -> any SpeechModule {
-        let en = Locale(identifier: "de-DE"), locale = en   // SpeechTranscriber rejects the Mac locale ("unsupported locale") even when SFSpeechRecognizer lists it: every voice ask died (1.5.0)
+        let en = speechLocale(), locale = en   // SpeechTranscriber rejects the Mac locale ("unsupported locale") even when SFSpeechRecognizer lists it: every voice ask died (1.5.0)
         if Prefs.str("speechModel") == "dictation" {
             return dictate ? DictationTranscriber(locale: en, contentHints: [.shortForm], transcriptionOptions: [.punctuation], reportingOptions: [.volatileResults], attributeOptions: [])
                 : DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
@@ -4931,7 +4934,7 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
                 meeting.warmAnswer()
             }
         }
-        if k == "speechModel" { app.prepareSpeech() }
+        if k == "speechModel" || k == "sprache" { app.prepareSpeech() }   // a new language may need its model downloaded
         if k == "improve" { Prefs.set("improveAsked", true) }   // any answer, here or in setup or the card, is the answer
         if k == "speak", v as? Bool == false { app.shush() }
         if k == "hideWhenSharing" { NSApp.windows.forEach(applySharing) }
@@ -5524,8 +5527,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 let micAllowed = demo ? true : await AVCaptureDevice.requestAccess(for: .audio)
                 guard running, generation == g, !Task.isCancelled else { return }
                 guard micAllowed else { stop(); js("error", "Allow Microphone access for Atticus in System Settings"); return }
-                let mic = SpeechTranscriber(locale: Locale(identifier: "de-DE"), preset: .progressiveTranscription)
-                let tr = SpeechTranscriber(locale: Locale(identifier: "de-DE"), preset: .progressiveTranscription)
+                let mic = SpeechTranscriber(locale: speechLocale(), preset: .progressiveTranscription)
+                let tr = SpeechTranscriber(locale: speechLocale(), preset: .progressiveTranscription)
                 if let request = try await AssetInventory.assetInstallationRequest(supporting: [tr]) { try await request.downloadAndInstall() }
                 guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr]) else {
                     if running && generation == g { stop(); js("error", "Speech recognition is unavailable. Resume to try again.") }; return
