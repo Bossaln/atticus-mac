@@ -66,5 +66,20 @@ class DeutschTests(unittest.TestCase):
             self.assertIn('ruhemodus', atticus.skills())
 
 
+    def test_oberflaeche_texte_und_muster(self):
+        import importlib.util, json, re
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location('i18n', root / 'deutsch' / 'i18n.py'); i18n = importlib.util.module_from_spec(spec); spec.loader.exec_module(i18n)
+        self.assertEqual(i18n.entries('Agents · ${n} running…', 'Agenten · ${n} aktiv …'), [('pattern', '^Agents · (.+?) running…$', 'Agenten · $1 aktiv …')])
+        self.assertEqual(i18n.entries('Press <b>Allow</b> now', 'Drück jetzt <b>Erlauben</b>'), [('exact', 'Press', 'Drück jetzt'), ('exact', 'Allow', 'Erlauben')])
+        self.assertEqual(i18n.entries('It\\u2019s ${a} of ${b}', 'Das ist ${b} von ${a}')[0][2], 'Das ist $2 von $1')
+        src = (root / 'ui' / 'i18n-de.js').read_text()
+        data = json.loads(src[src.index('{'):src.rindex('}') + 1])
+        self.assertEqual(data['exact']['Settings…'], 'Einstellungen …')
+        for rx, _ in data['patterns']: re.compile(rx)
+        self.assertNotIn('</', src)   # steht in einem <script> der Seite
+
+
 if __name__ == '__main__':
     unittest.main()

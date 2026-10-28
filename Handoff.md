@@ -49,6 +49,16 @@ Atticus (Open-Source-Sprachassistent für Mac, github.com/SaarthurR/atticus-mac)
 - Swift: `speechLocale()` liefert `de-DE` oder `en-US` für Spracherkennung, Diktat und Meetings; beim Umschalten lädt `prepareSpeech()` das Sprachmodell.
 - Python: Bei `de` kommen alle Sofort-Antworten auf Deutsch; bei `en` nur die Antworten auf deutsche Befehle.
 
+## Oberfläche auf Deutsch (28.10.2026)
+
+- Der Schalter **Language/Sprache** (Einstellungen → Allgemein → Diktat) wechselt auch die ganze Oberfläche, sofort in allen offenen Fenstern.
+- `ui/i18n.js` übersetzt sichtbare Texte (Textknoten, `title`, `placeholder`, `aria-label`, `alt`) per MutationObserver und merkt sich die Originale für den Rückweg. Antworten und eigene Worte (`.q`, `.a`) bleiben unberührt.
+- Wörterbuch: `deutsch/i18n/*.json` (`{englisch: deutsch}`, Rohtexte aus dem Quellcode, `fixes.json` gewinnt). Nach Änderungen `python3 deutsch/i18n.py` ausführen, das erzeugt `ui/i18n-de.js`, dann `./build.sh`.
+- Swift: `loadPage()` bindet beides in jede Seite ein; `tr()` übersetzt das Menüleisten-Menü; `applyUILanguage()` schaltet beim Wechsel alle Webviews um.
+- Seitencode, der eigenen Text wieder vergleicht, nutzt `atticusOrig()` (in `agents.html` und `ui.html` angepasst).
+- Lücken: Texte, die aus Teilen zusammengesetzt werden („vor 5 Min.“ usw.), Alerts und einige Python-Meldungen bleiben teils englisch. Fehlende Texte einfach in `deutsch/i18n/fixes.json` ergänzen.
+
 ## Nächste Schritte
 
 1. Deutsche Instant-Befehle im Alltag testen und fehlende Formulierungen ergänzen.
+2. Deutsche Oberfläche durchklicken, englisch gebliebene Texte in `deutsch/i18n/fixes.json` nachtragen.

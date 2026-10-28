@@ -1,0 +1,20 @@
+{
+ "Voice": "Sprechen",
+ "Undo": "Rückgängig",
+ "Clean up": "Aufräumen",
+ "Enter": "Return",
+ "Escape": "Esc",
+ "Custom…": "Eigene …",
+ "On a call": "Im Gespräch",
+ "Help & Feedback": "Hilfe & Feedback",
+ "Setup & Permissions…": "Einrichtung & Berechtigungen …",
+ "Hold ${keys} and talk": "${keys} halten und sprechen",
+ "Press ${keys} to type": "${keys} drücken zum Tippen",
+ "Press ${keys} to talk · again to send": "${keys} drücken zum Sprechen · nochmal zum Senden",
+ "Agents · ${n} running…": "Agenten · ${n} aktiv …",
+ "Today: ${a} · asks ${b} · agents ${c}": "Heute: ${a} · Anfragen ${b} · Agenten ${c}",
+ "Language": "Sprache",
+ "Speech recognition, instant replies and the interface.": "Spracherkennung, Sofort-Antworten und Oberfläche.",
+ "Speech": "Standard",
+ "Speech stays on this Mac.": "Gesprochenes bleibt auf diesem Mac."
+}

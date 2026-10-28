@@ -647,7 +647,35 @@ func callJS(_ web: WKWebView?, _ fn: String, _ args: [Any]) {
 func loadPage(_ web: WKWebView, _ name: String) {
     let html = (try? String(contentsOfFile: dir + "/ui/" + name, encoding: .utf8)) ?? "missing " + name
     let orbs = (try? String(contentsOfFile: dir + "/ui/orbs.js", encoding: .utf8)) ?? ""
-    web.loadHTMLString(html.replacingOccurrences(of: "/*ORBS*/", with: orbs), baseURL: nil)
+    web.loadHTMLString(withUILanguage(html.replacingOccurrences(of: "/*ORBS*/", with: orbs)), baseURL: nil)
+}
+
+// Fork: Settings → Sprache übersetzt auch die Oberfläche. ui/i18n.js übersetzt die Seiten mit ui/i18n-de.js
+// (window.ATTICUS_DE = {exact, patterns}, erzeugt von deutsch/i18n.py); tr() nimmt dieselben Texte für Menüs.
+func uiLanguage() -> String { Prefs.str("sprache") == "en" ? "en" : "de" }
+let uiGermanSource = (try? String(contentsOfFile: dir + "/ui/i18n-de.js", encoding: .utf8)) ?? ""
+func withUILanguage(_ html: String) -> String {
+    let i18n = (try? String(contentsOfFile: dir + "/ui/i18n.js", encoding: .utf8)) ?? ""
+    let script = "<script>window.ATTICUS_LANG = '\(uiLanguage())';\n\(uiGermanSource)\n\(i18n)</script>"
+    guard let head = html.range(of: "<head>") else { return script + html }
+    return html.replacingCharacters(in: head, with: "<head>" + script)
+}
+let uiGerman: (exact: [String: String], patterns: [(NSRegularExpression, String)]) = {
+    guard let start = uiGermanSource.firstIndex(of: "{"), let end = uiGermanSource.lastIndex(of: "}"),
+          let d = try? JSONSerialization.jsonObject(with: Data(uiGermanSource[start...end].utf8)) as? [String: Any] else { return ([:], []) }
+    let patterns = (d["patterns"] as? [[String]] ?? []).compactMap { p in (try? NSRegularExpression(pattern: p[0])).map { ($0, p[1]) } }
+    return (d["exact"] as? [String: String] ?? [:], patterns)
+}()
+func tr(_ s: String) -> String {
+    guard uiLanguage() == "de" else { return s }
+    if let t = uiGerman.exact[s] { return t }
+    let range = NSRange(s.startIndex..., in: s)
+    for (re, to) in uiGerman.patterns where re.firstMatch(in: s, range: range) != nil { return re.stringByReplacingMatches(in: s, range: range, withTemplate: to) }
+    return s
+}
+func applyUILanguage() {   // every open page switches at once
+    func webs(_ v: NSView) -> [WKWebView] { (v as? WKWebView).map { [$0] } ?? v.subviews.flatMap(webs) }
+    for w in NSApp.windows { if let v = w.contentView { webs(v).forEach { $0.evaluateJavaScript("window.atticusLang && atticusLang('\(uiLanguage())')") } } }
 }
 
 // The screen under the mouse, else the main one.
@@ -4547,10 +4575,10 @@ final class MenuBar: NSObject, NSMenuDelegate {
         m.removeAllItems()
         let keys = Prefs.str("hotkeyLabel")
         let hint = Prefs.str("input") == "type" ? "Press \(keys) to type" : Prefs.str("talkMode") == "toggle" ? "Press \(keys) to talk · again to send" : "Hold \(keys) and talk"
-        let head = NSMenuItem(title: Prefs.bool("paused") ? "Atticus is paused" : hint, action: nil, keyEquivalent: "")
+        let head = NSMenuItem(title: tr(Prefs.bool("paused") ? "Atticus is paused" : hint), action: nil, keyEquivalent: "")
         head.attributedTitle = NSAttributedString(string: head.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor])
         head.isEnabled = false; m.addItem(head)
-        let u = NSMenuItem(title: today(), action: nil, keyEquivalent: "")
+        let u = NSMenuItem(title: tr(today()), action: nil, keyEquivalent: "")
         u.attributedTitle = NSAttributedString(string: u.title, attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
         u.isEnabled = false; m.addItem(u)
         m.addItem(.separator())
@@ -4565,7 +4593,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         add(m, Prefs.bool("paused") ? "Resume Atticus" : "Pause Atticus", #selector(pause), "", Prefs.bool("paused") ? "play.fill" : "pause.fill")
         m.addItem(.separator())
         add(m, "Settings…", #selector(openSettings), ",", "gearshape")
-        let help = NSMenu(title: "Help & Feedback")
+        let help = NSMenu(title: tr("Help & Feedback"))
         add(help, "Setup & Permissions…", #selector(openSetup), "", "checkmark.shield")
         add(help, "Report Feedback…", #selector(reportFeedback), "", "bubble.left")
         add(help, "Leave a Tip…", #selector(tipJar), "", "heart")
@@ -4575,7 +4603,7 @@ final class MenuBar: NSObject, NSMenuDelegate {
         add(m, "Quit Atticus", #selector(quit), "q", "power")
     }
     @discardableResult func add(_ m: NSMenu, _ t: String, _ a: Selector?, _ k: String, _ symbol: String) -> NSMenuItem {
-        let i = NSMenuItem(title: t, action: a, keyEquivalent: k); i.target = self
+        let i = NSMenuItem(title: tr(t), action: a, keyEquivalent: k); i.target = self
         i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))   // a point size keeps wide symbols' shape
         if #available(macOS 27.0, *) { i.preferredImageVisibility = .visible }   // macOS 27 hides menu symbols by default
         m.addItem(i); return i
@@ -4934,7 +4962,8 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
                 meeting.warmAnswer()
             }
         }
-        if k == "speechModel" || k == "sprache" { app.prepareSpeech() }   // a new language may need its model downloaded
+        if k == "speechModel" || k == "sprache" { app.prepareSpeech() }
+        if k == "sprache" { applyUILanguage() }   // a new language may need its model downloaded
         if k == "improve" { Prefs.set("improveAsked", true) }   // any answer, here or in setup or the card, is the answer
         if k == "speak", v as? Bool == false { app.shush() }
         if k == "hideWhenSharing" { NSApp.windows.forEach(applySharing) }

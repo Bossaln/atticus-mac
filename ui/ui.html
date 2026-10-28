@@ -1129,7 +1129,7 @@
       hot.forEach(e => now.includes(e) || e.classList.remove('hot')); now.forEach(e => e.classList.add('hot')); hot = now;
       return !!x || !!m && getComputedStyle(m).cursor === 'pointer';
     },
-    copied() { status('Copied to clipboard'); setTimeout(() => $('status').textContent === 'Copied to clipboard' && status(''), 1400); },
+    copied() { status('Copied to clipboard'); setTimeout(() => (window.atticusOrig ? atticusOrig($('status')) : $('status').textContent) === 'Copied to clipboard' && status(''), 1400); },
   };
   fit(); post({ ready: 1 });
 </script>

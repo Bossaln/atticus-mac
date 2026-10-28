@@ -144,7 +144,7 @@ const E=await import(URL.createObjectURL(new Blob([document.getElementById('orbs
 const $=id=>document.getElementById(id), reduced=matchMedia('(prefers-reduced-motion: reduce)');
 const post=data=>window.webkit?.messageHandlers.agents.postMessage(data);
 const el=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
-const setText=(n,text)=>{if(n.textContent!==text)n.textContent=text;};   // rewriting an unchanged node under a pressed mouse makes WebKit drop the click
+const setText=(n,text)=>{if((window.atticusOrig?atticusOrig(n):n.textContent)!==text)n.textContent=text;};   // rewriting an unchanged node under a pressed mouse makes WebKit drop the click
 const P={shield:'<path d="M8 1.6 3 3.4v4.1c0 3 2.1 5.4 5 6.6 2.9-1.2 5-3.6 5-6.6V3.4z"/>',search:'<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/>',read:'<circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c1.8 2 1.8 10 0 12M8 2c-1.8 2-1.8 10 0 12"/>',file:'<path d="M4 1.5h5l3 3v10H4z"/><path d="M9 1.5v3h3"/>',
  write:'<path d="m3 13 1-3.5 7-7 2.5 2.5-7 7z"/><path d="m9.5 4 2.5 2.5"/>',run:'<rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="m4.5 6 2 2-2 2M8.5 10.5h3"/>',app:'<path d="M6 2v3M10 2v3M4 5h8v3a4 4 0 0 1-8 0zM8 12v2.5"/>',
  tools:'<path d="M2.5 8h11M8 2.5v11"/>',min:'<path d="M4 8h8"/>',x:'<path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/>',made:'<path d="m3 8.5 3 3 7-7"/>',check:'<path d="m3 8.5 3 3 7-7"/>',alert:'<path d="M8 2 1.5 13.5h13z"/><path d="M8 6.5v3M8 11.5v.01"/>',stop:'<rect x="4" y="4" width="8" height="8" rx="1.5"/>',
