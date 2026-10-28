@@ -1588,7 +1588,7 @@ print(json.dumps({{'type':'message_end','message':{{'role':'assistant','content'
                     reply, _, _ = atticus.run('test', p)
                 if is_error and text == error:
                     self.assertEqual(say.call_args_list.count(unittest.mock.call('!', 'setup')), 1)
-                    self.assertEqual(reply, 'Your Claude sign-in expired. Open Atticus Settings to sign in again.')
+                    self.assertEqual(reply, 'Your Claude sign-in expired. Open Terminal and run claude auth login to sign in again.')
                     self.assertFalse(atticus.run.ok)
                 elif is_error:
                     self.assertIn('temporarily unavailable', reply)

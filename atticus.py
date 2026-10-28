@@ -5523,7 +5523,7 @@ def run(task, p=None, shots=(), auto_work=False, *, request=None, main_only=Fals
                 reply = 'Your custom server rejected its credentials. Check its key in Settings.'
             else:
                 say('!', 'setup')
-                reply = 'Your Claude sign-in expired. Open Atticus Settings to sign in again.'
+                reply = 'Your Claude sign-in expired. Open Terminal and run claude auth login to sign in again.'
         elif run.why == 'too_long':
             reply = f'This request is too long for {"your custom server" if custom else "Claude"}. Close this box with ✕ to start fresh, then ask again with less text.'
         elif run.why == 'plan_limit':
@@ -6854,7 +6854,11 @@ def meeting_live():
     if client() != 'claude':
         json.load(sys.stdin)
         return print(json.dumps({'event': 'result', 'result': {'error': f'Meeting Copilot stays on this Mac with {client().title()}.'}}), flush=True)
-    p = meeting_process(MEETING_SYSTEM)
+    try:
+        p = meeting_process(MEETING_SYSTEM)
+    except OSError:
+        json.load(sys.stdin)
+        return print(json.dumps({'event': 'result', 'result': {'error': 'Could not finish. Try again.'}}), flush=True)
     atexit.register(stop_claude, p)
     signal.signal(signal.SIGTERM, lambda *_: (stop_claude(p), sys.exit(0)))
     started = time.monotonic()

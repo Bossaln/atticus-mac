@@ -123,6 +123,18 @@ class MeetingTests(unittest.TestCase):
         self.assertEqual(metrics['usd'], .001)
         self.assertTrue(start.call_args.kwargs['start_new_session'])
 
+    def test_warm_worker_returns_error_when_claude_is_missing(self):
+        out = io.StringIO()
+        request = io.StringIO(json.dumps({'question': 'Fixture?'}))
+        with patch.object(atticus, 'client', return_value='claude'), \
+             patch.object(atticus.subprocess, 'Popen', side_effect=FileNotFoundError(2, 'missing')), \
+             patch.object(atticus, 'server', return_value={}), \
+             patch.object(sys, 'stdin', request), redirect_stdout(out):
+            atticus.meeting_live()
+        self.assertEqual(request.read(), '')
+        self.assertEqual(json.loads(out.getvalue()),
+                         {'event': 'result', 'result': {'error': 'Could not finish. Try again.'}})
+
     def test_warm_worker_streams_first_answer_text_before_result(self):
         class Input:
             def write(self, text): self.payload = text
