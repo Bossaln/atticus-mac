@@ -532,6 +532,7 @@ final class Harness {
     static var keysUp = Date(); func gone() {}; func unwarm() {}
     var drawingReply = false; let drawing = DrawingStub()
     let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
+    var askNeed: [String:Any] = [:]
     var retryOffer=false,offerText:String?,askFile="fixture-answer",agentCard="",listenID=0,stops=0
     var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?,speechInputs:SpeechInputs?=SpeechInputs()
     var nextFeed:Input?,nextReading:Input?,nextAnalyzer:Analyzer?,nextSpeechInputID:Int?,nextSpeechSegment=0
@@ -573,13 +574,20 @@ Prefs.paused = true; let paused = Harness(); paused.shortcut(true); paused.short
 Prefs.paused = false; Prefs.toggle = true
 let escape = Harness(); escape.shortcut(true); escape.escape(); precondition(!escape.events.contains("send") && !escape.engine.isRunning, "Esc submitted instead of cancelling")
 let limit = Harness(); limit.shortcut(true); limit.recordingLimit(); precondition(limit.events.contains("review") && !limit.events.contains("send"), "timeout submitted toggle request")
-let reply=Harness();reply.retryOffer=true;reply.busy=true;reply.offerText="Original task";reply.text="retry";reply.engine.isRunning=true;reply.feed=Input();reply.reading=Input()
+let reply=Harness()
+let j: [String:Any] = ["a":"fixture-answer"]
+""" + source[source.index('                        self.retryOffer = true; self.askNeed'):source.index('self.show(); self.js("pick", j); continue')].replace("self.", "reply.") + """
+precondition(reply.retryOffer && reply.askFile=="fixture-answer", "choices card did not enable spoken replies")
+reply.busy=true;reply.offerText="Original task";reply.text="retry";reply.engine.isRunning=true;reply.feed=Input();reply.reading=Input()
 reply.stopOfferInput()
 precondition(reply.engine.stopped, "reply mic stayed open")
 let failedStart=Harness();failedStart.retryOffer=true;failedStart.busy=true;failedStart.stopOfferInput();precondition(failedStart.engine.stopped && failedStart.busy && failedStart.askFile=="fixture-answer", "failed engine start left its tap or lost its worker")
 precondition(!reply.engine.isRunning && reply.text=="Original task" && reply.offerText==nil && reply.busy && reply.retryOffer && reply.askFile=="fixture-answer", "stopping reply input lost the waiting task")
 precondition(reply.speechInputs!.finished && reply.reading!.cancelled, "reply input stayed alive")
-reply.shortcut(true);precondition(reply.events==["start"], "retry shortcut cancelled its worker")
+reply.shortcut(true);precondition(reply.events==["start"], "card reply shortcut cancelled its worker")
+let speakingReply=Harness();speakingReply.retryOffer=true;speakingReply.engine.isRunning=true;speakingReply.escape();precondition(speakingReply.events.contains("hush") && !speakingReply.engine.isRunning, "Esc did not stop card dictation")
+let working=Harness();working.busy=true;working.shortcut(true);precondition(working.events.contains("cancel") && !working.engine.isRunning, "hotkey without a card stopped cancelling")
+let waiting=Harness();waiting.busy=true;waiting.retryOffer=true;waiting.escape();precondition(waiting.events.contains("cancel"), "Esc did not cancel a waiting card")
 reply.offerText="Original task";reply.text="partial retry";reply.recordingLimit()
 precondition(reply.busy && reply.askFile=="fixture-answer" && reply.text=="Original task" && !reply.events.contains("send"), "reply recording limit sent or cancelled the request")
 Prefs.toggle = true   // the main shortcut's toggle setting must not change dictation

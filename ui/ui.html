@@ -196,6 +196,7 @@
     transition: max-height .34s var(--ease), opacity .25s, margin .34s var(--ease), padding .34s var(--ease); }
   .pk.gone { max-height: 0; opacity: 0; margin-top: 0; padding-top: 0; padding-bottom: 0; }
   .pk > b { display: block; margin-bottom: 10px; font-size: 13.5px; font-weight: 600; }
+  .pk :is(b, .n) > p { margin: 0; }
   .pk .g { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
   .pk .g.list { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   /* many choices scroll inside the card, so the question and buttons stay in view on any display; the padding keeps the hover lift unclipped */
@@ -1071,7 +1072,7 @@
       $('thread').querySelectorAll('.pk').forEach(e => e.remove()); unstream();
       const d = document.createElement('div'); d.className = 'pk';
       d.innerHTML = '<b></b><div class="g"></div><input class="other" placeholder="Something else…" aria-label="Something else: type or dictate, then press Return"><div class="bar"><button class="none">None of these</button><button class="back">All choices</button><button class="go">Use this</button></div>';
-      d.querySelector('b').textContent = q;
+      d.querySelector('b').append(markdown(q));
       const g = d.querySelector('.g'), pics = options.some(o => o.img);
       g.classList.toggle('list', !pics);   // nothing to preview (songs, people): one click picks
       let on = null;
@@ -1091,7 +1092,7 @@
         c.innerHTML = (pics ? '<div class="th"></div>' : '') + '<div class="n"></div><div class="s"></div><div class="p"></div>';
         if (pics && o.img) { const im = new Image(); im.alt = ''; im.draggable = false; im.onload = () => fit(); im.src = o.img; c.firstChild.append(im); }
         else if (pics) c.firstChild.textContent = o.kind || '';   // no preview: its file type
-        c.querySelector('.n').textContent = o.label; c.querySelector('.s').textContent = o.sub; c.querySelector('.p').textContent = o.path || '';
+        c.querySelector('.n').append(markdown(o.label)); c.querySelector('.s').textContent = o.sub; c.querySelector('.p').textContent = o.path || '';
         c.title = o.path ? o.path + '/' + o.label : o.label; if (i < 9) c.setAttribute('aria-keyshortcuts', String(i + 1));   // long titles clip to two lines; hover shows all
         c.choose = () => done(i);
         c.onclick = e => { e.stopPropagation(); if (!pics) done(i); else view(on === c ? null : c); };

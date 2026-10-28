@@ -1845,7 +1845,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var askNeed: [String:Any] = [:]
     var agentMoveFile = "" { didSet { moveKey() } }   // set while atticus.py watches it: the running ask can move to an agent
     var moveRef: EventHotKeyRef?
-    var retryOffer = false, offerText: String?   // answering a failure card preserves its original request
+    var retryOffer = false, offerText: String?   // answering a choices or failure card preserves its original request
     var hovering = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
     var screenFrames = NSScreen.screens.map(\.frame)   // last display layout; a change in it makes an on-screen drawing stale
     var selection: TextSelection?, replacement: String?, mode = "replace", warmSel = ""   // mode: replace · delete · draft
@@ -3307,7 +3307,7 @@ final class App: NSObject, WKScriptMessageHandler {
                         continue
                     }
                     if line.hasPrefix("◇ "), let j = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(2).utf8)) as? [String: Any] {   // "which one?": the choices card
-                        self.askNeed = [:]; self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
+                        self.retryOffer = true; self.askNeed = [:]; self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
                     }
                     if line.hasPrefix("▤ ") { self.showAgent = String(line.dropFirst(2)); continue }
                     if line.hasPrefix("⇢ "), let value = try? JSONSerialization.jsonObject(with:Data(line.dropFirst(2).utf8)) as? [String:Any] {   // movable: ⌃⌥↩ moves it / {}: no longer movable

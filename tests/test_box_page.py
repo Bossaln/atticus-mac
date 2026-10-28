@@ -75,7 +75,7 @@ return out;
 
 @unittest.skipUnless(sys.platform == 'darwin', 'macOS WebKit page check')
 class BoxPageTests(unittest.TestCase):
-    def test_box_on_real_webkit(self):
+    def render(self, script):
         harness = HARNESS.replace('cfg.userContentController.add(h, name: "agents")', 'cfg.userContentController.add(h, name: "c"); cfg.userContentController.add(h, name: "h")')
         harness = harness.replace('?["action"] as? String == "ready"', '?["ready"] != nil')
         self.assertEqual(harness.count('name: "c"') + harness.count('["ready"] != nil'), 2)   # the shelf harness, pointed at the box's bridge
@@ -85,10 +85,14 @@ class BoxPageTests(unittest.TestCase):
             src.write_text(harness)
             built = subprocess.run(['swiftc', str(src), '-o', str(binary)], capture_output=True, text=True)
             self.assertEqual(built.returncode, 0, built.stderr)
-            run = subprocess.run([str(binary), str(page), SCRIPT], capture_output=True, text=True, timeout=30)
+            run = subprocess.run([str(binary), str(page), script], capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         got = json.loads(run.stdout.strip().splitlines()[-1])
         self.assertEqual([p for p in got['posts'] if isinstance(p, dict) and 'error' in p], [])
+        return got
+
+    def test_box_on_real_webkit(self):
+        got = self.render(SCRIPT)
         out = got['result']
         self.assertEqual(out['brackets'], ['See [1] and a[0]', '[ ] a task'])   # a bracket that is no link shows at once
         self.assertEqual(out['open'], 'It')   # a link still arriving waits
@@ -113,6 +117,20 @@ class BoxPageTests(unittest.TestCase):
         self.assertEqual(out['support'], ['BUTTON', True, 'pointer', True, True])
         self.assertTrue(any(isinstance(p, dict) and p.get('kofi') for p in got['posts']))
         self.assertEqual(out['learned'], ['Learned “Atticus” Undo', 'flex', 'dn tick'])
+
+    def test_picker_renders_answers_and_accepts_spoken_other(self):
+        got = self.render(r'''
+ui.listen(); ui.words('choose'); ui.think();
+ui.pick({q: '**Which** $x^2$?', options: [{label: '**Answer** $\\frac{1}{2}$ <img src=x onerror=alert(1)>', sub: ''}]});
+const card = document.querySelector('.pk'), title = card.querySelector('b'), label = card.querySelector('.n');
+const out = {rich: [title.querySelector('strong')?.textContent, title.querySelectorAll('math').length, label.querySelector('strong')?.textContent, label.querySelectorAll('math').length], safe: !label.querySelector('img,script') && label.textContent.includes('<img'), margins: [getComputedStyle(title.firstChild).marginTop, getComputedStyle(label.firstChild).marginBottom]};
+out.responded = ui.respond('use a different answer'); out.gone = card.classList.contains('gone');
+return out;
+''')
+        self.assertEqual(got['result'], {'rich': ['Which', 1, 'Answer', 1], 'safe': True,
+                                        'margins': ['0px', '0px'], 'responded': True, 'gone': True})
+        self.assertEqual([p['pick'] for p in got['posts'] if isinstance(p, dict) and 'pick' in p],
+                         ['=use a different answer'])
 
 
 if __name__ == '__main__':
