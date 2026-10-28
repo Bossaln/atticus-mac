@@ -235,7 +235,7 @@ class OpenAppsAndSitesTests(Ask):
         self.assertIsNone(atticus.app_heard('open my homework folder now'))
 
     def test_non_english_open_goes_to_the_model_then_replays_instantly_in_front(self):
-        words = 'Kannst du bitte einmal Safari öffnen'
+        words = 'Ich brauche jetzt Safari'   # Fork: „Safari öffnen“ ist ein deutscher Instant-Befehl (tests/test_deutsch.py)
         said, pill, model = self.ask(words, 'Safari ist offen.', [f'{atticus.SHOW} "Safari"'])
         self.assertTrue(model)
         self.assertEqual(said, 'Safari ist offen.')

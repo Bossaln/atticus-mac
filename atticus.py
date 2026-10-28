@@ -2021,7 +2021,7 @@ def gist(text):
     return [{'create': 'make', 'start': 'make'}.get(w, w) for w in re.findall(r"[a-z0-9'.-]+", plain(text)) if w not in STOP | FILLER]
 
 
-def fast(text):
+def fast_en(text):
     """Simple commands with no AI: learned shortcuts, open <app/site>, close <app>, snap/move <it/app> left/right/full/center, to laptop/monitor.
     Returns a reply, or None to hand the request to Haiku."""
     fast.cmds = []
@@ -2169,6 +2169,128 @@ def fast(text):
     fast.cmds = [PLACE + ' ' + shlex.join([proc_of(app), where, screen])]
     Path(LAST).write_text(app)
     return f'{app}: {where.replace("fullscreen", "full screen")}' + (f' on {screen}' if screen != 'current' else '') + '.'
+
+
+# Deutsche Instant-Befehle (Fork): ein deutscher Befehl wird in die englische Form übersetzt, die fast_en versteht, und die
+# Antwort zurück ins Deutsche, damit die deutsche Stimme sie vorliest. Alles andere geht unverändert an die KI.
+# Antworten sind deutsch, wenn der Befehl deutsch war oder settings.json "sprache": "de" enthält.
+DE_VERB = r'(?:öffne|schließ|schliess|beend|such|spiel|mach|schieb|verschieb|leg|pack|setz|klick|tipp|geh|zeig|start|scroll|füg|drück)'
+DE_MEHR = re.compile(rf'\b(?:dann|danach|anschließend|außerdem)\b|\bund (?:dann |danach )?{DE_VERB}')   # ein zweiter Schritt: die KI macht beides
+DE_ORT = [(r'\b(?:in den |im )?vollbild(?:modus)?\b', 'fullscreen'), (r'\bmaximier(?:e|en)?\b', 'maximize'),
+          (r'\b(?:(?:nach|auf die|auf der|in die) )?link(?:s|e|en)(?: (?:seite|hälfte))?\b', 'left'),
+          (r'\b(?:(?:nach|auf die|auf der|in die) )?recht(?:s|e|en)(?: (?:seite|hälfte))?\b', 'right'),
+          (r'\b(?:(?:in die|in der|zur) )?mitte\b|\bzentrier(?:e|en|t)?\b', 'center'),
+          (r'\b(?:(?:auf|zu) (?:den|dem|meinen|meinem) )?(?:(?:großen?|größeren?|externen?|zweiten?) (?:bildschirm|monitor|display)|monitor)\b', 'monitor'),
+          (r'\b(?:(?:auf|zu) (?:den|dem|das|mein|meinen|meinem) )?(?:laptop|macbook|(?:kleinen?|eingebauten?) (?:bildschirm|display))(?:[- ]?bildschirm)?\b', 'laptop')]
+DE_ORTE = r'(?:left|right|fullscreen|maximize|center|monitor|laptop)'
+DE_TASTE = {'enter': 'hit enter', 'eingabe': 'hit enter', 'eingabetaste': 'hit enter', 'return': 'hit enter', 'escape': 'escape', 'esc': 'escape',
+            'tab': 'press tab', 'tabulator': 'press tab', 'leertaste': 'press space'}
+DE_APP = {'notizen': 'notes', 'erinnerungen': 'reminders', 'kalender': 'calendar', 'nachrichten': 'messages', 'karten': 'maps', 'fotos': 'photos',
+          'musik': 'music', 'systemeinstellungen': 'system settings', 'einstellungen': 'system settings', 'rechner': 'calculator',
+          'taschenrechner': 'calculator', 'kontakte': 'contacts', 'vorschau': 'preview', 'bücher': 'books', 'wetter': 'weather', 'uhr': 'clock',
+          'aktien': 'stocks', 'sprachmemos': 'voice memos', 'kurzbefehle': 'shortcuts', 'textedit': 'textedit', 'aktivitätsanzeige': 'activity monitor',
+          'schlüsselbund': 'keychain access', 'passwörter': 'passwords', 'wo ist?': 'find my', 'wo ist': 'find my', 'freeform': 'freeform', 'podcasts': 'podcasts'}
+DE_SATZ = re.compile(r'\b(?:ich|wir|möchte|will|würde|soll|sollst|muss|wie|was|warum|wieso|wann|wer|welche[rsnm]?|mir sagen)\b')   # Fragen und ganze Sätze: die KI
+DE_OK = {'ja', 'nein', 'ok', 'okay', 'danke', 'danke schön', 'dankeschön', 'vielen dank', 'passt', 'egal', 'vergiss es', 'abbrechen', 'nichts'}
+
+
+def de_app(words):
+    """„die Notizen-App“ -> "notes": deutsche Artikel weg, deutsche App-Namen auf die englischen Dateinamen."""
+    w = re.sub(r'^(?:den|die|das|dem|mein|meine|meinen|meinem) |[- ]?app$', '', words.strip())
+    return DE_APP.get(w, w)
+
+
+def de_orte(t):
+    for pat, word in DE_ORT:
+        t = re.sub(pat, word, t)
+    return t
+
+
+def de_befehl(text):
+    """Deutscher Befehl -> englische Form für fast_en: „Kannst du bitte Safari öffnen?“ -> "open safari". None: kein deutscher Befehl."""
+    m = re.fullmatch(r'\s*(?:(?:ab jetzt|von jetzt an|ab sofort),? )?wenn(?: immer)? ich [„"“\']?([^,„"“”\']{2,40}?)[“"”\']? sage,? (.+)', text, re.I | re.S)
+    if m:   # „Wenn ich Lernmodus sage, öffne Notion“: lernt den Namen, wie "when I say …"
+        action = de_befehl(m[2])
+        return action and f'when i say "{m[1].strip()}", {action}'
+    t = re.sub(r'[,;!?]|:(?!//)|(?<!\w)\.|\.(?!\w)', '', dashes(text).lower().strip(' .!?')).strip()
+    t = re.sub(r'^(?:(?:hey|hallo|hi|ok|okay|äh+m*|öhm+|hm+|ava|atticus|also|und|jetzt|dann|nun|(?:kannst|könntest|würdest) du(?: mir)?) )+', '', t)
+    t = re.sub(r'\s+', ' ', re.sub(r'\b(?:bitte|mal|einmal|doch|einfach|kurz|schnell|für mich)\b', ' ', t)).strip()
+    if t in DE_OK: return 'ok'
+    if re.fullmatch(r'(?:feedback|einen fehler|fehler|bug) (?:melden|senden|schicken)|(?:melde|sende|schick)(?:e)? (?:feedback|einen fehler|einen bug)', t):
+        return 'report feedback'
+    if DE_MEHR.search(t) or DE_SATZ.search(t): return None
+    # Bedienen: scrollen, zurück, Tasten, klicken
+    if re.search(r'\bscroll', t):
+        rest = re.sub(r'\bscroll\w*', ' ', t)
+        richtung = re.search(r'\b(unten|runter|oben|hoch|rauf)\b', rest)
+        if richtung and re.fullmatch(r'(?:\s|\b(?:ganz|nach|ein|bisschen|stück|wenig|unten|runter|oben|hoch|rauf)\b)*', rest):
+            d = 'down' if richtung[1] in ('unten', 'runter') else 'up'
+            if re.search(r'\bganz\b', rest): return 'scroll to the ' + ('bottom' if d == 'down' else 'top')
+            return f'scroll {d}' + (' a bit' if re.search(r'\b(?:bisschen|stück|wenig)\b', rest) else '')
+        return None
+    m = re.fullmatch(r'(?:eine )?seite (runter|nach unten|hoch|nach oben)(?: blättern)?|(?:eine )?seite (?:nach )?(unten|oben) blättern', t)
+    if m: return 'page ' + ('down' if (m[1] or m[2]).endswith(('runter', 'unten')) else 'up')
+    if re.fullmatch(r'(?:geh(?:e)? )?zurück(?: gehen)?', t): return 'go back'
+    m = re.fullmatch(r'(?:drück(?:e)? |tipp(?:e)? )?(?:die |auf )?(enter|eingabe|eingabetaste|return|escape|esc|tab|tabulator|leertaste)(?:[- ]?taste)?(?: drücken)?', t)
+    if m: return DE_TASTE[m[1]]
+    m = re.fullmatch(r'(?:klick(?:e)?|öffne|zeig(?:e)?) (?:auf )?(?:das |die |den )?(.+?)[- ]?(?:menü|symbol|icon) (?:in der menüleiste|oben rechts)', t)
+    if m: return f'click the {m[1]} icon in the menu bar'
+    m = re.fullmatch(r'(?:drück(?:e)?|klick(?:e)?) (?:auf )?(?:den |die |das )?(.+?)[- ](?:knopf|button|schaltfläche)', t)
+    if m: return f'press the {m[1]} button'
+    m = re.fullmatch(r'(?:klick(?:e)?|tipp(?:e)?) (?:auf )?(?:den |die |das )?(.+?)(?: an)?|auf (?:den |die |das )?(.+?) (?:klicken|tippen)', t)
+    if m: return 'click ' + (m[1] or m[2])
+    # Apps, Suche, Spotify, Fenster
+    m = re.fullmatch(r'(?:schließ(?:e)?|schliess(?:e)?|beende|beend) (.+)|mach (.+?) zu|(.+?) (?:schließen|beenden|zumachen)', t)
+    if m: return 'close ' + de_app(m[1] or m[2] or m[3])
+    m = re.fullmatch(r'(?:such(?:e)?|schau|guck)(?: mal)? (?:auf|bei) ([a-z0-9][\w.-]*) nach (.+)', t)
+    if m: return f'search {m[1]} for {m[2]}'
+    m = re.fullmatch(r'such(?:e)?(?: (?:im internet|im netz|online))?(?: nach)? (.+)|(.+?) (?:googeln|googlen|suchen)', t)   # „Google X“ versteht fast_en schon
+    if m: return 'search for ' + (m[1] or m[2])
+    m = re.fullmatch(r'spiel(?:e)?(?: mir)? (?:meine |die )?(?:playlist |wiedergabeliste )?(.+?)( auf spotify)?(?: ab)?|(.+?) (?:abspielen|spielen)', t)
+    if m: return f'play {m[1] or m[3]}' + (' on spotify' if m[2] else '')
+    m = re.fullmatch(r'(?:füg(?:e)?|pack(?:e)?|setz(?:e)?|leg(?:e)?|tu) (.+?) (?:zur|in die|auf die) (?:spotify[- ]?)?warteschlange(?: hinzu)?|(.+?) in die (?:spotify[- ]?)?warteschlange', t)
+    if m: return f'add {m[1] or m[2]} to the queue'
+    m = re.fullmatch(r'(?:öffne|starte|geh(?:e)? (?:zu|auf)|wechs(?:le|el) (?:zu|zum|zur)) (.+?)|mach (.+?) auf|(.+?) (?:öffnen|starten|aufmachen)', t)   # nicht „zeig“: „zeig mir meine Termine“ ist keine App
+    if m:
+        target, ort = (m[1] or m[2] or m[3]), ''
+        o = re.fullmatch(rf'(.+?) {DE_ORTE}', de_orte(target))
+        if o: target, ort = o[1], ' on ' + de_orte(target)[len(o[1]) + 1:]
+        return f'open {de_app(target)}{ort}'
+    v = de_orte(t)
+    if v != t and re.search(rf'\b{DE_ORTE}\b', v):   # „Schieb Chrome nach links“, „Chrome links und Terminal rechts“
+        v = re.sub(r'^(?:verschieb(?:e)?|schieb(?:e)?|leg(?:e)?|pack(?:e)?|setz(?:e)?|tu|mach(?:e)?) ', 'move ', v)
+        v = re.sub(r'\b(?:es|das|dies(?:es)?|das fenster|dieses fenster)\b', 'it', v)
+        v = ' '.join(DE_APP.get(w, w) for w in re.sub(r'\bund\b', 'and', v).split())
+        v = re.sub(r'\b(?:nach|auf|den|dem|die|der|in|im|zur|zum|mein|meinen|meinem|seite|hälfte|bildschirm|rüber|hin)\b', ' ', v)
+        return re.sub(r'\s+', ' ', v).strip()
+    return None
+
+
+DE_WO = {'left': 'links', 'right': 'rechts', 'full screen': 'Vollbild', 'full': 'maximiert', 'center': 'Mitte'}
+
+
+def de_antwort(reply):
+    """Die Antworten von fast_en auf Deutsch; Fehlermeldungen bleiben englisch, damit failed_action_reply sie erkennt."""
+    if not reply or FAILED.search(reply) or ', but ' in reply: return reply
+    for pat, de in [(r'Opened (.+)\.', r'\1 geöffnet.'), (r'Closed (.+)\.', r'\1 beendet.'), (r'(.+) is still open\.', r'\1 ist noch offen.'),
+                    (r'Searched (.+) on ([\w.-]+)\.', r'Auf \2 nach \1 gesucht.'), (r'Searched (.+)\.', r'Nach \1 gesucht.'),
+                    (r'Playing (.+) on Spotify\.', r'Spiele \1 auf Spotify.'), (r'Playing (.+)\.', r'Spiele \1.'),
+                    (r'Added (.+) to your Spotify queue\.', r'\1 zur Spotify-Warteschlange hinzugefügt.'),
+                    (r'Nothing found on Spotify by that name\.', 'Auf Spotify gibt es nichts mit diesem Namen.'),
+                    (r'Review your feedback before opening GitHub\.', 'Prüf dein Feedback, bevor GitHub geöffnet wird.')]:
+        if re.fullmatch(pat, reply, re.S): return re.sub(pat, de, reply, flags=re.S)
+    moves = [re.fullmatch(r'(.+?): (left|right|full screen|full|center)(?: on (laptop|monitor))?', p) for p in reply.rstrip('.').split('; ')]
+    if all(moves):
+        return '; '.join(f'{m[1]}: {DE_WO[m[2]]}' + (f' auf dem {m[3].capitalize()}' if m[3] else '') for m in moves) + '.'
+    return reply
+
+
+def fast(text):
+    """fast_en, auch auf Deutsch. Erst die eigenen Worte: ein gelernter deutscher Kurzbefehl heißt so, wie er gesagt wurde."""
+    englisch = de_befehl(text)
+    r = fast_en(text)
+    if not r and englisch and not fast.failed: r = fast_en(englisch)
+    return de_antwort(r) if r and (englisch or pref('sprache', '') == 'de') else r
 
 
 # Ways to say a screen or a size, in any order: "full screen chrome on my big screen", "move chrome to the external display and maximize it"
@@ -7573,7 +7695,7 @@ def main():
     remembered = memory_items()   # the receipt under the answer shows what this ask changed
     commit = os.environ.get('ATTICUS_COMMIT')
     allow_focus(task)
-    if pref('instant', True) and hands_command(plain(task)):
+    if pref('instant', True) and hands_command(plain(de_befehl(task) or task)):
         if not wait_commit(): return
     quick = not marked and (not commit or os.path.exists(commit)) and pref('instant', True) and fast(remaining if remaining is not None else task)
     if quick:

@@ -34,7 +34,16 @@ Atticus (Open-Source-Sprachassistent für Mac, github.com/SaarthurR/atticus-mac)
 - Neue Upstream-Änderungen holen: `deutsch/sync-upstream.sh` (merge, build, push)
 - Quellcode des Senders: `deutsch/atticus-ask.swift`
 
+## Deutsche Instant-Befehle (28.10.2026)
+
+- In `atticus.py`: `de_befehl()` übersetzt deutsche Befehle in die englischen Formen, die `fast_en()` (der ursprüngliche Parser) versteht. `de_antwort()` übersetzt die Antworten zurück. `fast()` ist der Wrapper: erst die eigenen Worte (gelernte Kurzbefehle), dann die Übersetzung.
+- Abgedeckt: öffnen/schließen (auch „Safari öffnen“, deutsche App-Namen wie Notizen → Notes), suchen (auch „auf YouTube nach …“), Spotify abspielen und Warteschlange, Fenster verschieben (links/rechts/Vollbild/Mitte/Monitor/Laptop), scrollen, zurück, Tasten, klicken, Menüleisten-Symbole, „Wenn ich X sage, …“ zum Lernen, „Fehler melden“.
+- Fragen und ganze Sätze („Wie wird …“, „Ich möchte …“) und Befehle mit zweitem Schritt („… und dann …“) gehen weiter an die KI.
+- `"sprache": "de"` in `settings.json`: auch Antworten auf englische Formen wie „Google Katzen“ sind deutsch.
+- Fehlermeldungen bleiben englisch, damit `failed_action_reply` sie erkennt.
+- Tests: `tests/test_deutsch.py`; in `tests/test_learning_e2e.py` wurde ein Beispielsatz angepasst.
+
 ## Nächste Schritte
 
-1. Vorlesen mit Siri Stimme 3 testen.
-2. Optional: Spracheinstellung in den Settings statt fest eingetragenem `de-DE`, deutsche Instant-Befehle.
+1. Deutsche Instant-Befehle im Alltag testen und fehlende Formulierungen ergänzen.
+2. Optional: Spracheinstellung in den Settings statt fest eingetragenem `de-DE`.
