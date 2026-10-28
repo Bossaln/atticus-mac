@@ -1640,8 +1640,10 @@ def dashes(text):
 
 def plain(text):
     """Spoken request -> its core words: "Hey Atticus, can you open Spotify please?" -> "open spotify"."""
+    text = re.sub(r',?\s*\b(?:u+h+|u+m+|e+r+m+|h+m+)\b,?', ' ', text, flags=re.I)
     t = re.sub(r'[,;!?]|:(?!//)|(?<!\w)\.|\.(?!\w)', '', text.lower().strip(' .!?')).strip()   # keep domain dots; normalize punctuation before spoken prefixes
-    return re.sub(r'^(?:(?:hey|ok|okay|um+|uh+|hmm+|atticus|please|also|and|now|then|(?:can|could|would|will) (?:you|u)) )+|(?:\s+(?:please|for me))+$', '', t)
+    t = ' '.join(t.split())
+    return re.sub(r'^(?:(?:hey|ok|okay|atticus|please|also|and|now|then|(?:can|could|would|will) (?:you|u)) )+|(?:\s+(?:please|for me))+$', '', t)
 
 
 # Learned shortcuts: an action the AI got right is saved as the exact commands it ran; the same words later replay

@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
@@ -181,6 +182,41 @@ class NightTests(unittest.TestCase):
             self.assertEqual(atticus.fast(', and open fixture'), 'Opened Fixture.')
             open_.assert_called_once_with(['open', '-a', 'Fixture'])
         self.assertEqual(atticus.plain('; then search example.test for reports'), 'search example.test for reports')
+
+    def test_spoken_fillers_anywhere_only_change_whole_words(self):
+        for said, expected in [
+            ('open, uh, my terminal', 'open my terminal'),
+            ('um, hey atticus, open spotify', 'open spotify'),
+            ('open,uh,my terminal', 'open my terminal'),
+            ('umbrella', 'umbrella'), ('drum', 'drum'),
+            ('summer thermal humming permanent', 'summer thermal humming permanent'),
+            ('open  example.test please', 'open example.test'),
+        ]:
+            with self.subTest(said=said): self.assertEqual(atticus.plain(said), expected)
+        for filler in ('uh', 'um', 'erm', 'hmm', 'uhh', 'ummm', 'errrmmm', 'hmmmm', 'UHH'):
+            with self.subTest(filler=filler):
+                self.assertEqual(atticus.plain(f'{filler}, open, {filler}, terminal, {filler}'), 'open terminal')
+                self.assertEqual(atticus.plain(filler), '')
+
+    def test_spoken_fillers_in_matching_keys_and_split_parts(self):
+        text = 'open zen and then, um, terminal'
+        parts = [atticus.plain(p) for p in re.split(r'\s*(?:[,;]|\band then\b|\band\b|\bthen\b)\s*', text) if atticus.plain(p)]
+        self.assertEqual(parts, ['open zen', 'terminal'])
+        with patch.object(atticus, 'skills', return_value={'quiet time': {}}), \
+             patch.object(atticus, 'fast_hands', return_value=None), \
+             patch.object(atticus, 'replay', return_value='Done.') as replay:
+            replay.commands = []; replay.ran = ['Done.']
+            self.assertEqual(atticus.fast('quiet, ummm, time'), 'Done.')
+            replay.assert_called_once_with('quiet time', None)
+
+    def test_spoken_fillers_preserve_type_and_dictation_payloads(self):
+        text = 'Um, open, uh, my umbrella and drum, hmm.'
+        with patch('sys.argv', [atticus.ME, '--type', text]), \
+             patch.object(atticus.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'Typed.')) as run, \
+             patch('sys.stdout', new_callable=io.StringIO):
+            atticus.main()
+        run.assert_called_once_with([atticus.APP, '--type'], input=text, capture_output=True, text=True)
+        self.assertEqual(atticus.dictate_request(text, corrections=''), '<dictation>\n' + json.dumps(text) + '\n</dictation>')
 
     def test_saved_moves_run_in_process_without_shell_or_duplicate_preview(self):
         atticus.save_skills({'quiet time': {'cmds': [atticus.PLACE + ' Fixture left current'], 'reply': 'Moved.', 'mine': True}})
