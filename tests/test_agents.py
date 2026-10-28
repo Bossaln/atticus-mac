@@ -254,7 +254,7 @@ class AgentTests(unittest.TestCase):
                 self.assertTrue(atticus._request_contains('corrected@example.test'))
                 self.assertFalse(atticus._request_contains('invented@example.test'))
 
-    def test_long_ask_moves_after_elapsed_work_or_three_calls_without_pausing(self):
+    def test_long_ask_moves_after_elapsed_work_not_quick_calls_without_pausing(self):
         p=unittest.mock.Mock();p.ask=self.root.name;p.waiting=threading.Event()
         move=atticus.MainMove('Continue the task',p);self.addCleanup(move.close)
         move.last=0
@@ -263,8 +263,9 @@ class AgentTests(unittest.TestCase):
             move.poll();self.assertEqual(move.elapsed,14);self.assertFalse(move.moved)
             p.waiting.set();move.last=0;move.poll();self.assertEqual(move.elapsed,14);self.assertFalse(move.moved)
             p.waiting.clear()
-            for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Read','input':{'file_path':'fixture'}}]}})
-            move.poll();self.assertTrue(move.moved);self.assertNotIn('offer',output.getvalue())
+            for i in range(5):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Read','input':{'file_path':'fixture'}}]}})
+            move.poll();self.assertFalse(move.moved)   # many quick steps: a short task is nearly done
+            move.elapsed=15;move.poll();self.assertTrue(move.moved);self.assertNotIn('offer',output.getvalue())
         other=atticus.MainMove('Work',p);self.addCleanup(other.close);other.last=0
         other.record({'message':{'content':[{'type':'tool_use','id':'read','name':'Read','input':{}}]}})
         with patch.object(atticus,'stop_claude'),patch.object(atticus.time,'monotonic',return_value=15),contextlib.redirect_stdout(io.StringIO()):other.poll()
@@ -284,8 +285,8 @@ class AgentTests(unittest.TestCase):
                 self.prefs['longAsks']=mode;move,p=self.moving()
                 with patch.object(atticus,'stop_claude') as stop,contextlib.redirect_stdout(io.StringIO()) as output:
                     move.poll();self.assertEqual(self.lines(output.getvalue()),[{'a':move.answer}]);self.assertFalse(move.moved)   # movable before the threshold
-                    for i in range(3):move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':mode+str(i),'name':'Read','input':{}}]}})
-                    move.poll()
+                    move.record({'type':'assistant','message':{'content':[{'type':'tool_use','id':mode,'name':'Read','input':{}}]}})
+                    move.elapsed=15;move.poll()
                     self.assertFalse(any(l.get('offer') for l in self.lines(output.getvalue())))
                     self.assertTrue(move.moved);stop.assert_called_once_with(p)
                 self.assertTrue((Path(self.root.name)/'handed-off').exists());(Path(self.root.name)/'handed-off').unlink()
@@ -402,6 +403,7 @@ class AgentTests(unittest.TestCase):
 
     def test_move_by_itself_hands_off_without_a_card_or_focus_change(self):
         tools=''.join(f'print(json.dumps({{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"{i}","name":"Read","input":{{}}}}]}}}}),flush=True)\n' for i in range(3))
+        atticus.MainMove.carried[self.root.name]={'elapsed':15};self.addCleanup(atticus.MainMove.carried.clear)   # its tools already ran 15 s
         with patch.object(atticus,'free_focus') as free,patch.object(atticus,'osa') as osa,patch.object(atticus,'restore_focus') as restore:
             thread,output,p=self.run_fake(tools,lambda o:'⤴ ' in o);thread.join(3)
         self.assertFalse(any(l.get('offer') for l in self.lines(output.getvalue())));self.assertTrue(atticus.run.handoff['accepted'])

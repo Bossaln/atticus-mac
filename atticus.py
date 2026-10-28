@@ -5198,7 +5198,7 @@ def handoff_context(known, work):
 
 
 class MainMove:
-    """The running main ask moves to a background agent: by itself once its tools run long or take 3 steps, or by the user (⌃⌥↩) at any time."""
+    """The running main ask moves to a background agent: by itself once its tools run 15 s (many quick steps stay: a short task is nearly done), or by the user (⌃⌥↩) at any time."""
     carried = {}   # ask folder → state: a continuation or retry keeps its clock, trace and move file
 
     def __init__(self, task, p, request=None):
@@ -5214,7 +5214,7 @@ class MainMove:
         with self.lock:
             for block in message_blocks(event):
                 if block.get('type') == 'tool_use' and (not isinstance(block.get('id'), str) or not isinstance(block.get('name'), str) or not isinstance(block.get('input'), dict)
-                                                        or block['name'] == 'WebSearch' and search_first(self.p.ask)):   # the gate's redirect is not one of the 3 steps that move an ask
+                                                        or block['name'] == 'WebSearch' and search_first(self.p.ask)):   # the gate's redirect is not work the ask did
                     continue
                 if block.get('type') == 'text' and isinstance(block.get('text'), str) and re.search(r'\[(?:draft|insert|replace|point)\b', block['text']):
                     self.local_delivery = True
@@ -5246,9 +5246,8 @@ class MainMove:
             try:
                 with open(self.answer) as f: answer = f.read()
             except OSError: answer = ''
-            steps = sum(' --offset ' not in s['input'] for s in self.trace.values())   # the next page of a window continues the same read
             # Writing-only replies reveal their draft mode only when the answer arrives.
-            if answer != 'go' and (waiting or not self.trace or steps < 3 and self.elapsed < 15): return
+            if answer != 'go' and (waiting or not self.trace or self.elapsed < 15): return
             try:
                 self.pending = self.handoff()
                 persist_handoff(self.pending, self.p.pid)
