@@ -1802,7 +1802,7 @@ final class App: NSObject, WKScriptMessageHandler {
     // Settings → Speech model: Apple's newer SpeechTranscriber, or the Dictation model the keyboard mic uses.
     // Dictation drops fastResults / frequentFinalization (Apple: faster but less accurate); asks keep them for live commands.
     func speechModule(dictate: Bool = false) -> any SpeechModule {
-        let en = Locale(identifier: "en-US"), locale = en   // SpeechTranscriber rejects the Mac locale ("unsupported locale") even when SFSpeechRecognizer lists it: every voice ask died (1.5.0)
+        let en = Locale(identifier: "de-DE"), locale = en   // SpeechTranscriber rejects the Mac locale ("unsupported locale") even when SFSpeechRecognizer lists it: every voice ask died (1.5.0)
         if Prefs.str("speechModel") == "dictation" {
             return dictate ? DictationTranscriber(locale: en, contentHints: [.shortForm], transcriptionOptions: [.punctuation], reportingOptions: [.volatileResults], attributeOptions: [])
                 : DictationTranscriber(locale: locale, preset: .progressiveShortDictation)
@@ -2151,6 +2151,7 @@ final class App: NSObject, WKScriptMessageHandler {
             self?.allowUntil = Date().addingTimeInterval(3)   // hands raise an app for a mouse click, then put the user's app back
             self?.allowUserApp = n.object as? String == "user"   // a voice focus request changes the user's app; a temporary hands raise does not
         }
+        DistributedNotificationCenter.default().addObserver(forName: .init("atticus.ask"), object: nil, queue: .main) { _ in bar.ask() }
         SFSpeechRecognizer.requestAuthorization { _ in }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -5521,8 +5522,8 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                 let micAllowed = demo ? true : await AVCaptureDevice.requestAccess(for: .audio)
                 guard running, generation == g, !Task.isCancelled else { return }
                 guard micAllowed else { stop(); js("error", "Allow Microphone access for Atticus in System Settings"); return }
-                let mic = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
-                let tr = SpeechTranscriber(locale: Locale(identifier: "en-US"), preset: .progressiveTranscription)
+                let mic = SpeechTranscriber(locale: Locale(identifier: "de-DE"), preset: .progressiveTranscription)
+                let tr = SpeechTranscriber(locale: Locale(identifier: "de-DE"), preset: .progressiveTranscription)
                 if let request = try await AssetInventory.assetInstallationRequest(supporting: [tr]) { try await request.downloadAndInstall() }
                 guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [tr]) else {
                     if running && generation == g { stop(); js("error", "Speech recognition is unavailable. Resume to try again.") }; return
