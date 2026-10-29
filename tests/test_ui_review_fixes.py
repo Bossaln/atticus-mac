@@ -42,7 +42,7 @@ class UIReviewFixTests(unittest.TestCase):
         tap = self.box[self.box.index('    tap([x, y])'):self.box.index('    size(h)')]
         node(self, r'''let clicked = '';
 const make = key => { const el = { closest: s => s.split(', ').includes(key) ? el : null, click() { clicked = key; } }; return el; };
-let dictating = false;
+let folded = false, dictating = false;
 const document = { elementFromPoint: () => current, body: { classList: { contains: c => c === 'dictate' && dictating } } }; let current;
 const $ = () => ({ classList: { contains: () => false }, value: '' }), drop = () => { clicked = 'typing'; }, comp = () => { clicked = 'typing box'; }, post = () => {}, status = () => {}, fit = () => {};
 const ui = {''' + tap + r'''};

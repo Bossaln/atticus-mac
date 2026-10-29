@@ -109,6 +109,46 @@ class BackgroundTests(unittest.TestCase):
             atticus.show(os.environ['ATTICUS_ASK'], bg=True)
             self.assertEqual(run.call_args.args[0], ['open', '-g', os.environ['ATTICUS_ASK']])
 
+    def test_reopening_active_app_preserves_chosen_conversation_before_typing(self):
+        for bg, open_on in ((False, 'here'), (True, 'here'), (False, 'other')):
+            state = {'active': False, 'input': 'previous conversation'}
+            def open_app(cmd, **kwargs):
+                if cmd[0] == 'lsappinfo':
+                    return subprocess.CompletedProcess(cmd, 0, '(in front)\n    pid = 123' if state['active'] else '')
+                state.update(active=True, input='previous conversation')   # reopen restores the old input
+                return subprocess.CompletedProcess(cmd, 0)
+            def osa(script, **kwargs):
+                return str(state['active']).lower() if 'get frontmost and' in script else 'Fixture'
+            with self.subTest(bg=bg, open_on=open_on), patch.object(atticus, 'pref', side_effect=lambda k, d: open_on if k == 'openOn' else d), \
+                 patch.object(atticus, 'front', return_value=('Editor', 'Work')), patch.object(atticus, 'osa', side_effect=osa), \
+                 patch.object(atticus, 'free_focus'), patch.object(atticus, 'screens', return_value=[]), \
+                 patch.object(atticus, 'preview_app'), patch.object(atticus, 'keep_behind'), \
+                 patch.object(atticus.subprocess, 'run', side_effect=open_app) as run:
+                atticus.show('Fixture', bg=bg)
+                state['input'] = 'chosen conversation'   # choose sidebar item, Return, focus its input
+                atticus.show('Fixture', bg=bg)
+                sent = {state['input']: 'status request'}   # fake typing and destination-specific verification
+                self.assertEqual(sent, {'chosen conversation': 'status request'})
+                self.assertEqual(sum(c.args[0][0] == 'open' for c in run.call_args_list), 1)
+                state['active'] = False   # inactive app or no window must still open
+                atticus.show('Fixture', bg=bg)
+                self.assertEqual(sum(c.args[0][0] == 'open' for c in run.call_args_list), 2)
+        self.assertIn('focus its input before typing', atticus.SYSTEM)
+        self.assertIn('Verify text there', atticus.SYSTEM)
+        for rule in ("A click isn't success", 'Use returned state', 'Check destinations before retrying sends'):
+            self.assertIn(rule, atticus.SYSTEM)
+
+    def test_absent_and_background_apps_open_without_applescript_lookup(self):
+        for info in ('', 'ASN:0x0-0x123:\n    pid = 123'):
+            def run(cmd, **kwargs):
+                return subprocess.CompletedProcess(cmd, 0, info if cmd[0] == 'lsappinfo' else '')
+            with self.subTest(info=info), patch.object(atticus, 'pref', side_effect=lambda k, d: d), \
+                 patch.object(atticus, 'front', return_value=('Editor', 'Work')), patch.object(atticus, 'free_focus'), \
+                 patch.object(atticus, 'osa') as osa, patch.object(atticus.subprocess, 'run', side_effect=run) as call:
+                self.assertEqual(atticus.show('Fixture'), 'opened Fixture in front')
+                self.assertEqual([c.args[0] for c in call.call_args_list if c.args[0][0] == 'open'], [['open', '-a', 'Fixture']])
+                osa.assert_not_called()
+
     def test_safari_web_emits_preview_without_raising(self):
         with patch.dict(os.environ, {'ATTICUS_FRONT': 'Safari'}), patch.object(atticus, 'browser_adapter',return_value='webkit'), patch.object(atticus, 'preview_app',return_value=None) as preview, patch.object(atticus,'hands_map',return_value=None), patch.object(atticus.subprocess, 'run', side_effect=lambda args,**kw:subprocess.CompletedProcess([], 0, '10\t2' if 'return (id of window' in args[2] else 'Fixture, 0, 0, 300, 200' if 'get {name, bounds}' in args[2] else 'page', '')) as run:
             self.assertEqual(atticus.web('read'), 'page')

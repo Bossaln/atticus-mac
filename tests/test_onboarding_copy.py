@@ -126,7 +126,7 @@ for (const [label, keys] of Object.entries(want)) if (JSON.stringify(capsOf(labe
         speech = swift.split('    func speechModule(dictate: Bool = false)', 1)[1].split('    func prepareSpeech()', 1)[0]
         self.assertNotIn('Locale.current', speech)   # SpeechTranscriber rejected the Mac's locale: every voice ask died in 1.5.0
         self.assertIn(': SpeechTranscriber(locale: locale, preset: .progressiveTranscription)', speech)
-        start = swift.split('    func start(dictate: Bool)', 1)[1].split('    func heard(', 1)[0]
+        start = swift.split('    func start(dictate: Bool, quiet: Bool = false)', 1)[1].split('    func heard(', 1)[0]
         self.assertIn('dictate || SFSpeechRecognizer.authorizationStatus() == .authorized', start)
         self.assertIn('Privacy & Security → Speech Recognition.', start)
         prepare = swift.split('    func prepareSpeech()', 1)[1].split('    var text =', 1)[0]

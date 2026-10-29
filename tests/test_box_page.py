@@ -91,6 +91,23 @@ class BoxPageTests(unittest.TestCase):
         self.assertEqual([p for p in got['posts'] if isinstance(p, dict) and 'error' in p], [])
         return got
 
+    def test_quiet_follow_up_only_changes_status(self):
+        got = self.render(r"""
+ui.listen(); ui.words('First ask'); ui.think(); ui.line('✓ An answer to read.'); ui.finished();
+const thread = document.getElementById('thread'), before = thread.innerHTML;
+const orb = document.getElementById('orb').getAttribute('style');
+ui.quietListen(true);
+const quiet = [document.querySelector('.elapsed .hf')?.textContent, document.getElementById('status').textContent,
+    document.body.classList.contains('hearing'), document.getElementById('orb').getAttribute('style') === orb];
+ui.quietListen(false); const timeout = [thread.innerHTML === before, document.querySelectorAll('.hf').length];
+ui.quietListen(true); ui.listen(); ui.words('And these words');
+return {quiet, timeout, gone: document.querySelectorAll('.hf').length, words: thread.lastElementChild.querySelector('.q').textContent};
+""")['result']
+        self.assertEqual(got['quiet'], ['Listening...', '', False, True])
+        self.assertEqual(got['timeout'], [True, 0])
+        self.assertEqual(got['gone'], 0)
+        self.assertEqual(got['words'], 'And these words')
+
     def test_box_on_real_webkit(self):
         got = self.render(SCRIPT)
         out = got['result']
@@ -118,6 +135,35 @@ class BoxPageTests(unittest.TestCase):
         self.assertTrue(any(isinstance(p, dict) and p.get('kofi') for p in got['posts']))
         self.assertEqual(out['learned'], ['Learned “Atticus” Undo', 'flex', 'dn tick'])
 
+    def test_minimize_keeps_live_work_and_restores_scroll(self):
+        got = self.render(r'''
+ui.listen(true); ui.words('Explain'); ui.think(); ui.mode(false);
+ui.line('… ' + 'A long answer. '.repeat(300));
+const thread = document.getElementById('thread'), fold = document.getElementById('fold');
+const shown = id => getComputedStyle(document.getElementById(id)).display !== 'none';
+thread.dispatchEvent(new WheelEvent('wheel', {deltaY: -1})); thread.scrollTop = 45;
+const scroll = thread.scrollTop, height = document.getElementById('card').offsetHeight;
+fold.click();
+const out = {compact: [document.body.classList.contains('folded'), document.getElementById('card').offsetHeight < height,
+  ...['orb', 'status', 'x'].map(shown), ...['thread', 'comp', 'mode', 'agents-pill', 'grip'].map(shown), fold.getAttribute('aria-expanded')]};
+ui.line('▸ Reading the document'); out.step = document.getElementById('status').textContent;
+ui.tap([30, 20]); ui.hover(true); out.hover = [document.body.classList.contains('folded'), shown('comp')];
+ui.pointer([10, 10]); out.affordance = getComputedStyle(fold).opacity; ui.pointer([]);
+ui.line('✓ ' + 'Finished. '.repeat(300)); ui.finished();
+out.done = [document.body.classList.contains('folded'), getComputedStyle(document.querySelector('#status span'), '::before').content];
+const r = fold.getBoundingClientRect(); ui.pointer([r.x + r.width / 2, r.y + r.height / 2]); ui.tap([r.x + r.width / 2, r.y + r.height / 2]); out.restored = [thread.scrollTop === scroll, shown('mode'), fold.getAttribute('aria-expanded')];
+fold.click(); ui.listen(); out.next = [document.body.classList.contains('folded'), shown('thread')];
+fold.click(); ui.compose(true); out.typing = !document.body.classList.contains('folded');
+return out;
+''')
+        self.assertEqual(got['result'], {
+            'compact': [True, True, True, True, True, False, False, False, False, False, 'false'],
+            'step': 'Reading the document', 'hover': [True, False], 'affordance': '1',
+            'done': [True, '"Done"'], 'restored': [True, True, 'true'],
+            'next': [False, True], 'typing': True,
+        })
+        self.assertIn(56, got['posts'])  # the native height bridge shrinks the actual panel
+
     def test_picker_renders_answers_and_accepts_spoken_other(self):
         got = self.render(r'''
 ui.listen(); ui.words('choose'); ui.think();
@@ -131,6 +177,21 @@ return out;
                                         'margins': ['0px', '0px'], 'responded': True, 'gone': True})
         self.assertEqual([p['pick'] for p in got['posts'] if isinstance(p, dict) and 'pick' in p],
                          ['=use a different answer'])
+
+    def test_talking_over_a_picker_hides_it_and_cancel_brings_it_back(self):
+        got = self.render(r'''
+ui.listen(); ui.words('choose'); ui.think();
+ui.pick({q: 'Which?', options: [{label: 'Blue', sub: ''}, {label: 'Red', sub: ''}]});
+const card = document.querySelector('.pk'), reply = () => document.querySelector('.q.reply'), status = () => document.getElementById('status').textContent;
+ui.pickHear(''); ui.pickHear('the red');
+const out = {hidden: card.hidden, said: reply()?.textContent, status: status(), box: document.getElementById('ask').value};
+ui.pickHear(); out.back = [card.hidden, !!reply(), status(), card.querySelectorAll('.c').length];
+ui.pickHear(''); ui.pickHear('the red one'); out.responded = ui.respond('the red one'); out.gone = card.classList.contains('gone') && !reply();
+return out;
+''')
+        self.assertEqual(got['result'], {'hidden': True, 'said': 'the red', 'status': 'Listening…', 'box': '',
+                                         'back': [False, False, 'Waiting for you', 2], 'responded': True, 'gone': True})
+        self.assertEqual([p['pick'] for p in got['posts'] if isinstance(p, dict) and 'pick' in p], ['=the red one'])
 
 
 if __name__ == '__main__':

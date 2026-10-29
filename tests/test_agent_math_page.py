@@ -31,6 +31,18 @@ const stream = async (text, id) => { const bad = []; let at = 0;
   while (at < text.length) { const next = Math.min(text.length, at + 3); agents.text({id: id.repeat(32), text: text.slice(at, next)}); at = next;
     agents.select(id.repeat(32)); const w = document.querySelector('.writing .result'); if (!w || raw(w)) bad.push(text.slice(0, at)); }   // windowless: no frames, so render as the next frame would
   return [bad.slice(0, 3), look(document.querySelector('.writing .result'))]; };
+const narration = String.raw`Use **radicals**: \(\dfrac{4}{2}\) and \[\sqrt{3}\].`;
+const working = row('e', '', {status: 'running', step: narration, note: narration, timeline: [{text: narration}], ended: 0});
+agents.list([working]); agents.select(working.id);
+out.current = look(document.querySelector('.now .current'));
+out.currentBold = !!document.querySelector('.now .current strong');
+agents.state({...working, note: String.raw`Still \(\dfrac{4}`, step: String.raw`Still \(\dfrac{4}`});
+out.openCurrent = look(document.querySelector('.now .current'));
+const label = 'Reading $file_name$';
+agents.state({...working, note: undefined, step: label, timeline: [{tool: 'Read', text: label}]});
+out.label = [document.querySelector('.now .current').textContent, document.querySelector('.entry.read .line span').textContent];
+agents.list([row('f', 'Finished.', {changes: narration})]); agents.select('f'.repeat(32));
+out.changes = look(document.querySelector('.result .changes'));
 out.stream = await stream(RESULT, 'b'); out.display = await stream(DISPLAY, 'd');
 agents.mode('shelf'); agents.list([done]); agents.expand(done.id); await tick(30); settle();
 out.chip = look(document.querySelector('.chip.expanded .current'));
@@ -57,6 +69,11 @@ class AgentMathPageTests(unittest.TestCase):
                 self.assertEqual(out[where]['math'], 4)   # every $…$ is a formula
                 self.assertEqual([out[where]['failed'], out[where]['raw'], out[where]['items']], [0, False, 2])   # none shown as TeX source; the bullets are a list
                 self.assertGreater(out[where]['frac'], 20)   # \dfrac stacks
+        for where in ('current', 'changes'):
+            self.assertEqual([out[where]['math'], out[where]['failed'], out[where]['raw']], [2, 0, False])
+        self.assertTrue(out['currentBold'])
+        self.assertFalse(out['openCurrent']['raw'])   # the 200-character narration can end inside math
+        self.assertEqual(out['label'], ['Reading $file_name$'] * 2)   # tool labels stay literal
         self.assertEqual(out['stream'][0], [])   # no frame of the stream shows a $ or \dfrac
         self.assertEqual([out['stream'][1]['math'], out['stream'][1]['items']], [4, 2])
         self.assertEqual(out['display'][0], [])   # $$ display math open across lines waits too

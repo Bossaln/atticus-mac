@@ -204,7 +204,7 @@ let now=0;const performance={now:()=>now};
 const a=new N('DIV');a.className='a';a.getBoundingClientRect=()=>({top:116-thread.scrollTop});
 const thread={scrollTop:0,clientHeight:420,get scrollHeight(){return 120+a.words().length*40},getBoundingClientRect:()=>({top:0}),querySelectorAll:s=>s==='.a.streaming'&&a.classList.contains('streaming')?[a]:[]};
 const $=()=>thread,part=c=>c==='a'?a:null,status=()=>{},settle=()=>{},setState=()=>{},miniFinish=()=>{},clockStop=()=>{},clockBegin=()=>{},turn=()=>null;
-let atBottom=true,clock=null,working=true;const fit=(follow=true)=>{if(follow&&atBottom)thread.scrollTop=thread.scrollHeight};
+let folded=false,atBottom=true,clock=null,working=true;const fit=(follow=true)=>{if(follow&&atBottom)thread.scrollTop=thread.scrollHeight};
 ''' + unstream + reveal + 'const ui={' + line + r'''};
 const words=()=>a.words().map(w=>w.textContent).join(' '),check=(ok,name)=>{if(!ok){console.error(name,'|',words(),'|',a.className,thread.scrollTop);process.exit(1)}};
 ''' + checks

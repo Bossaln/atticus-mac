@@ -202,7 +202,7 @@ print("learned fixes ok")
         self.assertIn('NSWorkspace.shared.frontmostApplication == app', finish)
         self.assertLess(finish.index('dictateSelectionRetried = true'), finish.index('captureDictationSelection(retry: true)'))
         self.assertLess(finish.index('captureDictationSelection(retry: true)'), finish.index('let spoken ='))
-        start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
+        start = source[source.index('    func start(dictate: Bool, quiet: Bool = false)'):source.index('    func heard(')]
         self.assertLess(start.index('if dictate && !AXIsProcessTrusted()'), start.index('captureDictationSelection()'))
         self.assertIn('Allow Accessibility in System Settings → Privacy & Security → Accessibility', start)
 

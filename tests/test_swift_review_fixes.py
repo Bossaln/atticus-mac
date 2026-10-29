@@ -17,6 +17,28 @@ class SwiftReviewFixTests(unittest.TestCase):
         self.overlay = (ROOT / "ui/ui.html").read_text()
         self.settings = (ROOT / "ui/settings.html").read_text()
 
+    def test_hands_free_follow_up_keeps_answer_until_words(self):
+        wake = self.swift.split('    func wakeTick()', 1)[1].split('    func enableWakeWord()', 1)[0]
+        self.assertIn('clickMicrophone(quiet: true)', wake)
+        self.assertIn('guard Date() >= wakeRetry else { return }', wake)   # a backoff once pushed the retry back every tick, forever
+        self.assertIn('("sound", cueSound?.isPlaying == true || Date() < cueEnds)', wake)
+        self.assertIn('("speaking", voice?.isRunning == true || drawing.voice?.isRunning == true)', wake)
+        self.assertIn('s?.duration ?? 0', self.swift)
+        self.assertIn('if !self.quietFollowUp, let selection = self.selection', self.swift)
+        start = self.swift.split('    func start(dictate: Bool, quiet: Bool = false)', 1)[1].split('    func heard(', 1)[0]
+        self.assertIn('if !quiet { cue("soundStart") }', start)
+        self.assertIn('if quiet { js("quietListen", true) }\n        else {', start)
+        self.assertIn('self?.quietFollowUp == false', start)
+        self.assertIn('if quietFollowUp { hush(); fadeIdleHandsFree(); return }', start)
+        heard = self.swift.split('    func heard(_ now: String)', 1)[1].split('    func scheduleDictateAhead()', 1)[0]
+        self.assertLess(heard.index('guard !now.trimmingCharacters'), heard.index('js("listen")'))
+        self.assertLess(heard.index('js("listen")'), heard.index('text = now'))
+        self.assertLess(heard.index('text = now'), heard.index('js("words", text)'))
+        for name, end in [('shortcut', 'prepareForInactiveSession'), ('dictateShortcut', 'dictateChord'), ('typed', 'finish')]:
+            body = self.swift.split('    func ' + name + '(', 1)[1].split('    func ' + end + '(', 1)[0]
+            if name == 'shortcut': body = body.split('shortcutDown = true', 1)[1]
+            self.assertLess(body.index('if quietFollowUp { hush() }'), body.index('if engine.isRunning') if name != 'typed' else body.index('guard !busy, !engine.isRunning'))
+
     def test_fn_key_match_is_exact_and_modifier_prefixes_conflict(self):
         helpers = self.swift[self.swift.index("let atticusFnKey"):self.swift.index("func configuredHotkey")]
         matcher = self.swift[self.swift.index("func specialHotkey"):self.swift.index("func handleSpecialHotkeys")]
@@ -120,6 +142,8 @@ final class Drawing { func clear() {} }
 func unpoint() {}
 final class Harness {
     var replacement: String? = "draft", selection: Int? = 7, lastDone = Date()
+    var handsFree = false, followUp = false
+    func stopWake() {}
     var recent = "/missing", gen = 0
     let panel = Panel(), drawing = Drawing()
     func shush() {}
@@ -143,7 +167,7 @@ print("hidden rewrite target kept")
         self.assertLess(lead.index("if !still {"), lead.index('line.add(head'))
 
     def test_new_ask_clears_a_held_ring_without_hiding_the_new_answer(self):
-        start = self.swift[self.swift.index("    func start(dictate: Bool)"):self.swift.index("    func heard(")]
+        start = self.swift[self.swift.index("    func start(dictate: Bool, quiet: Bool = false)"):self.swift.index("    func heard(")]
         run = self.swift[self.swift.index("    func run(_ t: String"):self.swift.index("\n}\n\n// MARK: - Agent panels")]
         unpoint = self.swift[self.swift.index("func unpoint("):self.swift.index("// A line from the box")]
         self.assertIn("unpoint(false)", start)
@@ -151,17 +175,17 @@ print("hidden rewrite target kept")
         self.assertIn("if notify { gone?() }", unpoint)
 
     def test_released_dictation_drops_queued_level_updates(self):
-        start = self.swift[self.swift.index("    func start(dictate: Bool)"):self.swift.index("    func heard(")]
+        start = self.swift[self.swift.index("    func start(dictate: Bool, quiet: Bool = false)"):self.swift.index("    func heard(")]
         level = start[start.index('js("level", v)') - 160:start.index('js("level", v)') + 20]
         self.assertIn("listenID == listeningID, self?.engine.isRunning == true", level)
 
     def test_talking_about_a_drawing_shows_the_listening_orb(self):
-        self.assertIn('if replying && !drawingReply { js("draft", "") } else { js("listen")', self.swift)
-        self.assertIn('js(drawingReply ? "words" : "draft", now)', self.swift)
+        self.assertIn('if replying && !drawingReply { js(picking ? "pickHear" : "draft", "") } else { js("listen")', self.swift)
+        self.assertIn('js(drawingReply ? "words" : picking ? "pickHear" : "draft", now)', self.swift)
         self.assertIn('typed(response, heard: true)', self.swift)
 
     def test_spoken_drawing_reply_keeps_the_done_card_agent(self):
-        start = self.swift[self.swift.index("    func start(dictate: Bool)"):self.swift.index("    func heard(")]
+        start = self.swift[self.swift.index("    func start(dictate: Bool, quiet: Bool = false)"):self.swift.index("    func heard(")]
         typed = self.swift[self.swift.index("    func typed("):self.swift.index("    func finish()", self.swift.index("    func typed("))]
         self.assertIn('replyAgent = dictate || (retryOffer && !askFile.isEmpty) ? "" : agentCard', start)
         self.assertIn('if !heard { replyAgent = agentCard }', typed)
@@ -177,7 +201,7 @@ print("hidden rewrite target kept")
         self.assertLess(stop.index(quiet), stop.index("review(\"Couldn’t confirm your words."))
         typing = self.swift[self.swift.index('if b["type"] != nil {'):self.swift.index('if let s = b["link"]')]
         self.assertIn('else if busy && proc == nil && offerText == nil && !dictating && text.isEmpty { hush(); js("msg", "") }', typing)
-        start = self.swift[self.swift.index("    func start(dictate: Bool)"):self.swift.index("    func heard(")]
+        start = self.swift[self.swift.index("    func start(dictate: Bool, quiet: Bool = false)"):self.swift.index("    func heard(")]
         self.assertLess(start.index("began = Date()   // key-down"), start.index("engine.start(device"))
         msg = self.overlay[self.overlay.index("    msg(s) {"):self.overlay.index("    stopped(s) {")]
         self.assertIn("document.body.classList.remove('hearing')", msg)   # a tap's quiet end comes straight from listening
@@ -283,6 +307,28 @@ print("hidden rewrite target kept")
         self.assertIn("NSWorkspace.didWakeNotification", observers)
         self.assertIn("NSWorkspace.sessionDidResignActiveNotification", observers)
         self.assertIn("specialMainDown = false; specialDictateDown = false", observers)
+        state = self.swift.split('    var wakeSuspended: Bool ', 1)[1].split('\n', 1)[0]
+        changes = observers[observers.index('        if name == NSWorkspace.willSleepNotification'):observers.index('        app.prepareForInactiveSession()')]
+        swift = '''import Foundation
+struct NSWorkspace {
+    static let willSleepNotification = "sleep", didWakeNotification = "wake"
+    static let sessionDidResignActiveNotification = "lock", sessionDidBecomeActiveNotification = "unlock"
+}
+final class State {
+    var wakeSleeping = false, wakeInactive = false
+    var wakeSuspended: Bool ''' + state + '''
+}
+let app = State()
+func notify(_ name: String) {
+''' + changes + '''}
+notify("lock"); notify("sleep"); notify("wake")
+precondition(app.wakeSuspended, "wake reopened microphone in an inactive session")
+notify("unlock"); precondition(!app.wakeSuspended)
+notify("sleep"); notify("unlock"); precondition(app.wakeSuspended)
+notify("wake"); precondition(!app.wakeSuspended)
+print("wake waits for active session")
+'''
+        self.assertIn("wake waits for active session", run_swift(self, swift))
 
     def test_display_changes_clear_stale_drawings_and_keep_agent_windows_reachable(self):
         app_init = self.swift[self.swift.index("    override init() {\n        let cfg = WKWebViewConfiguration()"):self.swift.index("    func userContentController(_ c: WKUserContentController")]

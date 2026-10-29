@@ -170,7 +170,7 @@ print("dictation stitching ok")
 
     def test_verbatim_skips_ai_cleanup_uses_one_call_and_cancel_drops_result(self):
         source = (ROOT / 'Atticus.swift').read_text()
-        start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(')]
+        start = source[source.index('    func start(dictate: Bool, quiet: Bool = false)'):source.index('    func heard(')]
         self.assertIn('if !dictate && (!replying || drawingReply) { unwarm(); warm = spawn() }', start)
         self.assertIn('if dictateCleanup { warmDictationCleanup() }', start)
         method = source[source.index('    func stopDictationCleanup()'):source.index('    func dictationDeliveryFailed(')]
@@ -544,19 +544,24 @@ print("dictation states ok")
         # A pinned, placed or drawing-holding box blocked hide(), so the pill sat on its green check and hid the answer.
         source = (ROOT / 'Atticus.swift').read_text()
         hide = source[source.index('    func hide(after s: Double)'):source.index('    func defaultKey(')]
+        clickout = source.split('NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown])', 1)[1].split('var grab:', 1)[0]
+        self.assertIn('!handsFree', clickout)
         swift = r'''import Foundation
 final class Ctx { var duration = 0.0 }
 enum NSAnimationContext { static func runAnimationGroup(_ a: (Ctx) -> Void, completionHandler: (() -> Void)?) { a(Ctx()); completionHandler?() } }
 final class Panel { var alphaValue = 1.0; func animator() -> Panel { self } }
 final class Flag { var active = false, hasInput = false, holds = false, isRunning = false }
 final class Harness {
+    var handsFree = false
     var gen = 1, busy = false, hovering = false, pinned = false, stuck = false, composing = false, pillOn = true, dictating = false
     let engine = Flag(), mini = Flag(), drawing = Flag(), panel = Panel(); var ringGone: Int?, voice: Flag?
     var log: [String] = []
     func pill(_ on: Bool) { pillOn = on; log.append("pill \(on)") }
     func gone() { log.append("gone") }
-''' + hide + r'''}
+''' + source[source.index('    static func hasWakeWord('):source.index('    func stopWake(')] + hide + r'''}
 func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+let handsFree = Harness(); handsFree.handsFree = true; handsFree.hide(after: 0); settle()
+precondition(handsFree.log.isEmpty && handsFree.panel.alphaValue == 1, "hands-free box hid on blur/timeout")
 let pinned = Harness(); pinned.pinned = true; pinned.hide(after: 0); settle()
 precondition(pinned.log == ["pill false"], "a pinned box kept the pill: \(pinned.log)")
 let drawn = Harness(); drawn.drawing.active = true; drawn.hide(after: 0); settle()
@@ -567,6 +572,8 @@ let hover = Harness(); hover.pinned = true; hover.hovering = true; hover.hide(af
 precondition(hover.log.isEmpty, "a hovered pill changed: \(hover.log)")
 let box = Harness(); box.pillOn = false; box.pinned = true; box.hide(after: 0); settle()
 precondition(box.log.isEmpty, "a pinned box changed: \(box.log)")
+for words in ["Atticus", "HEY ATTICUS!", "hello, Atticus, help", "atticus’s"] { precondition(Harness.hasWakeWord(words), words) }
+for words in ["hey", "attic", "atticuses", "xatticus", "atticus2", "éatticus", "atticus_foo"] { precondition(!Harness.hasWakeWord(words), words) }
 print("pill gives the box back")
 '''
         self.assertIn('pill gives the box back', run_swift(self, swift))
@@ -612,7 +619,7 @@ const kids = [], thread = { children: kids, get firstElementChild() { return kid
 const node = () => { const n = { classList: set(), className: '', remove: () => kids.splice(kids.indexOf(n), 1), prepend() {}, firstChild: { classList: set() } }; return n; };
 const document = { body: { classList: set() }, createElement: node }, card = { classList: set() };
 const $ = id => id === 'thread' ? thread : id === 'card' ? card : { children: [], value: '' };
-const miniClear = () => {}, clockStop = () => {}, comp = () => {}, markShot = () => '', setState = () => {}, status = () => {}, fit = () => {}, pill = () => {};
+const foldBox = () => {}, miniClear = () => {}, clockStop = () => {}, comp = () => {}, markShot = () => '', setState = () => {}, status = () => {}, fit = () => {}, pill = () => {};
 let hover, listening, working, boost, atBottom;
 ''' + helper + r'''
 const ui = {

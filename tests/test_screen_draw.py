@@ -300,7 +300,7 @@ class DrawingTests(unittest.TestCase):
         app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
         section = lambda start, end: app.split(start,1)[1].split(end,1)[0]
         self.assertIn('drawing.clear()',section('func close(clear: Bool)','\n    }'))   # the box's ✕ takes the drawing with it
-        self.assertIn('unpoint(false)',section('func start(dictate: Bool)','func heard('))   # a voice ask clears the old answer ring at key-down
+        self.assertIn('unpoint(false)',section('func start(dictate: Bool, quiet: Bool = false)','func heard('))   # a voice ask clears the old answer ring at key-down
         for start,end in [('func hush()', 'func stopOfferInput()'),('func run(_ t:', '// MARK: - Agent panels'),('func typed(', 'func finish()')]:
             self.assertNotIn('drawing.clear()',section(start,end),start)   # a follow-up keeps the drawing; only a new one replaces it
         self.assertIn('drawing.clearInput(); drawing.deselect()',section('func run(_ t:', '// MARK: - Agent panels'))
@@ -316,7 +316,7 @@ class DrawingTests(unittest.TestCase):
     def test_follow_ups_keep_the_guide_display_and_voice_prewarms(self):
         source = (ROOT/'Atticus.swift').read_text()
         app = source.split('final class App: NSObject, WKScriptMessageHandler {',1)[1]
-        start = app.split('func start(dictate: Bool)',1)[1].split('func heard(',1)[0]
+        start = app.split('func start(dictate: Bool, quiet: Bool = false)',1)[1].split('func heard(',1)[0]
         typed = app.split('func typed(',1)[1].split('func finish()',1)[0]
         finish = app.split('func finish()',1)[1].split('func spawn()',1)[0]
         self.assertIn('if !dictate && !drawingReply { targetScreen = currentRequestScreen(panel) }',start)

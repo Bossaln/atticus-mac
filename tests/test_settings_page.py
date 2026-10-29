@@ -67,6 +67,14 @@ class SettingsPageTests(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return json.loads(p.stdout.strip().splitlines()[-1])
 
+    def test_wake_word_defaults_off_and_saves_one_toggle(self):
+        out = self.page("""const wake=document.querySelector('[data-k=wakeWord]');
+            const before=wake.checked; wake.click(); await tick(20);
+            st.load({prefs:{hotkeyLabel:'⌃⌥Space',wakeWord:false}});
+            return [before,wake.checked,wake.closest('.group') === document.querySelector('[data-k=talkMode]').closest('.group'),wake.closest('.row') === wake.closest('.group').lastElementChild];""")
+        self.assertEqual(out['result'], [False, False, True, True])
+        self.assertIn({'do': 'set', 'k': 'wakeWord', 'v': True}, out['posts'])
+
     def test_sharing_compatibility_notice_preserves_saved_choice(self):
         out = self.page("""st.load({prefs:{hotkeyLabel:'⌃⌥Space',hideWhenSharing:true},sharingUnavailable:true});
             const before=[!$('sharingUnavailable').hidden,document.querySelector('[data-k=hideWhenSharing]').checked];

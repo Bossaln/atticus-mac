@@ -310,7 +310,7 @@ print("caret safety ok")
 
     def test_hidden_followups_keep_failed_and_successful_turns_for_five_minutes(self):
         source = (ROOT / 'Atticus.swift').read_text()
-        start = source[source.index('    func start(dictate: Bool)'):source.index('    func heard(', source.index('    func start(dictate: Bool)'))]
+        start = source[source.index('    func start(dictate: Bool, quiet: Bool = false)'):source.index('    func heard(', source.index('    func start(dictate: Bool, quiet: Bool = false)'))]
         self.assertIn('Date().timeIntervalSince(lastDone) > 300', start)
         spawn = source.index('    func spawn()')
         completion = source[source.index('p.terminationHandler =', spawn):source.index('\n        do { try p.run()', spawn)]
@@ -324,6 +324,8 @@ final class Engine { var isRunning = false }
 final class Panel { func makeKey() {}; func makeFirstResponder(_ v: Int) {} }
 final class DrawingStub { var active = false, advances = 0; func next() { advances += 1 } }
 final class Harness {
+    var quietFollowUp = false
+    var handsFree = false, followUp = false
     var drawingReply = false; let drawing = DrawingStub()
     func typed(_ text: String, heard: Bool = false) { request = text }
     var busy = true, selectionPending = false, fastBusy = false, liveRevised = false, pinned = false, guardUntil = Date.distantPast
@@ -336,7 +338,7 @@ final class Harness {
     func run(_ t: String, remaining: String? = nil) { request = t; self.remaining = remaining }
     func dropAhead() { ahead = "" }
     func unwarm() {}; func hush() {}; func hush(keepReply: Bool, keepWarm: Bool = false) {}; func cancel() {}; func hide(after: Double) {}
-    func js(_ name: String, _ value: Any = "") {}; func cue(_ name: String) {}
+    func js(_ name: String, _ value: Any = "") {}; func cue(_ name: String) {}; func followUpSoon() {}
     func linger(_ n: Double) -> Double { n }
     func deliver(_ text: String) { delivered = text }
 ''' + finish + '''}
@@ -530,9 +532,13 @@ final class Panel { var isVisible = true; func makeKey() {}; func makeFirstRespo
 final class DrawingStub { var active = false, hasInput = false; func clear() { hasInput = false }; func clearInput() { hasInput = false } }
 final class Harness {
     static var keysUp = Date(); func gone() {}; func unwarm() {}
+    var quietFollowUp = false
+    var handsFree = false, followUp = false
+    func stopWake() {}
     var drawingReply = false; let drawing = DrawingStub()
     let engine = Engine(), panel = Panel(), quietAudio = QuietAudio()
     var askNeed: [String:Any] = [:]
+""" + source[source.index('    var picking:'):source.index('\n', source.index('    var picking:'))] + """
     var retryOffer=false,offerText:String?,askFile="fixture-answer",agentCard="",listenID=0,stops=0
     var feed:Input?,reading:Input?,quiet:Input?,analyzer:Analyzer?,speechInputs:SpeechInputs?=SpeechInputs()
     var nextFeed:Input?,nextReading:Input?,nextAnalyzer:Analyzer?,nextSpeechInputID:Int?,nextSpeechSegment=0
@@ -549,7 +555,8 @@ final class Harness {
     func close(clear: Bool) { events.append("close"); hush() }
     func review(_ text: String) { events.append("review"); hush() }
     func cue(_ text: String) {}
-    func js(_ f: String, _ text: Any? = nil) { if f == "agentEscape" || f == "locked" { events.append(f) } }
+    func followUpSoon() {}
+    func js(_ f: String, _ text: Any? = nil) { if ["agentEscape", "locked", "pickHear", "draft"].contains(f) { events.append(f) } }
     func hide(after: Double) {}
     var pausedNotice = Date.distantPast; func show() {}
 """ + methods + stop + '        events.append("send"); engine.isRunning = false; busy = true; toggleTalk = false\n    }\n' + """}
@@ -567,6 +574,10 @@ let empty = Harness(); empty.text = ""; empty.shortcut(true); empty.shortcut(fal
 Prefs.toggle = false
 let tap = Harness(); tap.text = ""; tap.began = Date(); tap.shortcut(true); tap.shortcut(false); precondition(tap.events == ["start", "hush"] && !tap.clickTalk && !tap.engine.isRunning, "quick voice tap kept listening, sent, or opened typing")
 let silent = Harness(); silent.text = ""; silent.began = .distantPast; silent.shortcut(true); silent.shortcut(false); precondition(silent.events == ["start", "send"], "a real hold must still wait for late final words")
+let hand = Harness(); hand.handsFree = true; hand.shortcut(true); hand.shortcut(false)
+precondition(hand.handsFree, "a voice shortcut ended the hands-free chat")
+let handEscape = Harness(); handEscape.handsFree = true; handEscape.escape()
+precondition(handEscape.events == ["close", "hush"], "Esc did not end hands-free chat")
 let hold = Harness(); hold.shortcut(true); hold.shortcut(false); precondition(hold.events == ["start", "send"], "hold release regressed")
 let voice = Harness(); voice.speaking = true; voice.busy = true; voice.shortcut(true); precondition(voice.events == ["quiet"] && !voice.engine.isRunning && voice.busy, "stopping voice started the mic")
 let click = Harness(); click.engine.isRunning = true; click.clickTalk = true; click.shortcut(false); precondition(click.events.isEmpty, "release sent click-to-talk")
@@ -584,10 +595,14 @@ precondition(reply.engine.stopped, "reply mic stayed open")
 let failedStart=Harness();failedStart.retryOffer=true;failedStart.busy=true;failedStart.stopOfferInput();precondition(failedStart.engine.stopped && failedStart.busy && failedStart.askFile=="fixture-answer", "failed engine start left its tap or lost its worker")
 precondition(!reply.engine.isRunning && reply.text=="Original task" && reply.offerText==nil && reply.busy && reply.retryOffer && reply.askFile=="fixture-answer", "stopping reply input lost the waiting task")
 precondition(reply.speechInputs!.finished && reply.reading!.cancelled, "reply input stayed alive")
-reply.shortcut(true);precondition(reply.events==["start"], "card reply shortcut cancelled its worker")
+reply.shortcut(true);precondition(reply.events==["pickHear","start"], "card reply shortcut cancelled its worker")
 let speakingReply=Harness();speakingReply.retryOffer=true;speakingReply.engine.isRunning=true;speakingReply.escape();precondition(speakingReply.events.contains("hush") && !speakingReply.engine.isRunning, "Esc did not stop card dictation")
 let working=Harness();working.busy=true;working.shortcut(true);precondition(working.events.contains("cancel") && !working.engine.isRunning, "hotkey without a card stopped cancelling")
 let waiting=Harness();waiting.busy=true;waiting.retryOffer=true;waiting.escape();precondition(waiting.events.contains("cancel"), "Esc did not cancel a waiting card")
+let pickEsc=Harness();pickEsc.retryOffer=true;pickEsc.askNeed=["pick":true];pickEsc.busy=true;pickEsc.offerText="Original task";pickEsc.engine.isRunning=true;pickEsc.escape()
+precondition(pickEsc.events==["pickHear"] && !pickEsc.engine.isRunning && pickEsc.busy && pickEsc.askFile=="fixture-answer" && pickEsc.text=="Original task", "Esc while answering a choices card lost the card or its task")
+let pickLimit=Harness();pickLimit.retryOffer=true;pickLimit.askNeed=["pick":true];pickLimit.busy=true;pickLimit.offerText="Original task";pickLimit.engine.isRunning=true;pickLimit.recordingLimit()
+precondition(pickLimit.events==["pickHear"] && pickLimit.busy && pickLimit.text=="Original task", "a choices card reply put its words in the text box")
 reply.offerText="Original task";reply.text="partial retry";reply.recordingLimit()
 precondition(reply.busy && reply.askFile=="fixture-answer" && reply.text=="Original task" && !reply.events.contains("send"), "reply recording limit sent or cancelled the request")
 Prefs.toggle = true   // the main shortcut's toggle setting must not change dictation

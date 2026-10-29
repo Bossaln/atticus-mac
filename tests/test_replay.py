@@ -105,7 +105,7 @@ class ReplayTests(unittest.TestCase):
             self.assertFalse(atticus.hands(*args)[1]);call.assert_not_called()
 
     def test_guarded_background_open_does_not_poll_or_sleep(self):
-        with patch.object(atticus,'osa') as osa,patch.object(atticus.time,'sleep') as sleep,patch.object(atticus,'preview_app'),patch.object(atticus.subprocess,'run',return_value=unittest.mock.Mock(returncode=0)):
+        with patch.object(atticus,'osa') as osa,patch.object(atticus.time,'sleep') as sleep,patch.object(atticus,'preview_app'),patch.object(atticus.subprocess,'run',return_value=unittest.mock.Mock(returncode=0,stdout='')):
             atticus.show('Fixture',bg=True);osa.assert_not_called();sleep.assert_not_called()
 
     def test_failed_direct_open_falls_back_instead_of_claiming_success(self):

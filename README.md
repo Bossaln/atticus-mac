@@ -26,6 +26,7 @@ Needs macOS 26 and an AI client: Claude Code on a Claude plan, Devin, Pi or a lo
 - **Sees your screen.** Ask about anything on screen. Ask "where do I click?" and it points at the spot.
 - **Draws to explain.** "Explain this and draw it" builds a labeled diagram on your screen.
 - **Dictate anywhere.** Hold fn, talk, let go. Your words land in any text field, cleaned up.
+- **Hands-free.** Turn on Settings → General → Wake word, then just say "Atticus". Keep talking after each answer; the box stays up while you work and only ✕ closes it.
 - **Background agents.** Big jobs run behind your apps while you keep working.
 - **Meeting Copilot.** Answers and notes during calls, saved on your Mac.
 - **Remembers you.** Say "remember…" and every ask after that knows it.
@@ -66,6 +67,12 @@ https://github.com/user-attachments/assets/26822ad2-6281-477d-b676-2f490a4a207b
 | *"When I say focus mode, close Slack and open my to-do list."* | Remembers it. Next time, two words do it all. |
 
 <p align="center"><img src="docs/demo.gif" alt="Atticus arranging windows across two screens" width="820"></p>
+
+## Hands-free
+
+Turn on **Wake word: say "Atticus"** in Settings → General (off by default). Say "Atticus" or "hey Atticus", wait for Listening…, then ask. Speech is recognized on your Mac only. After each answer it listens again quietly, with a small "Listening..." beside the timer; start talking and your words fill the bubble. Clicking other apps never closes a hands-free chat, so you can keep working while it does things for you. ✕ or Esc ends it, and a chat nobody talks to fades after about 90 seconds unless you moved or resized the box. The hotkey always takes over. While the wake word is on, macOS shows the orange mic dot.
+
+While Atticus works, the line next to ✕ minimizes the box to a small bar with its live steps. Hover and click the line to bring it back.
 
 ## Safe by default
 

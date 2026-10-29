@@ -237,7 +237,7 @@ func axAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 func axWindowNumber(_ element: AXUIElement) -> NSNumber? { NSNumber(value:42) }
 '''
-        start_at=swift.index('    func start(dictate: Bool)')
+        start_at=swift.index('    func start(dictate: Bool, quiet: Bool = false)')
         body_at=swift.index('        drawingReply = !dictate',start_at)
         start='    func start() { let dictate = false\n'+swift[body_at:swift.index('        guard !Prefs.bool("paused")',start_at)]+'    }\n'
         starter='''enum Prefs { static func bool(_ name:String)->Bool { false }; static func str(_ name:String)->String { "back" } }

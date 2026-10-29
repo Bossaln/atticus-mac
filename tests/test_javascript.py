@@ -46,7 +46,7 @@ if(!old.removed||button.disabled||button.textContent!=='Try again'||sent.id!=='q
         self.assertIn('<span id="dictwave" role="img" aria-label="Listening"></span>', source)
         helper = source[source.index('  const dictateMode ='):source.index('\n  };', source.index('  const dictateMode =')) + 5]
         dictate = source[source.index('    dictate(on) {'):source.index('    locked(on) {')]
-        script = '''const bars=[{style:{height:'21px'}},{style:{height:'9px'}}];let gone=0,state;
+        script = '''const foldBox = () => {}; const bars=[{style:{height:'21px'}},{style:{height:'9px'}}];let gone=0,state;
 const $=id=>id==='thread'?{querySelectorAll:s=>s==='.turn.dict'?[{remove(){gone++;}}]:[]}:{children:bars},pill=s=>{state=s;};
 const document={body:{classList:{toggle(){},remove(){}}}};
 ''' + helper + '''

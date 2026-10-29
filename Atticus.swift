@@ -187,7 +187,7 @@ enum Prefs {
     static let path = (ProcessInfo.processInfo.environment["ATTICUS_DIR"] ?? NSString(string: "~/.config/atticus").expandingTildeInPath) + "/settings.json"
     static let defaults: [String: Any] = ["hotkeyCode": 49, "hotkeyMods": controlKey | optionKey, "hotkeyLabel": "⌃⌥Space", "login": true, "paused": false, "corner": "top-left", "linger": "normal",
         "soundStart": "Pop", "soundRelease": "Bottle", "soundDone": "Glass", "soundStop": "Tink", "volume": 0.16, "client": "claude", "model": "haiku", "instant": true,
-        "microphone": "automatic", "quietAudio": false, "quietLevel": 0.18, "agentModel": "sonnet", "agentUserTools": true, "fixSetup": false,
+        "wakeWord": false, "microphone": "automatic", "quietAudio": false, "quietLevel": 0.18, "agentModel": "sonnet", "agentUserTools": true, "fixSetup": false,
         "meetingStyle": "Direct", "meetingCustom": "", "meetingStyles": [
             ["name": "Direct", "text": "Lead with the answer in plain words. No hedging or filler."],
             ["name": "Persuasive", "text": "Speak to feelings first: why it matters to them and what it means for them, a vivid picture or short story, then the fact that backs it."],
@@ -288,13 +288,13 @@ func listenMic() -> MicrophoneDevice? {
 final class Mic: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private var session: AVCaptureSession?, onBuffer: ((AVAudioPCMBuffer) -> Void)?
     private let queue = DispatchQueue(label: "atticus.mic")
-    private let sessionQueue = DispatchQueue(label: "atticus.mic.session")
+    private static let sessionQueue = DispatchQueue(label: "atticus.mic.session")   // serialize device release before another Mic opens it
     private var generation = 0
     private(set) var isRunning = false
     func start(_ device: AVCaptureDevice, sampleRate: Double, _ onBuffer: @escaping (AVAudioPCMBuffer) -> Void, completion: @escaping (Result<Void, Error>) -> Void) {
         stop()
         isRunning = true; let g = generation
-        sessionQueue.async { [self] in
+        Self.sessionQueue.async { [self] in
             let result: Result<Void, Error>
             do {
                 let s = AVCaptureSession(), input = try AVCaptureDeviceInput(device: device), out = AVCaptureAudioDataOutput()
@@ -317,7 +317,7 @@ final class Mic: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
     func stop(completion: @escaping () -> Void = {}) {
         generation += 1; isRunning = false
-        sessionQueue.async { [self] in
+        Self.sessionQueue.async { [self] in
             session?.stopRunning(); session = nil   // release the device so headphones return to music mode
             queue.sync { onBuffer = nil }
             DispatchQueue.main.async(execute: completion)
@@ -1799,6 +1799,105 @@ final class App: NSObject, WKScriptMessageHandler {
     var nextFeed: AsyncStream<AnalyzerInput>.Continuation?, nextAnalyzer: SpeechAnalyzer?, nextReading: Task<Void, Never>?
     var nextSpeechInputID: UUID?, nextSpeechSegment = 0, nextSpeechRollover = 50.0
     var speechFormat: AVAudioFormat?, preparingSpeech = false   // what the model wants (found at launch and when the model changes)
+    var quietFollowUp = false
+    var handsFreeIdle = 0
+    func fadeIdleHandsFree() {   // a hands-free chat nobody talks to fades after 90 s; a moved or resized box stays (pinned)
+        handsFreeIdle += 1; let id = handsFreeIdle
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [self] in
+            guard id == handsFreeIdle, handsFree, !pinned, !busy, !engine.isRunning else { return }
+            handsFree = false; followUp = false; hide(after: 0)
+        }
+    }
+    var handsFree = false, followUp = false, wakeSleeping = false, wakeInactive = false
+    var wakeSuspended: Bool { wakeSleeping || wakeInactive }
+    let wakeMic = Mic()
+    var wakeRecognizer: SFSpeechRecognizer?
+    var wakeTask: SFSpeechRecognitionTask?, wakeRequest: SFSpeechAudioBufferRecognitionRequest?
+    var wakeID = 0, wakeRetry = Date.distantPast, wakeBegan = Date.distantPast, wakeDevice = ""
+    var wakeBackoff = 1.0, wakePermissionID = 0, wakeWhy = "?"
+    static func hasWakeWord(_ text: String) -> Bool {
+        text.range(of: #"(?i)(?<![\p{L}\p{N}_])atticus(?![\p{L}\p{N}_])"#, options: .regularExpression) != nil
+    }
+    func stopWake() {
+        wakeID += 1
+        let task = wakeTask, request = wakeRequest
+        wakeTask = nil; wakeRequest = nil; wakeRecognizer = nil
+        wakeMic.stop { task?.cancel(); request?.endAudio() }   // drain audio callbacks before ending their request
+    }
+    func wakeFailed() {
+        if Date().timeIntervalSince(wakeBegan) > 10 { wakeBackoff = 1 }
+        stopWake(); wakeRetry = Date().addingTimeInterval(wakeBackoff); wakeBackoff = min(30, wakeBackoff * 2)
+    }
+    func clickMicrophone(quiet: Bool = false) {
+        clickTalk = true; start(dictate: false, quiet: quiet); if !engine.isRunning { clickTalk = false }
+    }
+    func wakeTick() {
+        let waits: [(String, Bool)] = [("off", !Prefs.bool("wakeWord")), ("paused", Prefs.bool("paused")), ("asleep", wakeSleeping), ("inactive", wakeInactive),
+            ("meeting", meeting.running), ("busy", busy), ("talking", engine.isRunning), ("dictating", dictating), ("typing", composing),
+            ("shortcut", shortcutDown || dictateShortcutDown), ("box", panel.isVisible && !handsFree),
+            ("speaking", voice?.isRunning == true || drawing.voice?.isRunning == true), ("sound", cueSound?.isPlaying == true || Date() < cueEnds),
+            ("onboarding", onboarding.win != nil), ("mic permission", AVCaptureDevice.authorizationStatus(for: .audio) != .authorized),
+            ("speech permission", SFSpeechRecognizer.authorizationStatus() != .authorized)]
+        let why = waits.first { $0.1 }?.0 ?? ""
+        if why != wakeWhy { wakeWhy = why; NSLog("Wake word: %@", why.isEmpty ? "listening" : "waits (\(why))") }   // app.err shows why it is not listening
+        guard why.isEmpty else {
+            if wakeRequest != nil { stopWake() }; return
+        }
+        if handsFree && followUp {
+            followUp = false; stopWake(); clickMicrophone(quiet: true); return
+        }
+        let device = listenMic().flatMap { AVCaptureDevice(uniqueID: $0.uid) } ?? AVCaptureDevice.default(for: .audio)
+        if wakeRequest != nil {
+            if device?.uniqueID != wakeDevice || Date().timeIntervalSince(wakeBegan) > 50 { wakeFailed() }
+            return
+        }
+        guard Date() >= wakeRetry else { return }   // waiting out a backoff must not push the retry later
+        guard let device,
+              let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
+              recognizer.isAvailable, recognizer.supportsOnDeviceRecognition else { NSLog("Wake word: no on-device recognizer or mic, retry in 30 s"); wakeRetry = Date().addingTimeInterval(30); return }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.requiresOnDeviceRecognition = true; request.shouldReportPartialResults = true
+        wakeRecognizer = recognizer; wakeRequest = request; wakeID += 1; let id = wakeID
+        wakeBegan = Date(); wakeDevice = device.uniqueID
+        wakeTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, wakeID == id else { return }
+                if let result, Self.hasWakeWord(result.bestTranscription.formattedString) {
+                    wakeBackoff = 1
+                    stopWake(); handsFree = true; clickMicrophone()
+                } else if error != nil || result?.isFinal == true {
+                    if let error { NSLog("Wake word: recognizer error %@", error.localizedDescription) }
+                    if error == nil { wakeBackoff = 1 }; wakeFailed()
+                }
+            }
+        }
+        wakeMic.start(device, sampleRate: 16000, { request.append($0) }) { [weak self] result in
+            guard let self, wakeID == id else { return }
+            if case .failure(let error) = result { NSLog("Wake word: mic error %@", error.localizedDescription); wakeFailed() }
+        }
+    }
+    func enableWakeWord() {
+        wakePermissionID += 1; let id = wakePermissionID
+        let finish: () -> Void = { [weak self] in DispatchQueue.main.async { [weak self] in
+            guard let self, wakePermissionID == id, Prefs.bool("wakeWord") else { return }
+            let mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            let speech = SFSpeechRecognizer.authorizationStatus() == .authorized
+            if !mic || !speech {
+                Prefs.set("wakeWord", false)
+                Atticus.settings.send("notice", ["text": "Allow Atticus in System Settings → Privacy & Security → \(mic ? "Speech Recognition" : "Microphone")."])
+            } else if SFSpeechRecognizer(locale: Locale(identifier: "en-US"))?.supportsOnDeviceRecognition != true {
+                Prefs.set("wakeWord", false)
+                Atticus.settings.send("notice", ["text": "On-device Speech Recognition is unavailable on this Mac."])
+            }
+            Atticus.settings.push(); wakeTick()
+        } }
+        let speech: () -> Void = {
+            if SFSpeechRecognizer.authorizationStatus() == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in finish() } }
+            else { finish() }
+        }
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined { AVCaptureDevice.requestAccess(for: .audio) { _ in speech() } }
+        else { speech() }
+    }
     // Settings → Speech model: Apple's newer SpeechTranscriber, or the Dictation model the keyboard mic uses.
     // Dictation drops fastResults / frequentFinalization (Apple: faster but less accurate); asks keep them for live commands.
     func speechModule(dictate: Bool = false) -> any SpeechModule {
@@ -1846,6 +1945,7 @@ final class App: NSObject, WKScriptMessageHandler {
     var agentMoveFile = "" { didSet { moveKey() } }   // set while atticus.py watches it: the running ask can move to an agent
     var moveRef: EventHotKeyRef?
     var retryOffer = false, offerText: String?   // answering a choices or failure card preserves its original request
+    var picking: Bool { retryOffer && askNeed["pick"] != nil }   // a choices card waits: the shortcut hides it while the user says the answer
     var hovering = false, pinned = false, stuck = false, lastDone = Date.distantPast   // pinned: the user clicked the box, so only Esc / click-out / ✕ close it; stuck: the user dragged it, so only ✕
     var screenFrames = NSScreen.screens.map(\.frame)   // last display layout; a change in it makes an on-screen drawing stale
     var selection: TextSelection?, replacement: String?, mode = "replace", warmSel = ""   // mode: replace · delete · draft
@@ -1913,7 +2013,16 @@ final class App: NSObject, WKScriptMessageHandler {
             ((try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? []).filter { $0.hasSuffix(".app") }.map { String($0.dropLast(4)) }
         }).filter { !$0.isEmpty && seen.insert($0).inserted }.prefix(DictationData.words.count + 100))
     }
-    func sound(_ name: String, _ v: Float) { let s = NSSound(named: name); s?.volume = v; s?.play() }
+    var cueSound: NSSound?, cueEnds = Date.distantPast
+    func sound(_ name: String, _ v: Float) {
+        let s = NSSound(named: name); s?.volume = v
+        if s?.play() == true { cueSound = s; cueEnds = max(cueEnds, Date().addingTimeInterval((s?.duration ?? 0) + 0.3)) }
+    }
+    func followUpSoon() {   // hands-free: listen again right when the done sound ends, not on the next 1 s tick
+        guard followUp else { return }
+        if !Prefs.bool("speak") { js("quietListen", true) }   // show it with the done sound; the mic opens as the sound ends
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, cueEnds.timeIntervalSinceNow) + 0.05) { [weak self] in self?.wakeTick() }
+    }
     func cue(_ k: String) { let n = Prefs.str(k); if n != "None" { sound(n, Float(Prefs.num("volume"))) } }   // soundStart / soundRelease / soundDone / soundStop
     let drawing = ScreenDrawing()
     var drawingReply = false
@@ -1931,10 +2040,11 @@ final class App: NSObject, WKScriptMessageHandler {
     func deliver(_ a: String, aloud: Bool = true) {   // Settings: read answers aloud, copy them
         if Prefs.bool("autoCopy") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(a, forType: .string) }
         if Prefs.bool("speak") && aloud {
+            stopWake()
             let arguments = readAloudArguments(spoken(a)) { voiceQualityTip() }
             shush(); let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/say"); p.arguments = arguments
             p.terminationHandler = { [weak self] _ in DispatchQueue.main.async {
-                guard let self, self.voice === p else { return }; self.voice = nil; self.hide(after: 2)
+                guard let self, self.voice === p else { return }; self.voice = nil; self.cueEnds = max(self.cueEnds, Date().addingTimeInterval(0.3)); self.hide(after: 2)
             } }
             try? p.run(); voice = p
         }
@@ -2043,7 +2153,7 @@ final class App: NSObject, WKScriptMessageHandler {
         drawing.cleanup = Hands.restoreAccessibility
         drawing.status = { [weak self] words in self?.js("msg",words) }
         drawing.speechEnabled = { Prefs.bool("speak") }
-        drawing.sayArguments = { [weak self] words in readAloudArguments(words) { self?.voiceQualityTip() } }
+        drawing.sayArguments = { [weak self] words in self?.stopWake(); return readAloudArguments(words) { self?.voiceQualityTip() } }
         drawing.autoSteps = { Prefs.str("guideSteps") != "next" }
         drawing.inputCleared = { [weak self] in self?.clearPointContext() }
         drawing.inputAway = { [weak self] in self?.finishPointing() }
@@ -2087,7 +2197,7 @@ final class App: NSObject, WKScriptMessageHandler {
         loadPage(web, "ui.html")
         // Click anywhere else closes the box once the answer is up; on the box: ✕ closes, elsewhere copies the answer.
         NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            guard let self, panel.isVisible, !busy, !engine.isRunning, !stuck, !drawing.active, !drawing.hasInput else { return }
+            guard let self, !handsFree, panel.isVisible, !busy, !engine.isRunning, !stuck, !drawing.active, !drawing.hasInput else { return }
             close(clear: false)
         }
         var grab: (mouse: NSPoint, origin: NSPoint)?, moved = false
@@ -2230,7 +2340,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if b["point"] != nil { drawing.inputMode ? finishPointing() : startPointing() }
             if b["pointClear"] != nil { if drawing.hasInput { drawing.clearInput() } else { clearPointContext() } }   // a drawn mark, or a selected one of Atticus's
             if b["pointCoached"] != nil { Prefs.set("pointCoached", true) }
-            if b["mic"] != nil && (!busy || retryOffer) && !engine.isRunning { clickTalk = true; start(); if !engine.isRunning { clickTalk = false } }
+            if b["mic"] != nil && (!busy || retryOffer) && (!engine.isRunning || quietFollowUp) { if quietFollowUp { hush() }; clickMicrophone() }
             if b["ready"] != nil { js("size", Prefs.num("boxH")); if Prefs.bool("tips") && !Prefs.bool("pointCoached") { js("pointCoach") } }
             if b["safe"] != nil { Prefs.set("safe", true); js("mode", true); Atticus.settings.push() }
             if let m = b["model"] as? String {   // picked in the box: the same setting Settings shows; a worker warmed on the old model goes
@@ -2317,7 +2427,7 @@ final class App: NSObject, WKScriptMessageHandler {
     func hide(after s: Double) {
         let g = gen
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { [self] in
-            guard g == gen, !busy, !engine.isRunning, !hovering else { return }
+            guard g == gen, !handsFree, !busy, !engine.isRunning, !hovering else { return }
             guard !pinned, !stuck, !composing, !mini.holds, !drawing.active, !drawing.hasInput, ringGone == nil, voice?.isRunning != true else {   // moved or drawn on: only ✕ (Esc for a drawing); an answer's ring keeps its text up
                 if pillOn && !dictating { pill(false) }   // the box stays up for its answer or drawing: give it back, not a pill stuck on its check
                 return
@@ -2402,10 +2512,12 @@ final class App: NSObject, WKScriptMessageHandler {
     // Esc: stop listening, stop the answer, or close the box.
     // One layer per press: the user's mark, voice, listening, a card, the answer, then the drawing, then the box.
     func escape() {
+        if handsFree { close(clear: false); return }
         if drawing.hasInput { drawing.clearInput(); return }
         if shush() { return }
         if dictating { return cancel() }
-        if engine.isRunning {
+        if engine.isRunning && picking { stopOfferInput(); cue("soundStop") }
+        else if engine.isRunning {
             hush(); cue("soundStop"); js("stopped", "Stopped listening"); hide(after: 1.5)
         } else if !agentCard.isEmpty, panel.isVisible {
             js("agentEscape")
@@ -2425,12 +2537,14 @@ final class App: NSObject, WKScriptMessageHandler {
         engine.stop(); speechInputs?.finishAll(); reading?.cancel(); nextReading?.cancel(); pause?.cancel()
         if !keepWarm { unwarm() }
         quietAudio.end()
-        clickTalk = false; toggleTalk = false; quiet?.cancel(); stops += 1   // stops: a late "words landed" from this listen does nothing
+        if quietFollowUp { js("quietListen", false) }
+        quietFollowUp = false; clickTalk = false; toggleTalk = false; quiet?.cancel(); stops += 1   // stops: a late "words landed" from this listen does nothing
         listenID += 1; selectionID += 1; selectionPending = false; replacing = false
         dictating = false; dictateID += 1; dictateSelectionPending = false; dictateSelection = nil
         stopDictationCleanup()
         cancelFast()
         aheadItem?.cancel(); dropAhead()
+        if picking { js("pickHear") }
         proc?.terminate(); proc = nil; askFile = ""; agentMoveFile = ""; replacement = nil; retryOffer = false
         if let old = offerText { text = old }; offerText = nil
         let an = analyzer, next = nextAnalyzer
@@ -2445,12 +2559,14 @@ final class App: NSObject, WKScriptMessageHandler {
         quietAudio.end()
         speechInputs?.finishAll(); reading?.cancel(); nextReading?.cancel(); quiet?.cancel(); clickTalk = false; toggleTalk = false; listenID += 1; stops += 1
         if let old = offerText { text = old }; offerText = nil
+        if picking { js("pickHear") }
         let an = analyzer, next = nextAnalyzer
         nextFeed = nil; nextAnalyzer = nil; nextReading = nil; nextSpeechInputID = nil; nextSpeechSegment = 0
         Task { await an?.cancelAndFinishNow(); await next?.cancelAndFinishNow() }
     }
 
     func dismiss() {   // the shortcut again before anything happened: say so, then go
+        if engine.isRunning && picking { return stopOfferInput() }
         if engine.isRunning { hush() }
         cue("soundStop"); js("stopped", "Answer stopped")
         let g = gen; DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in if g == gen { close(clear: false) } }
@@ -2464,6 +2580,7 @@ final class App: NSObject, WKScriptMessageHandler {
 
     // ✕ also ends the conversation; clicking away or timing out keeps it for 5 minutes.
     func close(clear: Bool) {
+        handsFree = false; followUp = false; stopWake()
         let pending = clear || replacement == nil ? nil : (replacement, selection)
         shush(); hush(); drawing.clear(); unpoint()   // gone means quiet: no mic, no voice, no answer, no drawing or ring
         if let pending { replacement = pending.0; selection = pending.1 }   // a hidden Insert/Replace keeps its validated target
@@ -2486,17 +2603,20 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         guard !shortcutDown else { return }   // one action per physical press, including key repeat
         shortcutDown = true
+        followUp = false
         guard !Prefs.bool("paused") else {
             if Date().timeIntervalSince(pausedNotice) > 4 { pausedNotice = Date(); js("paused"); show(); hide(after: 4) }
             return
         }
         if shush() { return }
+        if quietFollowUp { hush() }
         if engine.isRunning { return toggleTalk ? stop() : dismiss() }
         if busy && !retryOffer && !drawing.active { return cancel() }
         start()
     }
 
     func prepareForInactiveSession() {
+        stopWake(); followUp = false
         shortcutDown = false; dictateShortcutDown = false
         dictateTap?.cancel(); dictateTap = nil
         let transient = engine.isRunning || dictating || drawing.active || drawing.hasInput
@@ -2521,6 +2641,8 @@ final class App: NSObject, WKScriptMessageHandler {
         }
         guard !dictateShortcutDown else { return }
         dictateShortcutDown = true
+        handsFree = false; followUp = false
+        if quietFollowUp { hush() }
         guard !Prefs.bool("paused"), !meeting.running else { return }
         if let tap = dictateTap {
             tap.cancel(); dictateTap = nil
@@ -2545,7 +2667,7 @@ final class App: NSObject, WKScriptMessageHandler {
     }
 
     func recordingLimit() {
-        if let old = offerText { let partial = text; stopOfferInput(); text = old; js("draft", partial); return }
+        if let old = offerText { let partial = text; stopOfferInput(); text = old; if !picking { js("draft", partial) }; return }
         if toggleTalk { review("Recording paused after 60 seconds. Review your words and press Return to send.") }
         else { stop() }
     }
@@ -2560,7 +2682,7 @@ final class App: NSObject, WKScriptMessageHandler {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.selectionID == id else { return }
                 self.selectionPending = false; self.selection = Prefs.bool("selection") ? selected : nil
-                if let selection = self.selection { self.js("selected", selection.text) }
+                if !self.quietFollowUp, let selection = self.selection { self.js("selected", selection.text) }
                 if self.warm != nil && self.warmSel != self.selKey { self.unwarm(); self.warm = self.spawn() }
             }
         }
@@ -2667,7 +2789,9 @@ final class App: NSObject, WKScriptMessageHandler {
         }
     }
 
-    func start(dictate: Bool) {
+    func start(dictate: Bool, quiet: Bool = false) {
+        handsFreeIdle += 1
+        stopWake()
         if dictate && !AXIsProcessTrusted() {
             pill(true); show()
             js("dictated", ["text": "Allow Accessibility in System Settings → Privacy & Security → Accessibility", "ok": false])
@@ -2697,7 +2821,8 @@ final class App: NSObject, WKScriptMessageHandler {
         if !dictate && !drawingReply { targetScreen = currentRequestScreen(panel) }   // a guide may have moved the box to another display
         text = ""; ahead = ""; speechFailed = false; consumed = 0; consumedText = ""; liveRevised = false; did = []
         if !panel.isVisible && Date().timeIntervalSince(lastDone) > 300 { js("reset"); try? FileManager.default.removeItem(atPath: recent) }
-        pill(dictate)
+        quietFollowUp = quiet
+        if !quiet { pill(dictate) }
         if !dictate {
             if !replying && Prefs.str("input") == "type" && !clickTalk {   // Settings: the shortcut opens the box ready to type
                 if composing && panel.isVisible { return dismiss() }   // pressed again = put it away
@@ -2708,12 +2833,15 @@ final class App: NSObject, WKScriptMessageHandler {
             }
         }
         toggleTalk = !clickTalk && !dictate && Prefs.str("talkMode") == "toggle"   // dictation locks with a double tap instead
-        cue("soundStart")
+        if !quiet { cue("soundStart") }
         if !dictate && (!replying || drawingReply) { unwarm(); warm = spawn() }
-        hovering = false
-        if dictate { js("listen", "dict") }
-        else if replying && !drawingReply { js("draft", "") } else { js("listen"); if let s = selection { js("selected", s.text) } }   // talking about a drawing still shows the listening orb
-        show()
+        if quiet { js("quietListen", true) }
+        else {
+            hovering = false
+            if dictate { js("listen", "dict") }
+            else if replying && !drawingReply { js(picking ? "pickHear" : "draft", "") } else { js("listen"); if let s = selection { js("selected", s.text) } }   // talking about a drawing still shows the listening orb
+            show()
+        }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "Allow Atticus in System Settings → Privacy & Security → Microphone."); hide(after: 6); return
         }
@@ -2723,9 +2851,9 @@ final class App: NSObject, WKScriptMessageHandler {
         guard let device = listenMic().flatMap({ AVCaptureDevice(uniqueID: $0.uid) }) ?? AVCaptureDevice.default(for: .audio) else {
             if replying { stopOfferInput() } else { hush() }; js("msg", "No microphone is available. Connect one and try again."); hide(after: 6); return
         }
-        if !dictate && !replying && onboarding.win == nil && Prefs.bool("tips") && !Prefs.bool("pointCoached") { Prefs.set("pointCoached", true); js("pointCoach", true) }   // the first ask after setup (mic and speech allowed): one look at the Point button
+        if !quiet && !dictate && !replying && onboarding.win == nil && Prefs.bool("tips") && !Prefs.bool("pointCoached") { Prefs.set("pointCoached", true); js("pointCoach", true) }   // the first ask after setup (mic and speech allowed): one look at the Point button
         onboarding.tried()
-        quietAudio.begin(Prefs.bool("quietAudio"), level: Float32(Prefs.num("quietLevel")))
+        if !quiet { quietAudio.begin(Prefs.bool("quietAudio"), level: Float32(Prefs.num("quietLevel"))) }
         listenID += 1; let listeningID = listenID; began = Date()   // key-down until the mic is ready; a release in that gap is a tap
         speechInputs = SpeechInputs(); speechText = [:]; speechSegment = 0; nextSpeechRollover = 50
         let first = beginSpeechSegment("", listeningID: listeningID)
@@ -2750,7 +2878,7 @@ final class App: NSObject, WKScriptMessageHandler {
             var sum: Float = 0
             for i in 0..<Int(buf.frameLength) { sum += ch[i] * ch[i] }
             let v = Double(min(1, sqrt(sum / Float(buf.frameLength)) * 14))
-            DispatchQueue.main.async { if self?.listenID == listeningID, self?.engine.isRunning == true { self?.js("level", v) } }
+            DispatchQueue.main.async { if self?.listenID == listeningID, self?.engine.isRunning == true, self?.quietFollowUp == false { self?.js("level", v) } }
         }
         engine.start(device, sampleRate: want.sampleRate, onBuffer) { [weak self] result in
             guard let self, listenID == listeningID else { return }
@@ -2759,7 +2887,7 @@ final class App: NSObject, WKScriptMessageHandler {
             Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] t in
                 guard let self, listenID == listeningID, engine.isRunning else { return t.invalidate() }
                 let f = (dictating ? dictateHotkey() : hotkey()).flags, held = Date().timeIntervalSince(began)
-                if clickTalk && text.isEmpty && held > 8 { t.invalidate(); if offerText != nil { stopOfferInput(); return }; hush(); js("stopped", ""); return hide(after: 3) }   // nothing said: stop the mic quietly
+                if clickTalk && text.isEmpty && held > 8 { t.invalidate(); if quietFollowUp { hush(); fadeIdleHandsFree(); return }; if offerText != nil { stopOfferInput(); return }; hush(); js("stopped", ""); return hide(after: 3) }   // nothing said: stop the mic quietly
                 if dictating && held >= nextSpeechRollover { nextSpeechRollover += 50; rolloverSpeech(listeningID: listeningID) }
                 if !dictating && held > 60 { t.invalidate(); recordingLimit(); return }
                 if !toggleTalk && !clickTalk && !f.isEmpty && !NSEvent.modifierFlags.isSuperset(of: f) { if dictating { dictateShortcut(false) } else { t.invalidate(); stop() } }
@@ -2769,10 +2897,16 @@ final class App: NSObject, WKScriptMessageHandler {
 
     func heard(_ now: String) {
         guard engine.isRunning || busy else { return }
+        if quietFollowUp {
+            guard !now.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            quietFollowUp = false
+            quietAudio.begin(Prefs.bool("quietAudio"), level: Float32(Prefs.num("quietLevel")))
+            js("listen"); if let s = selection { js("selected", s.text) }; show()
+        }
         text = now
         if dictating { scheduleDictateAhead(); return }   // cleanup starts on a pause; the pill still shows only the wave
         if offerText != nil {
-            js(drawingReply ? "words" : "draft", now)
+            js(drawingReply ? "words" : picking ? "pickHear" : "draft", now)
             if clickTalk { quiet?.cancel(); let q = DispatchWorkItem { [weak self] in self?.stop() }; quiet = q; DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: q) }
             return   // card replies never enter live commands or early AI thinking
         }
@@ -2879,7 +3013,7 @@ final class App: NSObject, WKScriptMessageHandler {
             stops += 1; listenID += 1; pause?.cancel()
             if confirmed || dictating && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { dictating ? finishDictation() : finish() }
             else {
-                if let old = offerText { let partial = text; text = old; offerText = nil; busy = proc?.isRunning == true; js("draft", partial); return }   // a drawing reply has no worker; a card's keeps waiting
+                if let old = offerText { let partial = text; text = old; offerText = nil; busy = proc?.isRunning == true; picking ? js("pickHear") : js("draft", partial); return }   // a drawing reply has no worker; a card's keeps waiting
                 if dictating { hush(); cue("soundStop"); return hide(after: 0.2) }
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { hush(); js("msg", ""); return hide(after: 0.2) }   // nothing to review
                 review("Couldn’t confirm your words. Check them and press Return.")
@@ -3205,6 +3339,7 @@ final class App: NSObject, WKScriptMessageHandler {
             if busy { cancel() }
         }
         if retryOffer && !askFile.isEmpty { js("respond", t); return }
+        if quietFollowUp { hush() }
         guard !busy, !engine.isRunning else { return }
         if ["report feedback", "report a bug"].contains(transcriptKey(t)) { Atticus.settings.open(tab:"feedback"); return }
         if selectionPending {
@@ -3255,7 +3390,8 @@ final class App: NSObject, WKScriptMessageHandler {
         busy = false; guardUntil = Date().addingTimeInterval(2); unwarm()   // nothing left for the AI; an app an instant command started can still jump forward
         if did.isEmpty { js("msg", ""); return hide(after: 0.2) }   // nothing heard: end quietly, no error line
         answer = "✓ " + did.joined(separator: " ")
-        js("line", answer); deliver(did.joined(separator: " ")); lastDone = Date(); cue("soundDone"); hide(after: linger(5))
+        followUp = handsFree
+        js("line", answer); deliver(did.joined(separator: " ")); lastDone = Date(); cue("soundDone"); followUpSoon(); hide(after: linger(5))
     }
 
     // atticus.py --wait, started at key-down so Claude is up by the time the user lets go; run() hands it the words.
@@ -3307,7 +3443,7 @@ final class App: NSObject, WKScriptMessageHandler {
                         continue
                     }
                     if line.hasPrefix("◇ "), let j = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(2).utf8)) as? [String: Any] {   // "which one?": the choices card
-                        self.retryOffer = true; self.askNeed = [:]; self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
+                        self.retryOffer = true; self.askNeed = ["pick": true]; self.askFile = j["a"] as? String ?? ""; self.show(); self.js("pick", j); continue
                     }
                     if line.hasPrefix("▤ ") { self.showAgent = String(line.dropFirst(2)); continue }
                     if line.hasPrefix("⇢ "), let value = try? JSONSerialization.jsonObject(with:Data(line.dropFirst(2).utf8)) as? [String:Any] {   // movable: ⌃⌥↩ moves it / {}: no longer movable
@@ -3351,8 +3487,9 @@ final class App: NSObject, WKScriptMessageHandler {
                 // Exit 70 means Python already reported the crash; a signal is always an unreported process death.
                 if p.terminationReason == .uncaughtSignal || (p.terminationStatus != 0 && p.terminationStatus != 70) { telemetry(["error", "worker_exit", "python", String(p.terminationStatus)]) }
                 self.busy = false; self.agentMoveFile = ""; self.guardUntil = Date().addingTimeInterval(2); self.proc = nil; self.mini.finish(); self.js("finished")   // Spotify jumps ~0.5 s after play returns
-                self.lastDone = Date()
+                self.lastDone = Date(); self.followUp = self.handsFree
                 if !self.answer.isEmpty { self.cue("soundDone") }
+                self.followUpSoon()
                 if !self.showAgent.isEmpty { agentsUI.show(self.showAgent); self.showAgent = "" }
                 Apps.q.async { Apps.sync() }
                 self.hide(after: self.linger(max(6, min(30, Double(self.answer.count) / 12))))   // longer answers stay longer
@@ -4914,6 +5051,15 @@ final class SettingsWindow: NSObject, WKScriptMessageHandler, WKNavigationDelega
             return
         }
         guard Prefs.set(k, v) else { push(); send("notice", ["text": "Couldn’t save that change, so the old setting is back."]); return }
+        if k == "wakeWord" {
+            if v as? Bool == true { app.enableWakeWord() }
+            else {
+                app.wakePermissionID += 1; app.stopWake(); app.followUp = false
+                if app.handsFree && app.engine.isRunning { app.hush() }
+                app.handsFree = false
+            }
+        }
+        if k == "microphone" { app.stopWake() }
         if k == "draw", v as? Bool == false { app.drawing.clear(); app.unwarm() }
         if k == "meetingSave" { meeting.savingChanged(v as? Bool == true) }
         if k == "meeting", v as? Bool == false { meeting.stop() }
@@ -5562,6 +5708,7 @@ final class MeetingCopilot: NSObject, WKScriptMessageHandler {
                     if voice { js("level", mine) } else if minimized { js("level", level) }   // voice waves follow only your mic
                 } }
                 capture.onError = { [weak self] _ in DispatchQueue.main.async { if self?.generation == g && self?.running == true { self?.stop(); self?.js("error", "Audio stopped") } } }
+                await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in app.wakeMic.stop { done.resume() } }
                 try await capture.start(format, feed, demo ? nil : micFeed, microphoneID: demo ? nil : listenMic()?.uid)
                 if !running || generation != g || Task.isCancelled { await capture.stop(); return }
                 Prefs.set("meetingPrep", "")
@@ -7400,6 +7547,7 @@ func checkMic() {
 }
 Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in checkMic() }
 let app = App()
+Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in app.wakeTick() }
 let agentsUI = AgentPanels()
 let routineWake = RoutineWake()
 let onboarding = Onboarding()
@@ -7437,9 +7585,13 @@ var dictateRef: EventHotKeyRef?
 var hotkeyRegistered = false
 var dictateHotkeyRegistered = false
 var specialGlobalHotkeys: Any?, specialLocalHotkeys: Any?, specialMainDown = false, specialDictateDown = false
-for name in [NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification, NSWorkspace.sessionDidResignActiveNotification] {
+for name in [NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
     NSWorkspace.shared.notificationCenter.addObserver(forName:name, object:nil, queue:.main) { _ in
         specialMainDown = false; specialDictateDown = false
+        if name == NSWorkspace.willSleepNotification { app.wakeSleeping = true }
+        if name == NSWorkspace.didWakeNotification { app.wakeSleeping = false }
+        if name == NSWorkspace.sessionDidResignActiveNotification { app.wakeInactive = true }
+        if name == NSWorkspace.sessionDidBecomeActiveNotification { app.wakeInactive = false }
         app.prepareForInactiveSession()
     }
 }
